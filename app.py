@@ -254,20 +254,23 @@ st.set_page_config(
 st.title("CSA S16 Flexure Calculator")
 st.markdown("**Laterally Supported W-Section Bending Check per CSA S16**")
 
-# Sidebar for inputs
-with st.sidebar:
-    st.header("Input Parameters")
-    
-    # Load shapes
-    shapes = load_shapes()
-    if not shapes:
-        st.error("No section data found. Please add CSV files to the data/ directory.")
-        st.stop()
-    
-    designations = list_designations()
-    
-    # Section search/select
-    search_query = st.text_input("Search sections", placeholder="e.g., W410")
+# Load shapes
+shapes = load_shapes()
+if not shapes:
+    st.error("No section data found. Please add CSV files to the data/ directory.")
+    st.stop()
+
+designations = list_designations()
+
+# Input section at top
+st.markdown("---")
+
+# Create columns for inputs
+input_col1, input_col2, input_col3 = st.columns([2, 1, 1])
+
+with input_col1:
+    st.markdown("### Choose a W‑section")
+    search_query = st.text_input("Search sections", placeholder="e.g., W410", label_visibility="collapsed")
     if search_query:
         filtered = list_designations(search_query)
     else:
@@ -277,34 +280,32 @@ with st.sidebar:
         st.warning("No sections match your search.")
         st.stop()
     
-    with st.container():
-        st.markdown("### Choose a W‑section")
-        selected_section = st.selectbox("", options=filtered, index=0)
-    
-    st.divider()
-    
-    # Material properties
+    selected_section = st.selectbox("Select section", options=filtered, index=0, label_visibility="collapsed")
+
+with input_col2:
+    st.markdown("### Yield Strength")
     Fy = st.number_input(
-        "Yield Strength Fy (MPa)",
+        "Fy (MPa)",
         min_value=200.0,
         max_value=700.0,
         value=345.0,
         step=5.0,
         help="Typical values: 300 MPa (Grade 300W), 345 MPa (Grade 350W)"
     )
-    
-    st.divider()
-    
-    # Optional demand check
-    check_demand = st.checkbox("Check against factored moment demand")
+
+with input_col3:
+    st.markdown("### Demand Check")
+    check_demand = st.checkbox("Check against Mu")
     Mu = None
     if check_demand:
         Mu = st.number_input(
-            "Factored Moment Mu (kN·m)",
+            "Mu (kN·m)",
             min_value=0.0,
             value=100.0,
             step=10.0
         )
+
+st.markdown("---")
 
 # Main content
 if selected_section:

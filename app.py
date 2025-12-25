@@ -93,8 +93,9 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _load_csv(path: Path) -> Dict[str, Dict[str, Any]]:
+def _load_csv(path: Path) -> tuple[Dict[str, Dict[str, Any]], List[str]]:
     out: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for rec in reader:
@@ -102,35 +103,38 @@ def _load_csv(path: Path) -> Dict[str, Dict[str, Any]]:
             des = rec2.get("designation") or rec2.get("Designation") or rec2.get("name")
             if des:
                 out[str(des)] = rec2
-    return out
+                order.append(str(des))
+    return out, order
 
 
 @st.cache_data
-def load_shapes() -> Dict[str, Dict[str, Any]]:
+def load_shapes() -> tuple[Dict[str, Dict[str, Any]], List[str]]:
     if not DATA_DIR.exists():
         st.error(f"Missing data directory: {DATA_DIR}")
-        return {}
+        return {}, []
 
     merged: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
 
     for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
         if p.suffix.lower() == ".csv":
-            merged.update(_load_csv(p))
+            data, csv_order = _load_csv(p)
+            merged.update(data)
+            order.extend(csv_order)
 
-    return merged
+    return merged, order
 
 
 def list_designations(q: str = "") -> List[str]:
-    shapes = load_shapes()
-    keys = sorted(shapes.keys())
+    shapes, order = load_shapes()
     if not q:
-        return keys
+        return order
     qq = q.lower().strip()
-    return [k for k in keys if qq in k.lower()]
+    return [k for k in order if qq in k.lower()]
 
 
 def get_shape(designation: str) -> Optional[Dict[str, Any]]:
-    shapes = load_shapes()
+    shapes, _ = load_shapes()
     return shapes.get(designation)
 
 
@@ -255,12 +259,10 @@ st.title("CSA S16 Flexure Calculator")
 st.markdown("**Laterally Supported W-Section Bending Check per CSA S16**")
 
 # Load shapes
-shapes = load_shapes()
+shapes, designations = load_shapes()
 if not shapes:
     st.error("No section data found. Please add CSV files to the data/ directory.")
     st.stop()
-
-designations = list_designations()
 
 # Input section at top
 st.markdown("---")
@@ -272,7 +274,8 @@ with input_col1:
     st.markdown("### Choose a W‑section")
     search_query = st.text_input("Search sections", placeholder="e.g., W410", label_visibility="collapsed")
     if search_query:
-        filtered = list_designations(search_query)
+        qq = search_query.lower().strip()
+        filtered = [k for k in designations if qq in k.lower()]
     else:
         filtered = designations
     

@@ -221,6 +221,34 @@ def effective_section_modulus(d: float, Ix_eff: float) -> float:
     return Ix_eff / c
 
 
+def compute_Se_CSA(d: float, b: float, tf: float, tw: float, Fy: float) -> dict:
+    """
+    Compute effective section modulus per CSA S16 for Class 4 sections.
+    d  = total depth (mm)
+    b  = flange width (mm)
+    tf = flange thickness (mm)
+    tw = web thickness (mm)
+    Fy = yield strength (MPa)
+    """
+    # Clear web height
+    h = d - 2.0 * tf
+
+    # Effective dimensions
+    b_eff = effective_flange_width(b, tf, Fy)
+    h_eff = effective_web_height(h, tw, Fy)
+
+    # Effective properties
+    Ix_eff = effective_Ix(b_eff, tf, h_eff, tw)
+    Se = effective_section_modulus(d, Ix_eff)
+
+    return {
+        "b_eff": b_eff,
+        "h_eff": h_eff,
+        "Ix_eff": Ix_eff,
+        "Se": Se
+    }
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")

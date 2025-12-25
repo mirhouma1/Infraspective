@@ -2,6 +2,7 @@ import csv
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import pandas as pd
 import streamlit as st
 
 # ----------------------------
@@ -329,16 +330,14 @@ if selected_section:
         
         # Section properties table
         st.markdown("**Section Properties**")
-        props_data = {
-            "Property": ["Depth (d)", "Flange Width (b)", "Flange Thickness (tf)", "Web Thickness (tw)"],
-            "Value": [
-                f"{class_info['geometry_used_mm']['d']:.1f} mm",
-                f"{class_info['geometry_used_mm']['b']:.1f} mm",
-                f"{class_info['geometry_used_mm']['tf']:.1f} mm",
-                f"{class_info['geometry_used_mm']['tw']:.1f} mm"
-            ]
+        selected_section_data = {
+            "Depth (d)": f"{class_info['geometry_used_mm']['d']:.1f} mm",
+            "Flange Width (b)": f"{class_info['geometry_used_mm']['b']:.1f} mm",
+            "Flange Thickness (tf)": f"{class_info['geometry_used_mm']['tf']:.1f} mm",
+            "Web Thickness (tw)": f"{class_info['geometry_used_mm']['tw']:.1f} mm"
         }
-        st.table(props_data)
+        section_df = pd.DataFrame.from_dict(selected_section_data, orient="index", columns=["Value"])
+        st.table(section_df)
     
     with col2:
         st.subheader("Classification Results")

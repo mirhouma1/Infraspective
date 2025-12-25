@@ -408,16 +408,25 @@ if selected_section:
     st.divider()
     
     # References
-    with st.expander("References"):
-        st.markdown("""
-        - **CSA S16 Table 2**: Width-to-thickness ratios for elements in flexural compression
-        - **CSA S16 Clause 13.5**: Laterally supported members in bending
-        - **φb = 0.9**: Resistance factor for bending
+    with st.expander("Governing Equations & References"):
+        st.markdown("**Slenderness Ratios**")
+        st.latex(r"\lambda_f = \frac{b/2}{t_f} \quad \text{(flange outstand)}")
+        st.latex(r"\lambda_w = \frac{h}{w} = \frac{d - 2k}{t_w} \quad \text{(web)}")
         
-        **Classification Limits (for Fy = {:.0f} MPa):**
-        - Flange outstand: 145/√Fy, 170/√Fy, 200/√Fy
-        - Web in flexure: 420/√Fy, 525/√Fy, 670/√Fy
-        """.format(Fy))
+        st.markdown("**Classification Limits (CSA S16 Table 2)**")
+        st.latex(r"\text{Flange: } \frac{145}{\sqrt{F_y}}, \frac{170}{\sqrt{F_y}}, \frac{200}{\sqrt{F_y}}")
+        st.latex(r"\text{Web: } \frac{420}{\sqrt{F_y}}, \frac{525}{\sqrt{F_y}}, \frac{670}{\sqrt{F_y}}")
+        
+        st.markdown("**Moment Resistance (CSA S16 Clause 13.5)**")
+        st.latex(r"M_r = \phi_b \cdot Z_x \cdot F_y \quad \text{(Class 1-2, plastic)}")
+        st.latex(r"M_r = \phi_b \cdot S_x \cdot F_y \quad \text{(Class 3, elastic)}")
+        st.latex(r"\phi_b = 0.9")
+        
+        st.markdown("""
+        **References:**
+        - CSA S16 Table 2: Width-to-thickness ratios for elements in flexural compression
+        - CSA S16 Clause 13.5: Laterally supported members in bending
+        """)
     
     # Raw data expander
     with st.expander("Raw Section Data"):

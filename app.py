@@ -149,6 +149,33 @@ def to_kNm_from_Nmm(M_Nmm: float) -> float:
     return M_Nmm * 1e-6
 
 
+def flange_lambda_r(Fy: float) -> float:
+    """CSA S16 Table 2 – flange outstand in compression (Class 3 limit)"""
+    return 170.0 / math.sqrt(Fy)
+
+
+def web_lambda_r(Fy: float) -> float:
+    """CSA S16 Table 2 – web in flexure (Class 2 limit)"""
+    return 525.0 / math.sqrt(Fy)
+
+
+def effective_flange_width(b: float, tf: float, Fy: float) -> float:
+    """
+    Calculate effective flange width for Class 4 sections.
+    b  = full flange width (mm)
+    tf = flange thickness (mm)
+    Fy = yield strength (MPa)
+    """
+    lambda_flange = b / (2.0 * tf)
+    lambda_r = flange_lambda_r(Fy)
+
+    if lambda_flange <= lambda_r:
+        return b  # not slender
+    else:
+        be = b * (lambda_r / lambda_flange)
+        return min(be, b)
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")

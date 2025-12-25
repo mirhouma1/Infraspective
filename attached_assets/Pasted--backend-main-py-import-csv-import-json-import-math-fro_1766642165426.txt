@@ -1,0 +1,330 @@
+# backend/main.py
+import csv
+import json
+import math
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+# ----------------------------
+# CONFIG
+# ----------------------------
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
+# Units convention (MVP):
+# - Geometry in mm
+# - Section properties in mm^3, mm^4, mm^6
+# - Fy in MPa (N/mm^2)
+# - Moments returned in kN·m
+PHI_B = 0.9
+
+app = FastAPI(title="CSA S16 Flexure Engine (MVP)", version="0.2.0")
+
+_SHAPES: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+# ----------------------------
+# KEY NORMALIZATION + CANONICAL FIELD MAP
+# ----------------------------
+def _norm(s: str) -> str:
+    return (
+        str(s).strip().lower()
+        .replace("(", "").replace(")", "")
+        .replace("[", "").replace("]", "")
+        .replace("/", "_").replace("-", "_")
+        .replace(" ", "_")
+    )
+
+
+# canonical fields we need for Phase 1 (flexure laterally supported + Table 2 classing)
+CANON_SYNONYMS = {
+    "designation": {"designation", "shape", "section", "name", "w_shape"},
+    "d": {"d", "depth", "depth_d", "depth_d_mm", "overall_depth"},
+    "b": {"b", "bf", "flange_width", "flange_width_b", "flange_width_b_mm"},
+    "tf": {"tf", "t", "flange_thickness", "flange_thickness_t", "flange_thickness_t_mm"},
+    "tw": {"tw", "w", "web_thickness", "web_thickness_w", "web_thickness_w_mm"},
+    "zx": {"zx", "z_x", "plastic_modulus_zx", "plastic_modulus_zx_mm3", "zx_mm3"},
+    "sx": {"sx", "s_x", "elastic_modulus_sx", "elastic_modulus_sx_mm3", "sx_mm3"},
+}
+
+def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
+    # normalized view of incoming record keys
+    norm_map = {_norm(k): v for k, v in rec.items()}
+    out = dict(rec)
+
+    def pick(field: str) -> Optional[Any]:
+        for cand in CANON_SYNONYMS[field]:
+            ck = _norm(cand)
+            if ck in norm_map and norm_map[ck] not in (None, ""):
+                return norm_map[ck]
+        return None
+
+    # attach canonical keys
+    for f in ("designation", "d", "b", "tf", "tw", "zx", "sx"):
+        v = pick(f)
+        if v is not None:
+            out[f] = v
+
+    return out
+
+
+def _load_json(path: Path) -> Dict[str, Dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    items: List[Dict[str, Any]] = []
+
+    if isinstance(raw, dict):
+        # possibly {designation: {...}}
+        for k, v in raw.items():
+            if isinstance(v, dict):
+                vv = dict(v)
+                vv.setdefault("designation", k)
+                items.append(vv)
+    elif isinstance(raw, list):
+        for v in raw:
+            if isinstance(v, dict):
+                items.append(v)
+    else:
+        raise ValueError(f"Unsupported JSON structure: {path.name}")
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for rec in items:
+        rec2 = _canonicalize_record(rec)
+        des = rec2.get("designation") or rec2.get("Designation") or rec2.get("name")
+        if des:
+            out[str(des)] = rec2
+    return out
+
+
+def _load_csv(path: Path) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        for rec in reader:
+            rec2 = _canonicalize_record(rec)
+            des = rec2.get("designation") or rec2.get("Designation") or rec2.get("name")
+            if des:
+                out[str(des)] = rec2
+    return out
+
+
+def load_shapes() -> Dict[str, Dict[str, Any]]:
+    """
+    Loads and merges ALL .csv and .json inside backend/data/.
+    Later files override earlier ones on duplicate designation.
+    """
+    global _SHAPES
+    if _SHAPES is not None:
+        return _SHAPES
+
+    if not DATA_DIR.exists():
+        raise FileNotFoundError(f"Missing data directory: {DATA_DIR}")
+
+    merged: Dict[str, Dict[str, Any]] = {}
+
+    # deterministic order: json then csv, or just alphabetical. Here: alphabetical.
+    for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
+        if p.suffix.lower() == ".json":
+            merged.update(_load_json(p))
+        elif p.suffix.lower() == ".csv":
+            merged.update(_load_csv(p))
+
+    if not merged:
+        raise FileNotFoundError("No shape data found in backend/data (expected .json or .csv)")
+
+    _SHAPES = merged
+    return _SHAPES
+
+
+def list_designations(q: str = "") -> List[str]:
+    shapes = load_shapes()
+    keys = sorted(shapes.keys())
+    if not q:
+        return keys
+    qq = q.lower().strip()
+    return [k for k in keys if qq in k.lower()]
+
+
+def get_shape(designation: str) -> Dict[str, Any]:
+    shapes = load_shapes()
+    if designation not in shapes:
+        raise KeyError(f"Unknown shape: {designation} (not in backend/data databases)")
+    return shapes[designation]
+
+
+def fnum(x: Any, field_name: str) -> float:
+    try:
+        return float(x)
+    except Exception:
+        raise ValueError(f"Field '{field_name}' is not numeric: {x!r}")
+
+
+def to_kNm_from_Nmm(M_Nmm: float) -> float:
+    return M_Nmm * 1e-6  # 1 N·mm = 1e-6 kN·m
+
+
+# ----------------------------
+# YOUR SEQUENCE: classify -> Mr -> pass/fail
+# ----------------------------
+def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
+    """
+    W-shape MAJOR-axis bending classing (MVP, matches your Excel style):
+    - flange outstand slenderness: (b/2)/tf
+    - web slenderness: (d-2tf)/tw
+    - limits:
+        flange major: 145/sqrt(Fy), 170/sqrt(Fy), 200/sqrt(Fy)
+        web flexure:  420/sqrt(Fy), 525/sqrt(Fy), 670/sqrt(Fy)
+    """
+    # Pull canonical keys (works regardless of column names)
+    d  = fnum(shape.get("d"), "d")
+    b  = fnum(shape.get("b"), "b")
+    tf = fnum(shape.get("tf"), "tf")
+    tw = fnum(shape.get("tw"), "tw")
+
+    if Fy <= 0:
+        raise ValueError("Fy must be > 0")
+
+    hw = d - 2.0 * tf
+    be = 0.5 * b
+
+    lam_f = be / tf
+    lam_w = hw / tw
+
+    r = 1.0 / math.sqrt(Fy)
+
+    f1, f2, f3 = 145*r, 170*r, 200*r
+    w1, w2, w3 = 420*r, 525*r, 670*r
+
+    def classify(lam: float, lim1: float, lim2: float, lim3: float) -> int:
+        if lam <= lim1: return 1
+        if lam <= lim2: return 2
+        if lam <= lim3: return 3
+        return 4
+
+    class_flange = classify(lam_f, f1, f2, f3)
+    class_web    = classify(lam_w, w1, w2, w3)
+    section_class = max(class_flange, class_web)
+
+    if section_class == class_flange and section_class == class_web:
+        governing = "flange & web (tie)"
+    elif section_class == class_flange:
+        governing = "flange"
+    else:
+        governing = "web"
+
+    return {
+        "class_flange": class_flange,
+        "class_web": class_web,
+        "class_section": section_class,
+        "governing": governing,
+        "ratios": {"ba_over_t": lam_f, "hw_over_tw": lam_w},
+        "limits": {
+            "flange": {"c1": f1, "c2": f2, "c3": f3},
+            "web": {"c1": w1, "c2": w2, "c3": w3},
+        },
+        "refs": ["CSA S16 Table 2 (major-axis flange outstand + web in flexure)"],
+        "geometry_used_mm": {"d": d, "b": b, "tf": tf, "tw": tw, "hw": hw, "be": be},
+    }
+
+
+def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int) -> Dict[str, Any]:
+    """
+    Laterally supported bending (MVP):
+      Class 1-2: Mr = φ Zx Fy
+      Class 3:   Mr = φ Sx Fy
+      Class 4:   not implemented (needs Se)
+    """
+    zx = shape.get("zx")
+    sx = shape.get("sx")
+    if zx is None or sx is None:
+        # show user what keys exist (helps you fix database columns fast)
+        raise KeyError(f"Missing zx/sx in shape record. Available keys include: {list(shape.keys())[:30]}")
+
+    Zx = fnum(zx, "Zx")
+    Sx = fnum(sx, "Sx")
+
+    if class_section in (1, 2):
+        Mr_Nmm = PHI_B * Zx * Fy
+        mode = "plastic (Zx)"
+    elif class_section == 3:
+        Mr_Nmm = PHI_B * Sx * Fy
+        mode = "elastic (Sx)"
+    else:
+        return {
+            "mr_kNm": None,
+            "mode": "Class 4 requires effective section modulus (Se) — not implemented in MVP",
+            "refs": ["CSA S16 13.5 (Class 4 effective section required)"],
+        }
+
+    return {
+        "mr_kNm": to_kNm_from_Nmm(Mr_Nmm),
+        "mode": mode,
+        "refs": ["CSA S16 13.5 (laterally supported bending)"],
+    }
+
+
+# ----------------------------
+# API MODELS
+# ----------------------------
+class FlexureRequest(BaseModel):
+    shape: str = Field(..., description="e.g., W410x60")
+    Fy: float = Field(345.0, description="MPa")
+    Mu: Optional[float] = Field(None, description="Factored moment demand (kN·m), optional")
+
+
+# ----------------------------
+# API ENDPOINTS
+# ----------------------------
+@app.get("/health")
+def health():
+    return {"ok": True, "data_dir": str(DATA_DIR)}
+
+
+@app.get("/sections")
+def sections(q: str = ""):
+    return {"results": list_designations(q)}
+
+
+@app.get("/sections/{designation}")
+def section_detail(designation: str):
+    try:
+        return {"designation": designation, "properties": get_shape(designation)}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/flexure")
+def flexure(req: FlexureRequest):
+    try:
+        shape = get_shape(req.shape)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    # 1) classify
+    try:
+        class_info = table2_class_major_axis(shape, req.Fy)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Classification failed: {e}")
+
+    # 2) Mr
+    try:
+        mr_info = Mr_laterally_supported(shape, req.Fy, class_info["class_section"])
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Mr calc failed: {e}")
+
+    # 3) pass/fail (moment only)
+    moment_ok = None
+    if req.Mu is not None and mr_info.get("mr_kNm") is not None:
+        moment_ok = float(req.Mu) <= float(mr_info["mr_kNm"])
+
+    return {
+        "shape": req.shape,
+        "Fy_MPa": req.Fy,
+        "class": class_info,
+        "mr": mr_info,
+        "checks": {"moment_ok": moment_ok},
+        "refs": list(dict.fromkeys(class_info.get("refs", []) + mr_info.get("refs", []))),
+    }

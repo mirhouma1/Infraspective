@@ -456,15 +456,17 @@ if selected_section:
     with col1:
         st.subheader(f"Section: {selected_section}")
         
-        # Section properties table
+        # Section properties table (single source of truth)
+        geom = class_info["geometry_used"]
         st.markdown("**Section Properties**")
-        selected_section_data = {
-            "Depth (d)": f"{class_info['geometry_used_mm']['d']:.1f} mm",
-            "Flange Width (b)": f"{class_info['geometry_used_mm']['b']:.1f} mm",
-            "Flange Thickness (tf)": f"{class_info['geometry_used_mm']['tf']:.1f} mm",
-            "Web Thickness (tw)": f"{class_info['geometry_used_mm']['tw']:.1f} mm"
+        section_geometry_display = {
+            "Depth (d)": f"{geom['d']:.1f} mm",
+            "Flange Width (b)": f"{geom['b']:.1f} mm",
+            "Flange Thickness (tf)": f"{geom['tf']:.1f} mm",
+            "Web Thickness (tw)": f"{geom['tw']:.1f} mm",
+            "Clear Web Height (h = d − 2tf)": f"{(geom['d'] - 2*geom['tf']):.1f} mm",
         }
-        section_df = pd.DataFrame.from_dict(selected_section_data, orient="index", columns=["Value"])
+        section_df = pd.DataFrame.from_dict(section_geometry_display, orient="index", columns=["Value"])
         st.table(section_df)
     
     with col2:
@@ -541,12 +543,12 @@ if selected_section:
         # Flange slenderness
         st.markdown("**Flange Outstand Slenderness:**")
         st.latex(r"\lambda_f = \frac{b/2}{t_f}")
-        d_val = class_info['geometry_used_mm']['d']
-        b_val = class_info['geometry_used_mm']['b']
-        tf_val = class_info['geometry_used_mm']['tf']
-        tw_val = class_info['geometry_used_mm']['tw']
-        hw_val = class_info['geometry_used_mm']['hw']
-        k_val = class_info['geometry_used_mm'].get('k', 'N/A')
+        geom = class_info['geometry_used']
+        d_val = geom['d']
+        b_val = geom['b']
+        tf_val = geom['tf']
+        tw_val = geom['tw']
+        h_clear = d_val - 2*tf_val
         lam_f = class_info['ratios']['b/2t']
         lam_w = class_info['ratios']['h/w']
         
@@ -554,11 +556,8 @@ if selected_section:
         
         # Web slenderness
         st.markdown("**Web Slenderness:**")
-        st.latex(r"\lambda_w = \frac{h_w}{t_w} = \frac{d - 2k}{t_w}")
-        if k_val != 'N/A':
-            st.latex(rf"\lambda_w = \frac{{{d_val:.1f} - 2 \times {float(k_val):.1f}}}{{{tw_val:.1f}}} = \frac{{{hw_val:.1f}}}{{{tw_val:.1f}}} = {lam_w:.2f}")
-        else:
-            st.latex(rf"\lambda_w = \frac{{{hw_val:.1f}}}{{{tw_val:.1f}}} = {lam_w:.2f}")
+        st.latex(r"\lambda_w = \frac{h}{t_w} = \frac{d - 2t_f}{t_w}")
+        st.latex(rf"\lambda_w = \frac{{{d_val:.1f} - 2 \times {tf_val:.1f}}}{{{tw_val:.1f}}} = \frac{{{h_clear:.1f}}}{{{tw_val:.1f}}} = {lam_w:.2f}")
         
         st.markdown("---")
         st.markdown("### Step 2: Determine Classification Limits")

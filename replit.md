@@ -39,7 +39,7 @@ CSV columns include: Designation, Depth d, Flange Width b, Flange Thickness t, W
 
 ## Running the App
 ```bash
-streamlit run app.py --server.port 5000
+streamlit run app.py
 ```
 
 ## Recent Changes

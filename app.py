@@ -310,7 +310,7 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
             "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
             "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
         },
-        "geometry_used_mm": {"d": d, "b": b, "tf": tf, "tw": tw, "h": round(hw, 2), "be": round(be, 2)},
+        "geometry_used": {"d": d, "b": b, "tf": tf, "tw": tw, "h": round(hw, 2), "be": round(be, 2)},
     }
 
 

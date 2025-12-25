@@ -193,6 +193,23 @@ def effective_web_height(h: float, tw: float, Fy: float) -> float:
         return min(he, h)
 
 
+def effective_Ix(b_eff: float, tf: float, h_eff: float, tw: float) -> float:
+    """
+    Calculate effective moment of inertia for Class 4 sections.
+    Returns effective Ix (mm^4)
+    """
+    # Flanges (2x)
+    Af = b_eff * tf
+    y = (h_eff / 2.0) + (tf / 2.0)
+    If_local = (b_eff * tf**3) / 12.0
+    If_total = 2.0 * (If_local + Af * y**2)
+
+    # Web
+    Iw = (tw * h_eff**3) / 12.0
+
+    return If_total + Iw
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")

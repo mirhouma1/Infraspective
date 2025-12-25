@@ -406,6 +406,104 @@ if selected_section:
     
     st.divider()
     
+    # Calculation Details
+    with st.expander("Calculation Details"):
+        st.markdown("### Step 1: Compute Slenderness Ratios")
+        
+        # Flange slenderness
+        st.markdown("**Flange Outstand Slenderness:**")
+        st.latex(r"\lambda_f = \frac{b/2}{t_f}")
+        d_val = class_info['geometry_used_mm']['d']
+        b_val = class_info['geometry_used_mm']['b']
+        tf_val = class_info['geometry_used_mm']['tf']
+        tw_val = class_info['geometry_used_mm']['tw']
+        hw_val = class_info['geometry_used_mm']['hw']
+        k_val = class_info['geometry_used_mm'].get('k', 'N/A')
+        lam_f = class_info['ratios']['b/2t']
+        lam_w = class_info['ratios']['h/w']
+        
+        st.latex(rf"\lambda_f = \frac{{{b_val:.1f}/2}}{{{tf_val:.1f}}} = \frac{{{b_val/2:.1f}}}{{{tf_val:.1f}}} = {lam_f:.2f}")
+        
+        # Web slenderness
+        st.markdown("**Web Slenderness:**")
+        st.latex(r"\lambda_w = \frac{h_w}{t_w} = \frac{d - 2k}{t_w}")
+        if k_val != 'N/A':
+            st.latex(rf"\lambda_w = \frac{{{d_val:.1f} - 2 \times {float(k_val):.1f}}}{{{tw_val:.1f}}} = \frac{{{hw_val:.1f}}}{{{tw_val:.1f}}} = {lam_w:.2f}")
+        else:
+            st.latex(rf"\lambda_w = \frac{{{hw_val:.1f}}}{{{tw_val:.1f}}} = {lam_w:.2f}")
+        
+        st.markdown("---")
+        st.markdown("### Step 2: Determine Classification Limits")
+        st.markdown(f"For **Fy = {Fy:.0f} MPa**:")
+        
+        sqrt_fy = math.sqrt(Fy)
+        f1, f2, f3 = class_info['limits']['flange']['Class 1'], class_info['limits']['flange']['Class 2'], class_info['limits']['flange']['Class 3']
+        w1, w2, w3 = class_info['limits']['web']['Class 1'], class_info['limits']['web']['Class 2'], class_info['limits']['web']['Class 3']
+        
+        st.markdown("**Flange Limits:**")
+        st.latex(rf"\text{{Class 1: }} \frac{{145}}{{\sqrt{{{Fy:.0f}}}}} = {f1:.2f}")
+        st.latex(rf"\text{{Class 2: }} \frac{{170}}{{\sqrt{{{Fy:.0f}}}}} = {f2:.2f}")
+        st.latex(rf"\text{{Class 3: }} \frac{{200}}{{\sqrt{{{Fy:.0f}}}}} = {f3:.2f}")
+        
+        st.markdown("**Web Limits:**")
+        st.latex(rf"\text{{Class 1: }} \frac{{420}}{{\sqrt{{{Fy:.0f}}}}} = {w1:.2f}")
+        st.latex(rf"\text{{Class 2: }} \frac{{525}}{{\sqrt{{{Fy:.0f}}}}} = {w2:.2f}")
+        st.latex(rf"\text{{Class 3: }} \frac{{670}}{{\sqrt{{{Fy:.0f}}}}} = {w3:.2f}")
+        
+        st.markdown("---")
+        st.markdown("### Step 3: Compare Ratios to Limits")
+        
+        class_flange = class_info['class_flange']
+        class_web = class_info['class_web']
+        
+        # Flange classification explanation
+        if class_flange == 1:
+            st.markdown(f"**Flange:** λf = {lam_f:.2f} ≤ {f1:.2f} → **Class 1**")
+        elif class_flange == 2:
+            st.markdown(f"**Flange:** {f1:.2f} < λf = {lam_f:.2f} ≤ {f2:.2f} → **Class 2**")
+        elif class_flange == 3:
+            st.markdown(f"**Flange:** {f2:.2f} < λf = {lam_f:.2f} ≤ {f3:.2f} → **Class 3**")
+        else:
+            st.markdown(f"**Flange:** λf = {lam_f:.2f} > {f3:.2f} → **Class 4**")
+        
+        # Web classification explanation
+        if class_web == 1:
+            st.markdown(f"**Web:** λw = {lam_w:.2f} ≤ {w1:.2f} → **Class 1**")
+        elif class_web == 2:
+            st.markdown(f"**Web:** {w1:.2f} < λw = {lam_w:.2f} ≤ {w2:.2f} → **Class 2**")
+        elif class_web == 3:
+            st.markdown(f"**Web:** {w2:.2f} < λw = {lam_w:.2f} ≤ {w3:.2f} → **Class 3**")
+        else:
+            st.markdown(f"**Web:** λw = {lam_w:.2f} > {w3:.2f} → **Class 4**")
+        
+        section_class = class_info['class_section']
+        st.markdown(f"**Section Class = max(Flange Class, Web Class) = max({class_flange}, {class_web}) = {section_class}**")
+        st.markdown(f"*Governing element: {class_info['governing']}*")
+        
+        st.markdown("---")
+        st.markdown("### Step 4: Calculate Moment Resistance")
+        
+        if not mr_info.get("error"):
+            zx = float(shape.get("zx", 0)) * 1000  # Convert from 10^3 mm^3 to mm^3
+            sx = float(shape.get("sx", 0)) * 1000
+            
+            if section_class in (1, 2):
+                st.markdown("For **Class 1-2** sections, use plastic section modulus (Zx):")
+                st.latex(r"M_r = \phi_b \cdot Z_x \cdot F_y")
+                st.latex(rf"M_r = {PHI_B} \times {zx/1e6:.3f} \times 10^6 \text{{ mm}}^3 \times {Fy:.0f} \text{{ MPa}}")
+                mr_calc = PHI_B * zx * Fy * 1e-6  # Convert to kN·m
+                st.latex(rf"M_r = {mr_calc:.1f} \text{{ kN·m}}")
+            elif section_class == 3:
+                st.markdown("For **Class 3** sections, use elastic section modulus (Sx):")
+                st.latex(r"M_r = \phi_b \cdot S_x \cdot F_y")
+                st.latex(rf"M_r = {PHI_B} \times {sx/1e6:.3f} \times 10^6 \text{{ mm}}^3 \times {Fy:.0f} \text{{ MPa}}")
+                mr_calc = PHI_B * sx * Fy * 1e-6
+                st.latex(rf"M_r = {mr_calc:.1f} \text{{ kN·m}}")
+            else:
+                st.warning("Class 4 sections require effective section modulus (Se) — not implemented.")
+        else:
+            st.warning(mr_info["mode"])
+    
     # References
     with st.expander("Governing Equations & References"):
         st.markdown("**Slenderness Ratios**")

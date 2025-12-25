@@ -276,11 +276,9 @@ with st.sidebar:
         st.warning("No sections match your search.")
         st.stop()
     
-    selected_section = st.selectbox(
-        "Select W-Section",
-        options=filtered,
-        index=0
-    )
+    with st.container():
+        st.markdown("### Choose a W‑section")
+        selected_section = st.selectbox("", options=filtered, index=0)
     
     st.divider()
     

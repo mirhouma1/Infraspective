@@ -261,6 +261,61 @@ def Mr_class4(Se: float, Fy: float, phi_b: float = 0.9) -> float:
     return Mr_Nmm / 1e6
 
 
+def compute_se_with_steps(geom: dict, Fy: float) -> dict:
+    """
+    Compute effective section modulus with step-by-step calculations for display.
+    geom: dict with d, b, tf, tw (mm)
+    Fy: MPa
+    Returns: dict with Se + intermediate values + display steps
+    """
+    d  = geom["d"]
+    b  = geom["b"]
+    tf = geom["tf"]
+    tw = geom["tw"]
+
+    # --- Step A: Clear web height ---
+    h = d - 2.0*tf
+
+    # --- Step B: Slenderness ratios ---
+    lam_f = (b/2.0) / tf
+    lam_w = h / tw
+
+    # --- Step C: CSA effective element calculations ---
+    b_eff = effective_flange_width(b, tf, Fy)
+    h_eff = effective_web_height(h, tw, Fy)
+
+    # --- Step D: Compute effective properties -> Ix_eff -> Se ---
+    Ix_eff = effective_Ix(b_eff, tf, h_eff, tw)
+    Se = effective_section_modulus(d, Ix_eff)
+
+    steps = [
+        {"label": "Given geometry (mm)",
+         "text": f"d={d:.1f}, b={b:.1f}, tf={tf:.1f}, tw={tw:.1f}"},
+        {"label": "Clear web height",
+         "latex": rf"h = d - 2t_f = {d:.1f} - 2({tf:.1f}) = {h:.1f}\ \mathrm{{mm}}"},
+        {"label": "Slenderness ratios",
+         "latex": rf"\lambda_f = \frac{{b/2}}{{t_f}} = \frac{{{b/2:.1f}}}{{{tf:.1f}}} = {lam_f:.2f},\quad "
+                  rf"\lambda_w = \frac{{h}}{{t_w}} = \frac{{{h:.1f}}}{{{tw:.1f}}} = {lam_w:.2f}"},
+        {"label": "Effective elements (CSA)",
+         "text": f"b_eff = {b_eff:.1f} mm,  h_eff = {h_eff:.1f} mm"},
+        {"label": "Effective section properties",
+         "text": f"Ix_eff = {Ix_eff:.3e} mm⁴"},
+        {"label": "Effective section modulus",
+         "latex": rf"S_e = \frac{{I_{{x,eff}}}}{{d/2}} = \frac{{{Ix_eff:.3e}}}{{{d/2:.1f}}} = {Se:.3e}\ \mathrm{{mm^3}}"}
+    ]
+
+    return {
+        "Se": Se,
+        "Ix_eff": Ix_eff,
+        "b_eff": b_eff,
+        "h_eff": h_eff,
+        "lam_f": lam_f,
+        "lam_w": lam_w,
+        "h": h,
+        "steps": steps,
+    }
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")

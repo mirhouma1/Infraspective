@@ -249,6 +249,18 @@ def compute_Se_CSA(d: float, b: float, tf: float, tw: float, Fy: float) -> dict:
     }
 
 
+def Mr_class4(Se: float, Fy: float, phi_b: float = 0.9) -> float:
+    """
+    Calculate moment resistance for Class 4 sections.
+    Se = effective section modulus (mm^3)
+    Fy = yield strength (MPa)
+    phi_b = resistance factor (default 0.9)
+    Returns Mr in kN·m
+    """
+    Mr_Nmm = phi_b * Se * Fy
+    return Mr_Nmm / 1e6
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")
@@ -306,35 +318,56 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
     zx = shape.get("zx")
     sx = shape.get("sx")
     
-    if zx is None or sx is None:
-        return {
-            "mr_kNm": None,
-            "mode": "Missing Zx/Sx data",
-            "error": True
-        }
-
-    # Note: Zx and Sx in CSV are in 10^3 mm^3, so multiply by 1000
-    Zx = fnum(zx, "Zx") * 1000
-    Sx = fnum(sx, "Sx") * 1000
-
     if class_section in (1, 2):
+        if zx is None:
+            return {
+                "mr_kNm": None,
+                "mode": "Missing Zx data",
+                "error": True
+            }
+        # Note: Zx in CSV is in 10^3 mm^3, so multiply by 1000
+        Zx = fnum(zx, "Zx") * 1000
         Mr_Nmm = PHI_B * Zx * Fy
         mode = f"Plastic (Zx = {Zx/1000:.0f} × 10³ mm³)"
+        return {
+            "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
+            "mode": mode,
+            "error": False
+        }
     elif class_section == 3:
+        if sx is None:
+            return {
+                "mr_kNm": None,
+                "mode": "Missing Sx data",
+                "error": True
+            }
+        # Note: Sx in CSV is in 10^3 mm^3, so multiply by 1000
+        Sx = fnum(sx, "Sx") * 1000
         Mr_Nmm = PHI_B * Sx * Fy
         mode = f"Elastic (Sx = {Sx/1000:.0f} × 10³ mm³)"
-    else:
         return {
-            "mr_kNm": None,
-            "mode": "Class 4 requires effective section modulus (Se) — not implemented",
-            "error": True
+            "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
+            "mode": mode,
+            "error": False
         }
-
-    return {
-        "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
-        "mode": mode,
-        "error": False
-    }
+    else:
+        # Class 4: use effective section modulus
+        d  = fnum(shape.get("d"), "d")
+        b  = fnum(shape.get("b"), "b")
+        tf = fnum(shape.get("tf"), "tf")
+        tw = fnum(shape.get("tw"), "tw")
+        
+        se_result = compute_Se_CSA(d, b, tf, tw, Fy)
+        Se = se_result["Se"]
+        Mr_kNm = Mr_class4(Se, Fy, PHI_B)
+        
+        mode = f"Effective (Se = {Se/1000:.0f} × 10³ mm³)"
+        return {
+            "mr_kNm": round(Mr_kNm, 1),
+            "mode": mode,
+            "error": False,
+            "class4_details": se_result
+        }
 
 
 # ----------------------------

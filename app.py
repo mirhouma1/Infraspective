@@ -31,6 +31,7 @@ CANON_SYNONYMS = {
     "tw": {"tw", "w", "web_thickness", "web_thickness_w", "web_thickness_w_mm"},
     "zx": {"zx", "z_x", "plastic_modulus_zx", "plastic_modulus_zx_mm3", "zx_mm3", "zx_103_mm"},
     "sx": {"sx", "s_x", "elastic_modulus_sx", "elastic_modulus_sx_mm3", "sx_mm3", "sx_103_mm"},
+    "k": {"k", "distance_k", "distance_k_mm", "fillet_distance"},
 }
 
 def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,11 +44,50 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
             if ck in norm_map and norm_map[ck] not in (None, ""):
                 return norm_map[ck]
         return None
+    
+    def pick_by_prefix(prefix: str) -> Optional[Any]:
+        for k, v in rec.items():
+            k_lower = k.lower().strip()
+            if k_lower.startswith(prefix) and v not in (None, ""):
+                return v
+        return None
 
-    for f in ("designation", "d", "b", "tf", "tw", "zx", "sx"):
+    for f in ("designation", "d", "b", "tf", "tw", "zx", "sx", "k"):
         v = pick(f)
         if v is not None:
             out[f] = v
+    
+    # Fallback: try prefix matching for Zx and Sx columns (e.g., "Zx (10^3 mm³)")
+    if out.get("zx") is None:
+        v = pick_by_prefix("zx")
+        if v is not None:
+            out["zx"] = v
+    if out.get("sx") is None:
+        v = pick_by_prefix("sx")
+        if v is not None:
+            out["sx"] = v
+    
+    # Also match "Depth d" and similar patterns
+    if out.get("d") is None:
+        v = pick_by_prefix("depth d")
+        if v is not None:
+            out["d"] = v
+    if out.get("b") is None:
+        v = pick_by_prefix("flange width")
+        if v is not None:
+            out["b"] = v
+    if out.get("tf") is None:
+        v = pick_by_prefix("flange thickness")
+        if v is not None:
+            out["tf"] = v
+    if out.get("tw") is None:
+        v = pick_by_prefix("web thickness")
+        if v is not None:
+            out["tw"] = v
+    if out.get("k") is None:
+        v = pick_by_prefix("distance k")
+        if v is not None:
+            out["k"] = v
 
     return out
 
@@ -109,11 +149,22 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     b  = fnum(shape.get("b"), "b")
     tf = fnum(shape.get("tf"), "tf")
     tw = fnum(shape.get("tw"), "tw")
+    
+    # CSA S16: clear web depth h = d - 2k (k is the fillet distance)
+    # Fallback to d - 2tf if k is not available
+    k = shape.get("k")
+    if k is not None:
+        try:
+            k_val = float(k)
+            hw = d - 2.0 * k_val
+        except (ValueError, TypeError):
+            hw = d - 2.0 * tf
+    else:
+        hw = d - 2.0 * tf
 
     if Fy <= 0:
         raise ValueError("Fy must be > 0")
 
-    hw = d - 2.0 * tf
     be = 0.5 * b
 
     lam_f = be / tf
@@ -151,7 +202,7 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
             "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
             "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
         },
-        "geometry_used_mm": {"d": d, "b": b, "tf": tf, "tw": tw, "hw": round(hw, 2), "be": round(be, 2)},
+        "geometry_used_mm": {"d": d, "b": b, "tf": tf, "tw": tw, "hw": round(hw, 2), "be": round(be, 2), "k": k},
     }
 
 

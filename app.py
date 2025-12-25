@@ -355,6 +355,13 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     else:
         governing = "Web"
 
+    geom = {"d": d, "b": b, "tf": tf, "tw": tw, "h": d - 2*tf}
+    
+    # Compute se_info for Class 4 sections
+    se_info = None
+    if section_class == 4:
+        se_info = compute_se_with_steps(geom, Fy)
+    
     return {
         "class_flange": class_flange,
         "class_web": class_web,
@@ -365,7 +372,8 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
             "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
             "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
         },
-        "geometry_used": {"d": d, "b": b, "tf": tf, "tw": tw, "h": d - 2*tf},
+        "geometry_used": geom,
+        "se_info": se_info,
     }
 
 
@@ -588,6 +596,22 @@ if selected_section:
                     label="Demand/Capacity Ratio",
                     value=f"{ratio:.2%}"
                 )
+    
+    # Class 4 effective section modulus derivation
+    if class_info["class_section"] == 4:
+        with st.expander("Class 4 – Effective Section Modulus (Se) derivation", expanded=False):
+            se_info = class_info.get("se_info")
+
+            if not se_info or se_info.get("Se") is None:
+                st.warning("Se derivation not available.")
+            else:
+                for s in se_info["steps"]:
+                    st.markdown(f"**{s['label']}**")
+                    if "latex" in s:
+                        st.latex(s["latex"])
+                    if "text" in s:
+                        st.write(s["text"])
+                    st.divider()
     
     st.divider()
     

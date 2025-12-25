@@ -210,6 +210,17 @@ def effective_Ix(b_eff: float, tf: float, h_eff: float, tw: float) -> float:
     return If_total + Iw
 
 
+def effective_section_modulus(d: float, Ix_eff: float) -> float:
+    """
+    Calculate effective section modulus for Class 4 sections.
+    d = total section depth (mm)
+    Ix_eff = effective moment of inertia (mm^4)
+    Returns Se (mm^3)
+    """
+    c = d / 2.0
+    return Ix_eff / c
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")

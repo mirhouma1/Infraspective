@@ -199,17 +199,8 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     tf = fnum(shape.get("tf"), "tf")
     tw = fnum(shape.get("tw"), "tw")
     
-    # CSA S16: clear web depth h = d - 2k (k is the fillet distance)
-    # Fallback to d - 2tf if k is not available
-    k = shape.get("k")
-    if k is not None:
-        try:
-            k_val = float(k)
-            hw = d - 2.0 * k_val
-        except (ValueError, TypeError):
-            hw = d - 2.0 * tf
-    else:
-        hw = d - 2.0 * tf
+    # Clear web height: h = d - 2*tf (symmetric section, neutral axis at mid-depth)
+    hw = d - 2.0 * tf
 
     if Fy <= 0:
         raise ValueError("Fy must be > 0")
@@ -251,7 +242,7 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
             "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
             "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
         },
-        "geometry_used_mm": {"d": d, "b": b, "tf": tf, "tw": tw, "hw": round(hw, 2), "be": round(be, 2), "k": k},
+        "geometry_used_mm": {"d": d, "b": b, "tf": tf, "tw": tw, "h": round(hw, 2), "be": round(be, 2)},
     }
 
 

@@ -107,7 +107,7 @@ def _load_csv(path: Path) -> tuple[Dict[str, Dict[str, Any]], List[str]]:
     return out, order
 
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_shapes() -> tuple[Dict[str, Dict[str, Any]], List[str]]:
     if not DATA_DIR.exists():
         st.error(f"Missing data directory: {DATA_DIR}")

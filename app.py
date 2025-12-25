@@ -176,6 +176,23 @@ def effective_flange_width(b: float, tf: float, Fy: float) -> float:
         return min(be, b)
 
 
+def effective_web_height(h: float, tw: float, Fy: float) -> float:
+    """
+    Calculate effective web height for Class 4 sections.
+    h  = clear web height between flanges (mm)
+    tw = web thickness (mm)
+    Fy = yield strength (MPa)
+    """
+    lambda_web = h / tw
+    lambda_r = web_lambda_r(Fy)
+
+    if lambda_web <= lambda_r:
+        return h  # not slender
+    else:
+        he = h * (lambda_r / lambda_web)
+        return min(he, h)
+
+
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     d  = fnum(shape.get("d"), "d")
     b  = fnum(shape.get("b"), "b")

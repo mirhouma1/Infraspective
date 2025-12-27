@@ -1,0 +1,139 @@
+import math
+from typing import Any, Dict, Optional, List
+from dataclasses import dataclass
+
+PHI_B = 0.9
+E_MPA_DEFAULT = 200000.0  # MPa = N/mm^2
+
+@dataclass
+class TraceLine:
+    kind: str      # "text" | "latex"
+    content: str
+
+class Trace:
+    def __init__(self):
+        self.lines: List[TraceLine] = []
+        self.warnings: List[str] = []
+
+    def text(self, s: str) -> None:
+        self.lines.append(TraceLine("text", s))
+
+    def warn(self, s: str) -> None:
+        self.warnings.append(s)
+
+def omega2_from_case(case: str) -> float:
+    """
+    Placeholder ω2 mapping.
+    Replace values with your CSA/notes once you lock them in.
+    """
+    m = {
+        "uniform_moment": 1.00,
+        "midspan_point": 1.13,
+        "udl": 1.30,
+        "triangular": 1.40,
+        "cantilever_point": 1.00,
+    }
+    return float(m.get(case, 1.00))
+
+def residual_stress_factor(section_class: int, Fy: float, Lb_mm: float, rts_mm: float) -> float:
+    """
+    Placeholder "residual stress / inelastic transition" factor in (0,1].
+    Replace with CSA exact logic when you implement it.
+    """
+    if rts_mm <= 0:
+        return 1.0
+    # nondimensional slenderness proxy
+    lam = (Lb_mm / rts_mm) * math.sqrt(max(Fy, 1.0) / 350.0)
+
+    if section_class in (1, 2):
+        if lam <= 60:
+            return 1.0
+        return max(0.75, 1.0 - 0.003 * (lam - 60))
+    if section_class == 3:
+        if lam <= 50:
+            return 0.95
+        return max(0.65, 0.95 - 0.004 * (lam - 50))
+    return 0.60
+
+def Mr_LTB_core(
+    shape: Dict[str, Any],
+    Fy: float,
+    section_class: int,
+    Lb_mm: float,
+    omega2: float,
+    phi_b: float = PHI_B,
+) -> Dict[str, Any]:
+    """
+    LTB "wire-up" core:
+    - Uses Zx or Sx (or Se for Class 4) as base moment
+    - Applies a length-dependent elastic cap using Ix (proxy)
+    - Applies omega2 + residual stress factor
+    Replace internals with CSA LTB equations later.
+    """
+    tr = Trace()
+
+    if Fy <= 0 or Lb_mm <= 0 or omega2 <= 0:
+        return {"ok": False, "error": "Fy, Lb, ω2 must be > 0", "trace": tr}
+
+    # ---- base moment from section class
+    Zx_raw = shape.get("Zx")
+    Sx_raw = shape.get("Sx")
+    Ix_raw = shape.get("Ix")
+
+    if section_class in (1, 2):
+        if Zx_raw is None:
+            return {"ok": False, "error": "Missing Zx for Class 1/2", "trace": tr}
+        Zx = float(Zx_raw) * 1000.0  # (10^3 mm^3) -> mm^3
+        Mbase = Zx * Fy
+        tr.text(f"Base: Mp = Zx*Fy = {Zx/1000:.0f}×10^3 * {Fy:.1f}")
+    elif section_class == 3:
+        if Sx_raw is None:
+            return {"ok": False, "error": "Missing Sx for Class 3", "trace": tr}
+        Sx = float(Sx_raw) * 1000.0
+        Mbase = Sx * Fy
+        tr.text(f"Base: My = Sx*Fy = {Sx/1000:.0f}×10^3 * {Fy:.1f}")
+    else:
+        # If you already have Class 4 Se code, call it here.
+        # For now, error out to force you to use your existing Se function.
+        return {"ok": False, "error": "Class 4 LTB: call your Se routine here", "trace": tr}
+
+    # ---- elastic cap proxy from Ix
+    if Ix_raw is None:
+        Mcap = float("inf")
+        tr.warn("Ix missing -> no Lb-dependent cap applied.")
+        rts = 0.0
+    else:
+        Ix = float(Ix_raw) * 1e6  # (10^6 mm^4) -> mm^4
+        # rts proxy: use rx ≈ sqrt(Ix/A) if Area exists, else a fallback
+        A_raw = shape.get("Area") or shape.get("area")
+        if A_raw is None:
+            A = 1.0
+            tr.warn("Area missing -> rts proxy is rough.")
+        else:
+            A = float(A_raw)
+
+        rx = math.sqrt(max(Ix / max(A, 1e-6), 1e-6))
+        rts = rx
+
+        E = E_MPA_DEFAULT
+        Mcap = (math.pi**2) * E * Ix / (Lb_mm**2)
+        tr.text(f"Cap proxy: Mcap = π²EI/Lb² = {Mcap/1e6:.1f} kN·m")
+
+    # ---- modifiers
+    k_rs = residual_stress_factor(section_class, Fy, Lb_mm, max(rts, 1e-6))
+    k_om = min(max(omega2, 0.4), 2.0)
+
+    tr.text(f"k_rs={k_rs:.3f}, ω2={omega2:.3f} (used {k_om:.3f})")
+
+    Mnom = min(Mbase, Mcap) * k_rs * k_om
+    Mr = phi_b * Mnom
+    Mr_kNm = Mr / 1e6
+
+    return {
+        "ok": True,
+        "Mr_kNm": Mr_kNm,
+        "phi_b": phi_b,
+        "k_rs": k_rs,
+        "omega2_used": k_om,
+        "trace": tr,
+    }

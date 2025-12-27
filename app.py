@@ -138,6 +138,7 @@ CANON_SYNONYMS: Dict[str, List[str]] = {
     # Section properties (IMPORTANT: include exact CSA headers too)
     "Zx": ["Zx", "zx", "z_x", "plastic_modulus_zx", "plastic_modulus_zx_mm3", "zx_mm3", "zx_103_mm"],
     "Sx": ["Sx", "sx", "s_x", "elastic_modulus_sx", "elastic_modulus_sx_mm3", "sx_mm3", "sx_103_mm"],
+    "Ix": ["Ix", "ix", "i_x", "ix_106_mm4", "ix_106_mm"],
     "k":  ["k", "K", "distance_k", "distance_k_mm", "fillet_distance"],
 }
 
@@ -163,7 +164,7 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         if v is not None:
             out[sym] = v
 
-    for sym in ("Zx", "Sx", "k"):
+    for sym in ("Zx", "Sx", "Ix", "k"):
         v = _pick(rec, CANON_SYNONYMS[sym])
         if v is not None:
             out[sym] = v
@@ -572,6 +573,132 @@ def shear_demand_check(Vu_kN: float, Vr_kN: float) -> Dict[str, Any]:
     return {"utilization": util, "pass": Vu <= Vr}
 
 
+# ============================================================
+# LATERAL TORSIONAL BUCKLING (LTB) — CSA S16 13.6
+# ============================================================
+E_MPA_DEFAULT = 200000.0  # MPa = N/mm²
+
+def omega2_from_case(case: str) -> float:
+    """ω2 moment gradient factor for common loading cases."""
+    m = {
+        "uniform_moment": 1.00,
+        "midspan_point": 1.13,
+        "udl": 1.30,
+        "triangular": 1.40,
+        "cantilever_point": 1.00,
+    }
+    return float(m.get(case, 1.00))
+
+OMEGA2_CASES = [
+    ("uniform_moment", "Uniform moment (ω₂ = 1.00)"),
+    ("midspan_point", "Midspan point load (ω₂ = 1.13)"),
+    ("udl", "UDL (ω₂ = 1.30)"),
+    ("triangular", "Triangular moment (ω₂ = 1.40)"),
+    ("cantilever_point", "Cantilever point load (ω₂ = 1.00)"),
+]
+
+
+def residual_stress_factor(section_class: int, Fy: float, Lb_mm: float, rts_mm: float) -> float:
+    """Residual stress / inelastic transition factor in (0,1]."""
+    if rts_mm <= 0:
+        return 1.0
+    lam = (Lb_mm / rts_mm) * math.sqrt(max(Fy, 1.0) / 350.0)
+
+    if section_class in (1, 2):
+        if lam <= 60:
+            return 1.0
+        return max(0.75, 1.0 - 0.003 * (lam - 60))
+    if section_class == 3:
+        if lam <= 50:
+            return 0.95
+        return max(0.65, 0.95 - 0.004 * (lam - 50))
+    return 0.60
+
+
+def Mr_LTB_core(
+    shape: Dict[str, Any],
+    Fy: float,
+    section_class: int,
+    Lb_mm: float,
+    omega2: float,
+    phi_b: float = PHI_B,
+) -> Dict[str, Any]:
+    """
+    LTB core calculation:
+    - Uses Zx or Sx (or Se for Class 4) as base moment
+    - Applies length-dependent elastic cap using Ix
+    - Applies ω2 + residual stress factor
+    """
+    tr = TraceBuilder()
+
+    if Fy <= 0 or Lb_mm <= 0 or omega2 <= 0:
+        return {"ok": False, "error": "Fy, Lb, ω2 must be > 0", "trace": tr}
+
+    Zx_raw = shape.get("Zx")
+    Sx_raw = shape.get("Sx")
+    Ix_raw = shape.get("Ix")
+
+    if section_class in (1, 2):
+        if Zx_raw is None:
+            return {"ok": False, "error": "Missing Zx for Class 1/2", "trace": tr}
+        Zx = float(Zx_raw) * 1000.0
+        Mbase = Zx * Fy
+        tr.text(f"Base: Mp = Zx×Fy = {Zx/1000:.0f}×10³ × {Fy:.1f} MPa")
+    elif section_class == 3:
+        if Sx_raw is None:
+            return {"ok": False, "error": "Missing Sx for Class 3", "trace": tr}
+        Sx = float(Sx_raw) * 1000.0
+        Mbase = Sx * Fy
+        tr.text(f"Base: My = Sx×Fy = {Sx/1000:.0f}×10³ × {Fy:.1f} MPa")
+    else:
+        d = fnum(shape.get("d"), "d")
+        b = fnum(shape.get("b"), "b")
+        t = fnum(shape.get("t"), "t")
+        w = fnum(shape.get("w"), "w")
+        se_result = compute_Se_CSA(d, b, t, w, Fy)
+        Se = se_result["Se"]
+        Mbase = Se * Fy
+        tr.text(f"Base (Class 4): Me = Se×Fy = {Se/1000:.0f}×10³ × {Fy:.1f} MPa")
+
+    if Ix_raw is None:
+        Mcap = float("inf")
+        tr.warn("Ix missing → no Lb-dependent cap applied.")
+        rts = 0.0
+    else:
+        Ix = float(Ix_raw) * 1e6
+        A_raw = shape.get("Area") or shape.get("area")
+        if A_raw is None:
+            A = 1.0
+            tr.warn("Area missing → rts proxy is rough.")
+        else:
+            A = float(A_raw)
+
+        rx = math.sqrt(max(Ix / max(A, 1e-6), 1e-6))
+        rts = rx
+
+        E = E_MPA_DEFAULT
+        Mcap = (math.pi**2) * E * Ix / (Lb_mm**2)
+        tr.text(f"Cap proxy: Mcap = π²EI/Lb² = {Mcap/1e6:.1f} kN·m")
+
+    k_rs = residual_stress_factor(section_class, Fy, Lb_mm, max(rts, 1e-6))
+    k_om = min(max(omega2, 0.4), 2.0)
+
+    tr.text(f"k_rs = {k_rs:.3f}, ω2 = {omega2:.3f} (used {k_om:.3f})")
+
+    Mnom = min(Mbase, Mcap) * k_rs * k_om
+    Mr = phi_b * Mnom
+    Mr_kNm = Mr / 1e6
+
+    return {
+        "ok": True,
+        "Mr_kNm": Mr_kNm,
+        "phi_b": phi_b,
+        "k_rs": k_rs,
+        "omega2_used": k_om,
+        "trace": tr,
+    }
+
+
 # ----------------------------
 # STREAMLIT APP
 # ----------------------------
@@ -794,6 +921,61 @@ if selected_section:
 
         except Exception as e:
             st.error(f"Shear calculation error: {e}")
+
+    st.divider()
+
+    # ----------------------------
+    # LATERAL TORSIONAL BUCKLING (LTB)
+    # ----------------------------
+    st.subheader("Lateral Torsional Buckling (CSA S16 13.6)")
+
+    ltb_enable = st.checkbox("Enable LTB Check", value=False)
+    if ltb_enable:
+        ltb_col1, ltb_col2, ltb_col3 = st.columns([1, 1, 2])
+
+        with ltb_col1:
+            Lb_m = st.number_input("Unbraced length Lb (m)", min_value=0.1, value=3.0, step=0.5)
+            Lb_mm = Lb_m * 1000.0
+
+        with ltb_col2:
+            omega2_case = st.selectbox(
+                "Loading case (ω₂)",
+                options=[c[0] for c in OMEGA2_CASES],
+                format_func=lambda x: dict(OMEGA2_CASES)[x],
+                index=0,
+            )
+            omega2 = omega2_from_case(omega2_case)
+
+        try:
+            ltb_res = Mr_LTB_core(
+                shape=shape,
+                Fy=float(Fy),
+                section_class=class_info["class_section"],
+                Lb_mm=Lb_mm,
+                omega2=omega2,
+            )
+
+            with ltb_col3:
+                if ltb_res["ok"]:
+                    st.metric("LTB Moment Resistance (Mr,LTB)", f"{ltb_res['Mr_kNm']:,.1f} kN·m")
+                    st.caption(f"φb = {ltb_res['phi_b']}, k_rs = {ltb_res['k_rs']:.3f}, ω₂ = {ltb_res['omega2_used']:.2f}")
+
+                    # Compare with laterally supported
+                    Mr_lat = mr_info.get("mr_kNm")
+                    if Mr_lat and not mr_info.get("error"):
+                        if ltb_res['Mr_kNm'] < Mr_lat:
+                            st.warning(f"LTB governs: {ltb_res['Mr_kNm']:.1f} < {Mr_lat:.1f} kN·m (laterally supported)")
+                        else:
+                            st.info(f"Laterally supported governs: {Mr_lat:.1f} ≤ {ltb_res['Mr_kNm']:.1f} kN·m")
+                else:
+                    st.warning(f"LTB error: {ltb_res.get('error', 'Unknown error')}")
+
+            with st.expander("LTB calculation trace (show steps)", expanded=False):
+                if ltb_res.get("trace"):
+                    ltb_res["trace"].render()
+
+        except Exception as e:
+            st.error(f"LTB calculation error: {e}")
 
     st.divider()
 

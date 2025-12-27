@@ -1,7 +1,8 @@
 import csv
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
 import pandas as pd
 import streamlit as st
 
@@ -10,6 +11,7 @@ import streamlit as st
 # ----------------------------
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PHI_B = 0.9
+PHI_V_DEFAULT = 0.9  # set to your project standard
 
 # ----------------------------
 # KEY NORMALIZATION + CANONICAL FIELD MAP
@@ -24,9 +26,10 @@ def _norm(s: str) -> str:
         .replace("^", "")
     )
 
+
 CANON_SYNONYMS = {
     "designation": {"designation", "shape", "section", "name", "w_shape"},
-    "d": {"d", "depth", "depth_d", "depth_d_mm", "overall_depth", "depth_d"},
+    "d": {"d", "depth", "depth_d", "depth_d_mm", "overall_depth"},
     "b": {"b", "bf", "flange_width", "flange_width_b", "flange_width_b_mm"},
     "tf": {"tf", "t", "flange_thickness", "flange_thickness_t", "flange_thickness_t_mm"},
     "tw": {"tw", "w", "web_thickness", "web_thickness_w", "web_thickness_w_mm"},
@@ -34,6 +37,7 @@ CANON_SYNONYMS = {
     "sx": {"sx", "s_x", "elastic_modulus_sx", "elastic_modulus_sx_mm3", "sx_mm3", "sx_103_mm"},
     "k": {"k", "distance_k", "distance_k_mm", "fillet_distance"},
 }
+
 
 def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     norm_map = {_norm(k): v for k, v in rec.items()}
@@ -45,7 +49,7 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
             if ck in norm_map and norm_map[ck] not in (None, ""):
                 return norm_map[ck]
         return None
-    
+
     def pick_by_prefix(prefix: str) -> Optional[Any]:
         for k, v in rec.items():
             k_lower = k.lower().strip()
@@ -57,7 +61,7 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         v = pick(f)
         if v is not None:
             out[f] = v
-    
+
     # Fallback: try prefix matching for Zx and Sx columns (e.g., "Zx (10^3 mm³)")
     if out.get("zx") is None:
         v = pick_by_prefix("zx")
@@ -67,8 +71,8 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         v = pick_by_prefix("sx")
         if v is not None:
             out["sx"] = v
-    
-    # Also match "Depth d" and similar patterns
+
+    # Also match some common patterns
     if out.get("d") is None:
         v = pick_by_prefix("depth d")
         if v is not None:
@@ -93,7 +97,7 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _load_csv(path: Path) -> tuple[Dict[str, Dict[str, Any]], List[str]]:
+def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     out: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
     with path.open("r", encoding="utf-8", newline="") as f:
@@ -108,7 +112,7 @@ def _load_csv(path: Path) -> tuple[Dict[str, Dict[str, Any]], List[str]]:
 
 
 @st.cache_data(ttl=60)
-def load_shapes() -> tuple[Dict[str, Dict[str, Any]], List[str]]:
+def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     if not DATA_DIR.exists():
         st.error(f"Missing data directory: {DATA_DIR}")
         return {}, []
@@ -123,14 +127,6 @@ def load_shapes() -> tuple[Dict[str, Dict[str, Any]], List[str]]:
             order.extend(csv_order)
 
     return merged, order
-
-
-def list_designations(q: str = "") -> List[str]:
-    shapes, order = load_shapes()
-    if not q:
-        return order
-    qq = q.lower().strip()
-    return [k for k in order if qq in k.lower()]
 
 
 def get_shape(designation: str) -> Optional[Dict[str, Any]]:
@@ -149,203 +145,134 @@ def to_kNm_from_Nmm(M_Nmm: float) -> float:
     return M_Nmm * 1e-6
 
 
+# ----------------------------
+# CSA TABLE 2 HELPERS (CLASSIFICATION)
+# ----------------------------
 def flange_lambda_r(Fy: float) -> float:
-    """CSA S16 Table 2 – flange outstand in compression (Class 3 limit)"""
+    # Class 3 limit for flange outstand in compression (your earlier helper)
     return 170.0 / math.sqrt(Fy)
 
 
 def web_lambda_r(Fy: float) -> float:
-    """CSA S16 Table 2 – web in flexure (Class 2 limit)"""
+    # Class 2 limit for web in flexure (your earlier helper)
     return 525.0 / math.sqrt(Fy)
 
 
+# ----------------------------
+# CLASS 4 EFFECTIVE SECTION MODULUS (your method)
+# ----------------------------
 def effective_flange_width(b: float, tf: float, Fy: float) -> float:
-    """
-    Calculate effective flange width for Class 4 sections.
-    b  = full flange width (mm)
-    tf = flange thickness (mm)
-    Fy = yield strength (MPa)
-    """
     lambda_flange = b / (2.0 * tf)
     lambda_r = flange_lambda_r(Fy)
-
     if lambda_flange <= lambda_r:
-        return b  # not slender
-    else:
-        be = b * (lambda_r / lambda_flange)
-        return min(be, b)
+        return b
+    be = b * (lambda_r / lambda_flange)
+    return min(be, b)
 
 
 def effective_web_height(h: float, tw: float, Fy: float) -> float:
-    """
-    Calculate effective web height for Class 4 sections.
-    h  = clear web height between flanges (mm)
-    tw = web thickness (mm)
-    Fy = yield strength (MPa)
-    """
     lambda_web = h / tw
     lambda_r = web_lambda_r(Fy)
-
     if lambda_web <= lambda_r:
-        return h  # not slender
-    else:
-        he = h * (lambda_r / lambda_web)
-        return min(he, h)
+        return h
+    he = h * (lambda_r / lambda_web)
+    return min(he, h)
 
 
 def effective_Ix(b_eff: float, tf: float, h_eff: float, tw: float) -> float:
-    """
-    Calculate effective moment of inertia for Class 4 sections.
-    Returns effective Ix (mm^4)
-    """
-    # Flanges (2x)
     Af = b_eff * tf
     y = (h_eff / 2.0) + (tf / 2.0)
     If_local = (b_eff * tf**3) / 12.0
     If_total = 2.0 * (If_local + Af * y**2)
-
-    # Web
     Iw = (tw * h_eff**3) / 12.0
-
     return If_total + Iw
 
 
 def effective_section_modulus(d: float, Ix_eff: float) -> float:
-    """
-    Calculate effective section modulus for Class 4 sections.
-    d = total section depth (mm)
-    Ix_eff = effective moment of inertia (mm^4)
-    Returns Se (mm^3)
-    """
     c = d / 2.0
     return Ix_eff / c
 
 
 def compute_Se_CSA(d: float, b: float, tf: float, tw: float, Fy: float) -> dict:
-    """
-    Compute effective section modulus per CSA S16 for Class 4 sections.
-    d  = total depth (mm)
-    b  = flange width (mm)
-    tf = flange thickness (mm)
-    tw = web thickness (mm)
-    Fy = yield strength (MPa)
-    """
-    # Clear web height
     h = d - 2.0 * tf
-
-    # Effective dimensions
     b_eff = effective_flange_width(b, tf, Fy)
     h_eff = effective_web_height(h, tw, Fy)
-
-    # Effective properties
     Ix_eff = effective_Ix(b_eff, tf, h_eff, tw)
     Se = effective_section_modulus(d, Ix_eff)
-
-    return {
-        "b_eff": b_eff,
-        "h_eff": h_eff,
-        "Ix_eff": Ix_eff,
-        "Se": Se
-    }
+    return {"b_eff": b_eff, "h_eff": h_eff, "Ix_eff": Ix_eff, "Se": Se}
 
 
-def Mr_class4(Se: float, Fy: float, phi_b: float = 0.9) -> float:
-    """
-    Calculate moment resistance for Class 4 sections.
-    Se = effective section modulus (mm^3)
-    Fy = yield strength (MPa)
-    phi_b = resistance factor (default 0.9)
-    Returns Mr in kN·m
-    """
+def Mr_class4(Se: float, Fy: float, phi_b: float = PHI_B) -> float:
     Mr_Nmm = phi_b * Se * Fy
-    return Mr_Nmm / 1e6
+    return Mr_Nmm / 1e6  # kN·m
 
 
 def compute_se_with_steps(geom: dict, Fy: float) -> dict:
-    """
-    Compute effective section modulus with step-by-step calculations for display.
-    geom: dict with d, b, tf, tw (mm)
-    Fy: MPa
-    Returns: dict with Se + intermediate values + display steps
-    """
-    d  = geom["d"]
-    b  = geom["b"]
+    d = geom["d"]
+    b = geom["b"]
     tf = geom["tf"]
     tw = geom["tw"]
 
-    # --- Step A: Clear web height ---
-    h = d - 2.0*tf
-
-    # --- Step B: Slenderness ratios ---
-    lam_f = (b/2.0) / tf
+    h = d - 2.0 * tf
+    lam_f = (b / 2.0) / tf
     lam_w = h / tw
 
-    # --- Step C: CSA effective element calculations ---
     b_eff = effective_flange_width(b, tf, Fy)
     h_eff = effective_web_height(h, tw, Fy)
-
-    # --- Step D: Compute effective properties -> Ix_eff -> Se ---
     Ix_eff = effective_Ix(b_eff, tf, h_eff, tw)
     Se = effective_section_modulus(d, Ix_eff)
 
     steps = [
-        {"label": "Given geometry (mm)",
-         "text": f"d={d:.1f}, b={b:.1f}, tf={tf:.1f}, tw={tw:.1f}"},
-        {"label": "Clear web height",
-         "latex": rf"h = d - 2t_f = {d:.1f} - 2({tf:.1f}) = {h:.1f}\ \mathrm{{mm}}"},
-        {"label": "Slenderness ratios",
-         "latex": rf"\lambda_f = \frac{{b/2}}{{t_f}} = \frac{{{b/2:.1f}}}{{{tf:.1f}}} = {lam_f:.2f},\quad "
-                  rf"\lambda_w = \frac{{h}}{{t_w}} = \frac{{{h:.1f}}}{{{tw:.1f}}} = {lam_w:.2f}"},
-        {"label": "Effective elements (CSA)",
-         "text": f"b_eff = {b_eff:.1f} mm,  h_eff = {h_eff:.1f} mm"},
-        {"label": "Effective section properties",
-         "text": f"Ix_eff = {Ix_eff:.3e} mm⁴"},
-        {"label": "Effective section modulus",
-         "latex": rf"S_e = \frac{{I_{{x,eff}}}}{{d/2}} = \frac{{{Ix_eff:.3e}}}{{{d/2:.1f}}} = {Se:.3e}\ \mathrm{{mm^3}}"}
+        {"label": "Given geometry (mm)", "text": f"d={d:.1f}, b={b:.1f}, tf={tf:.1f}, tw={tw:.1f}"},
+        {"label": "Clear web height", "latex": rf"h = d - 2t_f = {d:.1f} - 2({tf:.1f}) = {h:.1f}\ \mathrm{{mm}}"},
+        {
+            "label": "Slenderness ratios",
+            "latex": rf"\lambda_f = \frac{{b/2}}{{t_f}} = \frac{{{b/2:.1f}}}{{{tf:.1f}}} = {lam_f:.2f},\quad "
+                     rf"\lambda_w = \frac{{h}}{{t_w}} = \frac{{{h:.1f}}}{{{tw:.1f}}} = {lam_w:.2f}",
+        },
+        {"label": "Effective elements (CSA)", "text": f"b_eff = {b_eff:.1f} mm,  h_eff = {h_eff:.1f} mm"},
+        {"label": "Effective section properties", "text": f"Ix_eff = {Ix_eff:.3e} mm⁴"},
+        {
+            "label": "Effective section modulus",
+            "latex": rf"S_e = \frac{{I_{{x,eff}}}}{{d/2}} = \frac{{{Ix_eff:.3e}}}{{{d/2:.1f}}} = {Se:.3e}\ \mathrm{{mm^3}}",
+        },
     ]
 
-    return {
-        "Se": Se,
-        "Ix_eff": Ix_eff,
-        "b_eff": b_eff,
-        "h_eff": h_eff,
-        "lam_f": lam_f,
-        "lam_w": lam_w,
-        "h": h,
-        "steps": steps,
-    }
+    return {"Se": Se, "Ix_eff": Ix_eff, "b_eff": b_eff, "h_eff": h_eff, "lam_f": lam_f, "lam_w": lam_w, "h": h, "steps": steps}
 
 
+# ----------------------------
+# TABLE 2 CLASSIFICATION (your existing logic)
+# ----------------------------
 def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
-    d  = fnum(shape.get("d"), "d")
-    b  = fnum(shape.get("b"), "b")
+    d = fnum(shape.get("d"), "d")
+    b = fnum(shape.get("b"), "b")
     tf = fnum(shape.get("tf"), "tf")
     tw = fnum(shape.get("tw"), "tw")
-    
-    # Clear web height: h = d - 2*tf (symmetric section, neutral axis at mid-depth)
-    hw = d - 2.0 * tf
 
+    hw = d - 2.0 * tf
     if Fy <= 0:
         raise ValueError("Fy must be > 0")
 
     be = 0.5 * b
-
     lam_f = be / tf
     lam_w = hw / tw
 
     r = 1.0 / math.sqrt(Fy)
-
-    f1, f2, f3 = 145*r, 170*r, 200*r
-    w1, w2, w3 = 420*r, 525*r, 670*r
+    f1, f2, f3 = 145 * r, 170 * r, 200 * r
+    w1, w2, w3 = 420 * r, 525 * r, 670 * r
 
     def classify(lam: float, lim1: float, lim2: float, lim3: float) -> int:
-        if lam <= lim1: return 1
-        if lam <= lim2: return 2
-        if lam <= lim3: return 3
+        if lam <= lim1:
+            return 1
+        if lam <= lim2:
+            return 2
+        if lam <= lim3:
+            return 3
         return 4
 
     class_flange = classify(lam_f, f1, f2, f3)
-    class_web    = classify(lam_w, w1, w2, w3)
+    class_web = classify(lam_w, w1, w2, w3)
     section_class = max(class_flange, class_web)
 
     if section_class == class_flange and section_class == class_web:
@@ -355,13 +282,12 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     else:
         governing = "Web"
 
-    geom = {"d": d, "b": b, "tf": tf, "tw": tw, "h": d - 2*tf}
-    
-    # Compute se_info for Class 4 sections
+    geom = {"d": d, "b": b, "tf": tf, "tw": tw, "h": d - 2 * tf}
+
     se_info = None
     if section_class == 4:
         se_info = compute_se_with_steps(geom, Fy)
-    
+
     return {
         "class_flange": class_flange,
         "class_web": class_web,
@@ -380,57 +306,140 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
 def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int) -> Dict[str, Any]:
     zx = shape.get("zx")
     sx = shape.get("sx")
-    
+
     if class_section in (1, 2):
         if zx is None:
-            return {
-                "mr_kNm": None,
-                "mode": "Missing Zx data",
-                "error": True
-            }
-        # Note: Zx in CSV is in 10^3 mm^3, so multiply by 1000
-        Zx = fnum(zx, "Zx") * 1000
+            return {"mr_kNm": None, "mode": "Missing Zx data", "error": True}
+        Zx = fnum(zx, "Zx") * 1000  # CSV in 10^3 mm^3 -> mm^3
         Mr_Nmm = PHI_B * Zx * Fy
-        mode = f"Plastic (Zx = {Zx/1000:.0f} × 10³ mm³)"
-        return {
-            "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
-            "mode": mode,
-            "error": False
-        }
-    elif class_section == 3:
+        return {"mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1), "mode": f"Plastic (Zx = {Zx/1000:.0f} × 10³ mm³)", "error": False}
+
+    if class_section == 3:
         if sx is None:
-            return {
-                "mr_kNm": None,
-                "mode": "Missing Sx data",
-                "error": True
-            }
-        # Note: Sx in CSV is in 10^3 mm^3, so multiply by 1000
+            return {"mr_kNm": None, "mode": "Missing Sx data", "error": True}
         Sx = fnum(sx, "Sx") * 1000
         Mr_Nmm = PHI_B * Sx * Fy
-        mode = f"Elastic (Sx = {Sx/1000:.0f} × 10³ mm³)"
-        return {
-            "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
-            "mode": mode,
-            "error": False
-        }
+        return {"mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1), "mode": f"Elastic (Sx = {Sx/1000:.0f} × 10³ mm³)", "error": False}
+
+    # Class 4
+    d = fnum(shape.get("d"), "d")
+    b = fnum(shape.get("b"), "b")
+    tf = fnum(shape.get("tf"), "tf")
+    tw = fnum(shape.get("tw"), "tw")
+
+    se_result = compute_Se_CSA(d, b, tf, tw, Fy)
+    Se = se_result["Se"]
+    Mr_kNm = Mr_class4(Se, Fy, PHI_B)
+
+    return {"mr_kNm": round(Mr_kNm, 1), "mode": f"Effective (Se = {Se/1000:.0f} × 10³ mm³)", "error": False, "class4_details": se_result}
+
+
+# ----------------------------
+# CSA S16 CLAUSE 13.4 — SHEAR (ELASTIC, UNSTIFFENED WEB, W-SHAPES)
+# ----------------------------
+def shear13_4_unstiffened_Wshape_elastic(
+    d_mm: float,
+    tw_mm: float,
+    Fy_MPa: float,
+    h_mm: Optional[float] = None,
+    tf_mm: Optional[float] = None,
+    phi_v: float = PHI_V_DEFAULT,
+) -> Dict[str, Any]:
+    warnings: List[str] = []
+    trace: List[str] = []
+
+    if Fy_MPa <= 0:
+        raise ValueError("Fy_MPa must be > 0")
+    if d_mm <= 0:
+        raise ValueError("d_mm must be > 0")
+    if tw_mm <= 0:
+        raise ValueError("tw_mm must be > 0")
+
+    if not (isinstance(phi_v, (int, float)) and math.isfinite(phi_v) and phi_v > 0):
+        phi_v = PHI_V_DEFAULT
+
+    # clear web depth
+    if h_mm is not None and h_mm > 0:
+        h = float(h_mm)
+        trace.append(f"Given: h = {h:.2f} mm (clear web depth)")
     else:
-        # Class 4: use effective section modulus
-        d  = fnum(shape.get("d"), "d")
-        b  = fnum(shape.get("b"), "b")
-        tf = fnum(shape.get("tf"), "tf")
-        tw = fnum(shape.get("tw"), "tw")
-        
-        se_result = compute_Se_CSA(d, b, tf, tw, Fy)
-        Se = se_result["Se"]
-        Mr_kNm = Mr_class4(Se, Fy, PHI_B)
-        
-        mode = f"Effective (Se = {Se/1000:.0f} × 10³ mm³)"
-        return {
-            "mr_kNm": round(Mr_kNm, 1),
-            "mode": mode,
-            "error": False,
-            "class4_details": se_result
-        }
+        if tf_mm is None or tf_mm <= 0:
+            raise ValueError("Need either h_mm OR tf_mm to compute h = d - 2tf")
+        h = float(d_mm) - 2.0 * float(tf_mm)
+        trace.append(f"Computed: h = d - 2tf = {d_mm:.2f} - 2({tf_mm:.2f}) = {h:.2f} mm")
+
+    if h <= 0:
+        raise ValueError("Computed/Provided h must be > 0")
+    if h > d_mm:
+        warnings.append("h_mm > d_mm (unexpected). Check section properties.")
+
+    Aw_mm2 = float(d_mm) * float(tw_mm)
+    trace.append(f"Aw = d*tw = {d_mm:.2f}*{tw_mm:.2f} = {Aw_mm2:.2f} mm²")
+
+    lam = h / float(tw_mm)
+    trace.append(f"λ = h/tw = {h:.2f}/{tw_mm:.2f} = {lam:.3f}")
+
+    sqrtFy = math.sqrt(float(Fy_MPa))
+    lambda1 = 1014.0 / sqrtFy
+    lambda2 = 1435.0 / sqrtFy
+    trace.append(f"λ1 = 1014/√Fy = {lambda1:.3f}")
+    trace.append(f"λ2 = 1435/√Fy = {lambda2:.3f}")
+
+    if lam <= lambda1:
+        Fs = 0.66 * float(Fy_MPa)
+        branch = "A"
+        trace.append(f"Branch A (λ ≤ λ1): Fs = 0.66Fy = {Fs:.2f} MPa")
+    elif lam <= lambda2:
+        Fs = (670.0 * sqrtFy) / lam
+        branch = "B"
+        trace.append(f"Branch B (λ1 < λ ≤ λ2): Fs = 670√Fy/λ = {Fs:.2f} MPa")
+    else:
+        Fs = 961200.0 / (lam * lam)
+        branch = "C"
+        trace.append(f"Branch C (λ > λ2): Fs = 961200/λ² = {Fs:.2f} MPa")
+
+    Vr_kN = (float(phi_v) * Aw_mm2 * Fs) / 1000.0
+    trace.append(f"Vr = φ Aw Fs /1000 = {Vr_kN:.2f} kN")
+
+    warnings.append("Scope: CSA S16 13.4 elastic shear, unstiffened web only (no tension-field action / stiffened web).")
+    warnings.append("Aw assumed as d*tw for rolled W-shapes (confirm with your office convention).")
+
+    return {
+        "ok": True,
+        "scope": "CSA S16 13.4 — elastic shear, unstiffened web, W-shapes",
+        "warnings": warnings,
+        "trace": trace,
+        "d_mm": d_mm,
+        "tw_mm": tw_mm,
+        "h_mm": h,
+        "Aw_mm2": Aw_mm2,
+        "lambda_h_over_tw": lam,
+        "lambda1": lambda1,
+        "lambda2": lambda2,
+        "Fy_MPa": Fy_MPa,
+        "Fs_MPa": Fs,
+        "phi_v": float(phi_v),
+        "Vr_kN": Vr_kN,
+        "branchUsed": branch,
+    }
+
+
+def shearDemandCheck(Vu_kN: float, Vr_kN: float) -> Dict[str, Any]:
+    if not (isinstance(Vu_kN, (int, float)) and math.isfinite(Vu_kN) and Vu_kN >= 0):
+        raise ValueError("Vu_kN must be a finite number ≥ 0")
+    if not (isinstance(Vr_kN, (int, float)) and math.isfinite(Vr_kN) and Vr_kN > 0):
+        raise ValueError("Vr_kN must be a finite number > 0")
+
+    utilization = Vu_kN / Vr_kN
+    pass_ok = Vu_kN <= Vr_kN
+
+    return {
+        "Vu_kN": Vu_kN,
+        "Vr_kN": Vr_kN,
+        "utilization": utilization,
+        "pass": pass_ok,
+        "summary": "PASS (Vu ≤ Vr)" if pass_ok else "FAIL (Vu > Vr)",
+    }
 
 
 # ----------------------------
@@ -449,15 +458,15 @@ The calculations and results generated by this tool are **not intended to be use
 All outputs **must be independently checked, verified, and approved** by a qualified professional engineer in accordance with applicable codes, standards, and professional judgment.
 
 The developers and authors:
-- Do **not** guarantee the accuracy or completeness of the results  
-- Assume **no responsibility or liability** for errors, omissions, or misuse  
-- Are **not responsible** for any calculations that have not been independently verified  
+- Do **not** guarantee the accuracy or completeness of the results
+- Assume **no responsibility or liability** for errors, omissions, or misuse
+- Are **not responsible** for any calculations that have not been independently verified
 
 This tool does **not** replace formal structural analysis, detailed design, peer review, or professional engineering services.
 
 By clicking **"I Accept"**, you acknowledge that:
-- You understand this tool is for simulation and verification only  
-- You are solely responsible for checking and validating all results  
+- You understand this tool is for simulation and verification only
+- You are solely responsible for checking and validating all results
 - You will not rely on this tool as the sole basis for engineering decisions
 """
 
@@ -483,9 +492,10 @@ FOOTER_HTML = """
 </div>
 """
 
+
 def require_disclaimer_acceptance():
     st.set_page_config(page_title=APP_TITLE, page_icon="🔧", layout="wide")
-    
+
     if st.session_state.get("disclaimer_version") != DISCLAIMER_VERSION:
         st.session_state["accepted_disclaimer"] = False
         st.session_state["disclaimer_version"] = DISCLAIMER_VERSION
@@ -508,8 +518,10 @@ def require_disclaimer_acceptance():
 
         st.stop()
 
+
 def render_footer_disclaimer():
     st.markdown(FOOTER_HTML, unsafe_allow_html=True)
+
 
 # ----------------------------
 # STREAMLIT APP
@@ -526,25 +538,24 @@ if not shapes:
     st.error("No section data found. Please add CSV files to the data/ directory.")
     st.stop()
 
-# Input section at top
 st.markdown("---")
 
-# Create columns for inputs
+# Inputs
 input_col1, input_col2, input_col3 = st.columns([2, 1, 1])
 
 with input_col1:
-    st.markdown("### Choose a W‑section")
+    st.markdown("### Choose a W-section")
     search_query = st.text_input("Search sections", placeholder="e.g., W410", label_visibility="collapsed")
     if search_query:
         qq = search_query.lower().strip()
         filtered = [k for k in designations if qq in k.lower()]
     else:
         filtered = designations
-    
+
     if not filtered:
         st.warning("No sections match your search.")
         st.stop()
-    
+
     selected_section = st.selectbox("Select section", options=filtered, index=0, label_visibility="collapsed")
 
 with input_col2:
@@ -555,7 +566,7 @@ with input_col2:
         max_value=700.0,
         value=345.0,
         step=5.0,
-        help="Typical values: 300 MPa (Grade 300W), 345 MPa (Grade 350W)"
+        help="Typical values: 300 MPa (Grade 300W), 345 MPa (Grade 350W)",
     )
 
 with input_col3:
@@ -563,38 +574,28 @@ with input_col3:
     check_demand = st.checkbox("Check against Mu")
     Mu = None
     if check_demand:
-        Mu = st.number_input(
-            "Mu (kN·m)",
-            min_value=0.0,
-            value=100.0,
-            step=10.0
-        )
+        Mu = st.number_input("Mu (kN·m)", min_value=0.0, value=100.0, step=10.0)
 
 st.markdown("---")
 
-# Main content
 if selected_section:
     shape = get_shape(selected_section)
-    
     if shape is None:
         st.error(f"Section {selected_section} not found.")
         st.stop()
-    
-    # Run calculations
+
     try:
-        class_info = table2_class_major_axis(shape, Fy)
-        mr_info = Mr_laterally_supported(shape, Fy, class_info["class_section"])
+        class_info = table2_class_major_axis(shape, float(Fy))
+        mr_info = Mr_laterally_supported(shape, float(Fy), class_info["class_section"])
     except Exception as e:
         st.error(f"Calculation error: {e}")
         st.stop()
-    
-    # Results layout
+
+    # Results
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.subheader(f"Section: {selected_section}")
-        
-        # Section properties table (single source of truth)
         geom = class_info["geometry_used"]
         st.markdown("**Section Properties**")
         section_geometry_display = {
@@ -606,29 +607,24 @@ if selected_section:
         }
         section_df = pd.DataFrame.from_dict(section_geometry_display, orient="index", columns=["Value"])
         st.table(section_df)
-    
+
     with col2:
         st.subheader("Classification Results")
-        
-        # Section class with color
         section_class = class_info["class_section"]
         if section_class == 1:
-            class_color = "green"
             class_desc = "Plastic"
         elif section_class == 2:
-            class_color = "blue"
             class_desc = "Compact"
         elif section_class == 3:
-            class_color = "orange"
             class_desc = "Non-Compact"
         else:
-            class_color = "red"
             class_desc = "Slender"
-        
-        st.markdown(f"### Section Class: :{'green' if section_class <= 2 else 'orange' if section_class == 3 else 'red'}[**{section_class}**] ({class_desc})")
+
+        st.markdown(
+            f"### Section Class: :{'green' if section_class <= 2 else 'orange' if section_class == 3 else 'red'}[**{section_class}**] ({class_desc})"
+        )
         st.markdown(f"*Governed by: {class_info['governing']}*")
-        
-        # Slenderness ratios
+
         st.markdown("**Slenderness Ratios**")
         ratio_data = {
             "Element": ["Flange (b/2t)", "Web (h/w)"],
@@ -636,47 +632,101 @@ if selected_section:
             "Class 1 Limit": [class_info["limits"]["flange"]["Class 1"], class_info["limits"]["web"]["Class 1"]],
             "Class 2 Limit": [class_info["limits"]["flange"]["Class 2"], class_info["limits"]["web"]["Class 2"]],
             "Class 3 Limit": [class_info["limits"]["flange"]["Class 3"], class_info["limits"]["web"]["Class 3"]],
-            "Element Class": [class_info["class_flange"], class_info["class_web"]]
+            "Element Class": [class_info["class_flange"], class_info["class_web"]],
         }
         st.table(ratio_data)
-    
+
     st.divider()
-    
+
     # Moment Resistance
     st.subheader("Moment Resistance (Laterally Supported)")
-    
     if mr_info.get("error"):
         st.warning(mr_info["mode"])
     else:
         mr_col1, mr_col2 = st.columns(2)
-        
+
         with mr_col1:
-            st.metric(
-                label="Factored Moment Resistance (Mr)",
-                value=f"{mr_info['mr_kNm']:,.1f} kN·m"
-            )
+            st.metric("Factored Moment Resistance (Mr)", f"{mr_info['mr_kNm']:,.1f} kN·m")
             st.caption(f"Mode: {mr_info['mode']}")
             st.caption(f"φb = {PHI_B}")
-        
+
         with mr_col2:
             if check_demand and Mu is not None:
-                ratio = Mu / mr_info['mr_kNm'] if mr_info['mr_kNm'] > 0 else float('inf')
-                
+                Mr_val = float(mr_info["mr_kNm"])
+                ratio = float(Mu) / Mr_val if Mr_val > 0 else float("inf")
                 if ratio <= 1.0:
                     st.success(f"✅ **PASS** — Mu/Mr = {ratio:.2f} ≤ 1.0")
                 else:
                     st.error(f"❌ **FAIL** — Mu/Mr = {ratio:.2f} > 1.0")
-                
-                st.metric(
-                    label="Demand/Capacity Ratio",
-                    value=f"{ratio:.2%}"
-                )
-    
-    # Class 4 effective section modulus derivation
+                st.metric("Demand/Capacity Ratio", f"{ratio:.2%}")
+
+    # ----------------------------
+    # SHEAR UI (THIS IS THE CORRECT INSERTION POINT)
+    # ----------------------------
+    st.divider()
+    st.subheader("Shear Resistance (CSA S16 Clause 13.4 — Elastic, Unstiffened Web)")
+
+    shear_enable = st.checkbox("Enable Shear Check (13.4)", value=False)
+    if shear_enable:
+        shear_col1, shear_col2, shear_col3 = st.columns([1, 1, 2])
+
+        with shear_col1:
+            phi_v = st.number_input("φv", min_value=0.50, max_value=1.00, value=float(PHI_V_DEFAULT), step=0.05)
+
+        with shear_col2:
+            check_Vu = st.checkbox("Check against Vu")
+            Vu = None
+            if check_Vu:
+                Vu = st.number_input("Vu (kN)", min_value=0.0, value=100.0, step=10.0)
+
+        # single source of truth for geometry
+        geom2 = class_info["geometry_used"]
+        d_val2 = float(geom2["d"])
+        tw_val2 = float(geom2["tw"])
+        tf_val2 = float(geom2["tf"])
+        h_clear2 = d_val2 - 2.0 * tf_val2
+
+        try:
+            shear_res = shear13_4_unstiffened_Wshape_elastic(
+                d_mm=d_val2,
+                tw_mm=tw_val2,
+                Fy_MPa=float(Fy),
+                h_mm=h_clear2,
+                tf_mm=tf_val2,
+                phi_v=float(phi_v),
+            )
+
+            Vr = float(shear_res["Vr_kN"])
+            branch = shear_res["branchUsed"]
+
+            with shear_col3:
+                st.metric("Factored Shear Resistance (Vr)", f"{Vr:,.1f} kN")
+                st.caption(f"Branch used: {branch}  |  λ = {shear_res['lambda_h_over_tw']:.2f}")
+                st.caption(f"Aw = {shear_res['Aw_mm2']:.0f} mm²,  Fs = {shear_res['Fs_MPa']:.1f} MPa")
+
+                if check_Vu and Vu is not None:
+                    chk = shearDemandCheck(float(Vu), float(Vr))
+                    ratio_v = chk["utilization"]
+                    if chk["pass"]:
+                        st.success(f"✅ **PASS** — Vu/Vr = {ratio_v:.2f} ≤ 1.0")
+                    else:
+                        st.error(f"❌ **FAIL** — Vu/Vr = {ratio_v:.2f} > 1.0")
+
+            with st.expander("Shear calculation trace (show steps)", expanded=False):
+                for line in shear_res["trace"]:
+                    st.write("• " + line)
+                if shear_res["warnings"]:
+                    st.markdown("**Warnings / scope:**")
+                    for w in shear_res["warnings"]:
+                        st.write("⚠️ " + w)
+
+        except Exception as e:
+            st.error(f"Shear calculation error: {e}")
+
+    # Class 4 derivation
     if class_info["class_section"] == 4:
         with st.expander("Class 4 – Effective Section Modulus (Se) derivation", expanded=False):
             se_info = class_info.get("se_info")
-
             if not se_info or se_info.get("Se") is None:
                 st.warning("Se derivation not available.")
             else:
@@ -687,125 +737,9 @@ if selected_section:
                     if "text" in s:
                         st.write(s["text"])
                     st.divider()
-    
+
     st.divider()
-    
-    # Calculation Details
-    with st.expander("Calculation Details"):
-        st.markdown("### Step 1: Compute Slenderness Ratios")
-        
-        # Flange slenderness
-        st.markdown("**Flange Outstand Slenderness:**")
-        st.latex(r"\lambda_f = \frac{b/2}{t_f}")
-        geom = class_info['geometry_used']
-        d_val = geom['d']
-        b_val = geom['b']
-        tf_val = geom['tf']
-        tw_val = geom['tw']
-        h_clear = d_val - 2*tf_val
-        lam_f = class_info['ratios']['b/2t']
-        lam_w = class_info['ratios']['h/w']
-        
-        st.latex(rf"\lambda_f = \frac{{{b_val:.1f}/2}}{{{tf_val:.1f}}} = \frac{{{b_val/2:.1f}}}{{{tf_val:.1f}}} = {lam_f:.2f}")
-        
-        # Web slenderness
-        st.markdown("**Web Slenderness:**")
-        st.latex(r"\lambda_w = \frac{h}{t_w} = \frac{d - 2t_f}{t_w}")
-        st.latex(rf"\lambda_w = \frac{{{d_val:.1f} - 2 \times {tf_val:.1f}}}{{{tw_val:.1f}}} = \frac{{{h_clear:.1f}}}{{{tw_val:.1f}}} = {lam_w:.2f}")
-        
-        st.markdown("---")
-        st.markdown("### Step 2: Determine Classification Limits")
-        st.markdown(f"For **Fy = {Fy:.0f} MPa**:")
-        
-        sqrt_fy = math.sqrt(Fy)
-        f1, f2, f3 = class_info['limits']['flange']['Class 1'], class_info['limits']['flange']['Class 2'], class_info['limits']['flange']['Class 3']
-        w1, w2, w3 = class_info['limits']['web']['Class 1'], class_info['limits']['web']['Class 2'], class_info['limits']['web']['Class 3']
-        
-        st.markdown("**Flange Limits:**")
-        st.latex(rf"\text{{Class 1: }} \frac{{145}}{{\sqrt{{{Fy:.0f}}}}} = {f1:.2f}")
-        st.latex(rf"\text{{Class 2: }} \frac{{170}}{{\sqrt{{{Fy:.0f}}}}} = {f2:.2f}")
-        st.latex(rf"\text{{Class 3: }} \frac{{200}}{{\sqrt{{{Fy:.0f}}}}} = {f3:.2f}")
-        
-        st.markdown("**Web Limits:**")
-        st.latex(rf"\text{{Class 1: }} \frac{{420}}{{\sqrt{{{Fy:.0f}}}}} = {w1:.2f}")
-        st.latex(rf"\text{{Class 2: }} \frac{{525}}{{\sqrt{{{Fy:.0f}}}}} = {w2:.2f}")
-        st.latex(rf"\text{{Class 3: }} \frac{{670}}{{\sqrt{{{Fy:.0f}}}}} = {w3:.2f}")
-        
-        st.markdown("---")
-        st.markdown("### Step 3: Compare Ratios to Limits")
-        
-        class_flange = class_info['class_flange']
-        class_web = class_info['class_web']
-        
-        # Flange classification explanation
-        if class_flange == 1:
-            st.markdown(f"**Flange:** λf = {lam_f:.2f} ≤ {f1:.2f} → **Class 1**")
-        elif class_flange == 2:
-            st.markdown(f"**Flange:** {f1:.2f} < λf = {lam_f:.2f} ≤ {f2:.2f} → **Class 2**")
-        elif class_flange == 3:
-            st.markdown(f"**Flange:** {f2:.2f} < λf = {lam_f:.2f} ≤ {f3:.2f} → **Class 3**")
-        else:
-            st.markdown(f"**Flange:** λf = {lam_f:.2f} > {f3:.2f} → **Class 4**")
-        
-        # Web classification explanation
-        if class_web == 1:
-            st.markdown(f"**Web:** λw = {lam_w:.2f} ≤ {w1:.2f} → **Class 1**")
-        elif class_web == 2:
-            st.markdown(f"**Web:** {w1:.2f} < λw = {lam_w:.2f} ≤ {w2:.2f} → **Class 2**")
-        elif class_web == 3:
-            st.markdown(f"**Web:** {w2:.2f} < λw = {lam_w:.2f} ≤ {w3:.2f} → **Class 3**")
-        else:
-            st.markdown(f"**Web:** λw = {lam_w:.2f} > {w3:.2f} → **Class 4**")
-        
-        section_class = class_info['class_section']
-        st.markdown(f"**Section Class = max(Flange Class, Web Class) = max({class_flange}, {class_web}) = {section_class}**")
-        st.markdown(f"*Governing element: {class_info['governing']}*")
-        
-        st.markdown("---")
-        st.markdown("### Step 4: Calculate Moment Resistance")
-        
-        if not mr_info.get("error"):
-            zx = float(shape.get("zx", 0)) * 1000  # Convert from 10^3 mm^3 to mm^3
-            sx = float(shape.get("sx", 0)) * 1000
-            
-            if section_class in (1, 2):
-                st.markdown("For **Class 1-2** sections, use plastic section modulus (Zx):")
-                st.latex(r"M_r = \phi_b \cdot Z_x \cdot F_y")
-                st.latex(rf"M_r = {PHI_B} \times {zx/1e6:.3f} \times 10^6 \text{{ mm}}^3 \times {Fy:.0f} \text{{ MPa}}")
-                mr_calc = PHI_B * zx * Fy * 1e-6  # Convert to kN·m
-                st.latex(rf"M_r = {mr_calc:.1f} \text{{ kN·m}}")
-            elif section_class == 3:
-                st.markdown("For **Class 3** sections, use elastic section modulus (Sx):")
-                st.latex(r"M_r = \phi_b \cdot S_x \cdot F_y")
-                st.latex(rf"M_r = {PHI_B} \times {sx/1e6:.3f} \times 10^6 \text{{ mm}}^3 \times {Fy:.0f} \text{{ MPa}}")
-                mr_calc = PHI_B * sx * Fy * 1e-6
-                st.latex(rf"M_r = {mr_calc:.1f} \text{{ kN·m}}")
-            else:
-                st.warning("Class 4 sections require effective section modulus (Se) — not implemented.")
-        else:
-            st.warning(mr_info["mode"])
-    
-    # References
-    with st.expander("Governing Equations & References"):
-        st.markdown("**Slenderness Ratios**")
-        st.latex(r"\lambda_f = \frac{b/2}{t_f} \quad \text{(flange outstand)}")
-        st.latex(r"\lambda_w = \frac{h}{w} = \frac{d - 2k}{t_w} \quad \text{(web)}")
-        
-        st.markdown("**Classification Limits (CSA S16 Table 2)**")
-        st.latex(r"\text{Flange: } \frac{145}{\sqrt{F_y}}, \frac{170}{\sqrt{F_y}}, \frac{200}{\sqrt{F_y}}")
-        st.latex(r"\text{Web: } \frac{420}{\sqrt{F_y}}, \frac{525}{\sqrt{F_y}}, \frac{670}{\sqrt{F_y}}")
-        
-        st.markdown("**Moment Resistance (CSA S16 Clause 13.5)**")
-        st.latex(r"M_r = \phi_b \cdot Z_x \cdot F_y \quad \text{(Class 1-2, plastic)}")
-        st.latex(r"M_r = \phi_b \cdot S_x \cdot F_y \quad \text{(Class 3, elastic)}")
-        st.latex(r"\phi_b = 0.9")
-        
-        st.markdown("""
-        **References:**
-        - CSA S16 Table 2: Width-to-thickness ratios for elements in flexural compression
-        - CSA S16 Clause 13.5: Laterally supported members in bending
-        """)
-    
+
     # Raw data expander
     with st.expander("Raw Section Data"):
         st.json(shape)

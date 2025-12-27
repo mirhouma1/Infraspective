@@ -238,6 +238,49 @@ def to_kNm_from_Nmm(M_Nmm: float) -> float:
 # ----------------------------
 # TABLE 2 LIMIT HELPERS (major-axis W-shape)
 # ----------------------------
+def class_limits_flange(Fy: float) -> tuple:
+    """Returns (Class 1, Class 2, Class 3) limits for flange."""
+    r = 1.0 / math.sqrt(Fy)
+    return 145*r, 170*r, 200*r
+
+
+def class_limits_web(Fy: float) -> tuple:
+    """Returns (Class 1, Class 2, Class 3) limits for web."""
+    r = 1.0 / math.sqrt(Fy)
+    return 420*r, 525*r, 670*r
+
+
+def classify_table2_W_major(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
+    """Alternative classification function with cleaner output format."""
+    d = float(shape["d"]); b = float(shape["b"]); t = float(shape["t"]); w = float(shape["w"])
+    h = d - 2*t
+    lam_f = (b/2)/t
+    lam_w = h/w
+
+    f1, f2, f3 = class_limits_flange(Fy)
+    w1, w2, w3 = class_limits_web(Fy)
+
+    def c(lam: float, a: float, b: float, c: float) -> int:
+        return 1 if lam <= a else 2 if lam <= b else 3 if lam <= c else 4
+
+    cf = c(lam_f, f1, f2, f3)
+    cw = c(lam_w, w1, w2, w3)
+    cs = max(cf, cw)
+    gov = "Flange & Web (tie)" if (cs == cf == cw) else ("Flange" if cs == cf else "Web")
+
+    return {
+        "ratios": {"Flange (b/2t)": lam_f, "Web (h/w)": lam_w},
+        "limits": {
+            "Flange (b/2t)": {"Class 1": f1, "Class 2": f2, "Class 3": f3},
+            "Web (h/w)": {"Class 1": w1, "Class 2": w2, "Class 3": w3},
+        },
+        "element_class": {"Flange": cf, "Web": cw},
+        "section_class": cs,
+        "governed_by": gov,
+        "h": h
+    }
+
+
 def flange_lambda_r(Fy: float) -> float:
     return 170.0 / math.sqrt(Fy)
 

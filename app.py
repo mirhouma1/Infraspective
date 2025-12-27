@@ -699,6 +699,31 @@ def Mr_LTB_core(
     }
 
 
+# ============================================================
+# DEFLECTION CALCULATIONS (Simply Supported Beams)
+# ============================================================
+def defl_ss_udl_mm(w_kN_per_m: float, L_m: float, E_MPa: float, Ix_10e6_mm4: float) -> float:
+    """δmax = 5 w L^4 / (384 E I) for simply supported beam with UDL."""
+    w_N_per_mm = (w_kN_per_m * 1000.0) / 1000.0  # kN/m -> N/mm
+    L_mm = L_m * 1000.0
+    I = Ix_10e6_mm4 * 1e6
+    return (5.0 * w_N_per_mm * (L_mm**4)) / (384.0 * E_MPa * I)
+
+
+def defl_ss_midspan_point_mm(P_kN: float, L_m: float, E_MPa: float, Ix_10e6_mm4: float) -> float:
+    """δmax = P L^3 / (48 E I) for simply supported beam with midspan point load."""
+    P_N = P_kN * 1000.0
+    L_mm = L_m * 1000.0
+    I = Ix_10e6_mm4 * 1e6
+    return (P_N * (L_mm**3)) / (48.0 * E_MPa * I)
+
+
+DEFLECTION_CASES = [
+    ("udl", "UDL (w kN/m)"),
+    ("midspan_point", "Midspan Point Load (P kN)"),
+]
+
+
 # ----------------------------
 # STREAMLIT APP
 # ----------------------------
@@ -976,6 +1001,73 @@ if selected_section:
 
         except Exception as e:
             st.error(f"LTB calculation error: {e}")
+
+    st.divider()
+
+    # ----------------------------
+    # DEFLECTION CHECK
+    # ----------------------------
+    st.subheader("Deflection Check (Simply Supported)")
+
+    defl_enable = st.checkbox("Enable Deflection Check", value=False)
+    if defl_enable:
+        Ix_raw = shape.get("Ix")
+        if Ix_raw is None:
+            st.warning("Missing Ix data for deflection calculation.")
+        else:
+            Ix_val = float(Ix_raw)  # Already in 10^6 mm^4
+
+            defl_col1, defl_col2, defl_col3 = st.columns([1, 1, 2])
+
+            with defl_col1:
+                defl_case = st.selectbox(
+                    "Loading case",
+                    options=[c[0] for c in DEFLECTION_CASES],
+                    format_func=lambda x: dict(DEFLECTION_CASES)[x],
+                    index=0,
+                )
+                L_defl = st.number_input("Span L (m)", min_value=0.5, value=6.0, step=0.5)
+
+            with defl_col2:
+                if defl_case == "udl":
+                    w_load = st.number_input("w (kN/m)", min_value=0.1, value=10.0, step=1.0)
+                else:
+                    P_load = st.number_input("P (kN)", min_value=0.1, value=50.0, step=5.0)
+
+                defl_limit_ratio = st.selectbox(
+                    "Deflection limit",
+                    options=[180, 240, 360, 480],
+                    format_func=lambda x: f"L/{x}",
+                    index=1,
+                )
+
+            try:
+                E = E_MPA_DEFAULT
+
+                if defl_case == "udl":
+                    delta_mm = defl_ss_udl_mm(w_load, L_defl, E, Ix_val)
+                    load_desc = f"w = {w_load:.1f} kN/m"
+                else:
+                    delta_mm = defl_ss_midspan_point_mm(P_load, L_defl, E, Ix_val)
+                    load_desc = f"P = {P_load:.1f} kN"
+
+                L_mm = L_defl * 1000.0
+                delta_limit = L_mm / defl_limit_ratio
+                ratio = delta_mm / delta_limit if delta_limit > 0 else float("inf")
+
+                with defl_col3:
+                    st.metric("Maximum Deflection (δmax)", f"{delta_mm:.2f} mm")
+                    st.caption(f"Load: {load_desc}, Span: {L_defl:.1f} m, Ix = {Ix_val:.1f} × 10⁶ mm⁴")
+
+                    if delta_mm <= delta_limit:
+                        st.success(f"✅ **PASS** — δ = {delta_mm:.2f} mm ≤ L/{defl_limit_ratio} = {delta_limit:.2f} mm")
+                    else:
+                        st.error(f"❌ **FAIL** — δ = {delta_mm:.2f} mm > L/{defl_limit_ratio} = {delta_limit:.2f} mm")
+
+                    st.caption(f"Utilization: {ratio:.1%}")
+
+            except Exception as e:
+                st.error(f"Deflection calculation error: {e}")
 
     st.divider()
 

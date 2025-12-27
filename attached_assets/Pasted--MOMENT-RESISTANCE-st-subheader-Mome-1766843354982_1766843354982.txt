@@ -1,0 +1,128 @@
+# ----------------------------
+# MOMENT RESISTANCE
+# ----------------------------
+st.subheader("Moment Resistance (Laterally Supported)")
+
+if mr_info.get("error"):
+    st.warning(mr_info["mode"])
+else:
+    mr_col1, mr_col2 = st.columns(2)
+
+    with mr_col1:
+        st.metric("Factored Moment Resistance (Mr)", f"{mr_info['mr_kNm']:,.1f} kN·m")
+        st.caption(f"Mode: {mr_info['mode']}")
+        st.caption(f"φb = {PHI_B}")
+
+    with mr_col2:
+        if check_demand and Mu is not None:
+            Mr_val = float(mr_info["mr_kNm"])
+            ratio = float(Mu) / Mr_val if Mr_val > 0 else float("inf")
+            if ratio <= 1.0:
+                st.success(f"✅ **PASS** — Mu/Mr = {ratio:.2f} ≤ 1.0")
+            else:
+                st.error(f"❌ **FAIL** — Mu/Mr = {ratio:.2f} > 1.0")
+            st.metric("Demand/Capacity Ratio", f"{ratio:.2%}")
+
+st.divider()
+
+# ----------------------------
+# SHEAR RESISTANCE (ALWAYS VISIBLE)
+# ----------------------------
+st.subheader("Shear Resistance (CSA S16 Clause 13.4.1.1 — Elastic Shear)")
+
+shear_enable = st.checkbox("Enable Shear Check (13.4.1.1)", value=False)
+if shear_enable:
+    web_type = st.radio(
+        "Web type (13.4.1.1)",
+        ["Unstiffened web (13.4.1.1(a))", "Stiffened web (13.4.1.1(b))"],
+        index=0,
+        horizontal=True,
+    )
+
+    shear_col1, shear_col2, shear_col3 = st.columns([1, 1, 2])
+
+    with shear_col1:
+        phi_v = st.number_input("φv", min_value=0.50, max_value=1.00, value=float(PHI_V_DEFAULT), step=0.05)
+
+    with shear_col2:
+        check_Vu = st.checkbox("Check against Vu")
+        Vu = st.number_input("Vu (kN)", min_value=0.0, value=100.0, step=10.0) if check_Vu else None
+
+    # use Table-2 symbols from geometry_used
+    h = float(class_info["geometry_used"]["h"])
+    w = float(class_info["geometry_used"]["w"])
+    Aw = h * w
+
+    a_mm = None
+    if web_type.startswith("Stiffened"):
+        with shear_col2:
+            a_mm = st.number_input("Stiffener spacing a (mm)", min_value=1.0, value=800.0, step=50.0)
+
+    try:
+        tb = TraceBuilder()
+
+        if web_type.startswith("Unstiffened"):
+            shear_res = shear_elastic_unstiffened_13_4_1_1a(
+                Fy_MPa=float(Fy),
+                h_mm=h,
+                w_mm=w,
+                phi_v=float(phi_v),
+                trace=tb,
+            )
+            Vr_kN = float(shear_res["Vr_kN"])
+            Fs_MPa = float(shear_res["Fs_MPa"])
+            lam = float(shear_res["lambda_h_over_w"])
+            branch = shear_res["branchUsed"]
+            warnings = shear_res.get("warnings", [])
+
+        else:
+            if a_mm is None:
+                raise ValueError("Stiffener spacing a is required for stiffened web (13.4.1.1(b)).")
+
+            h_over_w = h / w
+            a_over_h = float(a_mm) / h
+
+            res = stiffened_web_shear_CSA13_4(
+                Fy_MPa=float(Fy),
+                hw_over_tw=h_over_w,   # main.py name stays as-is; value is h/w
+                a_over_h=a_over_h,
+                Aw_mm2=Aw,
+                phi_v=float(phi_v),
+            )
+
+            Vr_kN = float(res["Vr_kN"])
+            Fs_MPa = float(res["Fs_MPa"])
+            lam = h_over_w
+            branch = f"13.4.1.1(b) {res.get('region','')}".strip()
+            warnings = []
+
+            tb.text("CSA S16-14 13.4.1.1(b) — Stiffened web")
+            tb.text(f"h = {h:.2f} mm, w = {w:.2f} mm, h/w = {h_over_w:.4f}")
+            tb.text(f"a = {float(a_mm):.2f} mm, a/h = {a_over_h:.4f}")
+            tb.text(f"kv = {float(res['kv']):.4f}, k0 = {float(res['k0']):.4f}")
+            tb.text(f"Fs = {Fs_MPa:.2f} MPa (region {res.get('region','')})")
+            tb.text(f"Aw = h*w = {Aw:.1f} mm²")
+            tb.text(f"Vr = φv*Aw*Fs = {float(phi_v):.2f} * {Aw:.1f} * {Fs_MPa:.2f} = {Vr_kN:.2f} kN")
+
+        with shear_col3:
+            st.metric("Factored Shear Resistance (Vr)", f"{Vr_kN:,.1f} kN")
+            st.caption(f"Case: {web_type}  |  Branch used: {branch}  |  λ = {lam:.2f}")
+            st.caption(f"Aw = {Aw:.0f} mm²,  Fs = {Fs_MPa:.1f} MPa,  φv = {float(phi_v):.2f}")
+
+            if check_Vu and Vu is not None:
+                chk = shear_demand_check(float(Vu), float(Vr_kN))
+                ratio_v = chk["utilization"]
+                if chk["pass"]:
+                    st.success(f"✅ **PASS** — Vu/Vr = {ratio_v:.2f} ≤ 1.0")
+                else:
+                    st.error(f"❌ **FAIL** — Vu/Vr = {ratio_v:.2f} > 1.0")
+
+        with st.expander("Shear calculation trace (show steps)", expanded=False):
+            tb.render()
+            if warnings:
+                st.markdown("**Warnings / scope:**")
+                for wmsg in warnings:
+                    st.write("⚠️ " + str(wmsg))
+
+    except Exception as e:
+        st.error(f"Shear calculation error: {e}")

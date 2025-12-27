@@ -112,7 +112,7 @@ def render_footer_disclaimer() -> None:
 #   designation, d, b, t, w, Zx, Sx, k
 # ============================================================
 def _norm(s: str) -> str:
-    return (
+    out = (
         str(s).strip().lower()
         .replace("(", "").replace(")", "")
         .replace("[", "").replace("]", "")
@@ -120,6 +120,8 @@ def _norm(s: str) -> str:
         .replace(" ", "_")
         .replace("^", "")
     )
+    # Remove corrupted unicode chars (e.g., ? from mm³ → mm?)
+    return "".join(c for c in out if c.isalnum() or c == "_")
 
 
 # NOTE: This is only for CSV column-name matching.

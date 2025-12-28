@@ -12,7 +12,9 @@ import streamlit as st
 # CONFIG
 # ----------------------------
 DATA_DIR = Path(__file__).resolve().parent / "data"
-PRIMARY_CSV = Path(__file__).resolve().parent / "CSA_W_Section_Tables_2_clean.csv"
+
+WI_SECTION_CSV = DATA_DIR / "CISC 11th Edition (CSA S16-14) - WiSection Tables (Revised).csv"
+CLASS_BENDING_CSV = DATA_DIR / "CISC 11th Edition - Class of Sections in Bending.csv"
 
 PHI_B = 0.9
 PHI_V_DEFAULT = 0.9

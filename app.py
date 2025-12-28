@@ -196,16 +196,22 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     merged: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
 
-    # 1) Load the primary CSV if it exists beside app.py
-    if PRIMARY_CSV.exists():
-        data, csv_order = _load_csv(PRIMARY_CSV)
+    # 1) Load the WI Section CSV if it exists
+    if WI_SECTION_CSV.exists():
+        data, csv_order = _load_csv(WI_SECTION_CSV)
         merged.update(data)
         order.extend(csv_order)
 
-    # 2) Load any additional CSVs inside data/
+    # 2) Load the Class Bending CSV if it exists
+    if CLASS_BENDING_CSV.exists():
+        data, csv_order = _load_csv(CLASS_BENDING_CSV)
+        merged.update(data)
+        order.extend(csv_order)
+
+    # 3) Load any additional CSVs inside data/
     if DATA_DIR.exists():
         for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
-            if p.suffix.lower() == ".csv":
+            if p.suffix.lower() == ".csv" and p not in (WI_SECTION_CSV, CLASS_BENDING_CSV):
                 data, csv_order = _load_csv(p)
                 merged.update(data)
                 order.extend(csv_order)
@@ -780,7 +786,7 @@ st.markdown("**Laterally Supported W-Section Bending Check per CSA S16**")
 
 shapes, designations = load_shapes()
 if not shapes:
-    st.error("No section data found. Put CSA_W_Section_Tables_2_clean.csv beside app.py and/or add CSV files to data/.")
+    st.error("No section data found. Add CSV files to the data/ folder.")
     st.stop()
 
 st.markdown("---")

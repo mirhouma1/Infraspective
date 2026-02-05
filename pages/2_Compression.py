@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Literal
 # ----------------------------
 # CSV LOADER (no Streamlit)
 # ----------------------------
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 WI_SECTION_CSV = DATA_DIR / "CISC 11th Edition (CSA S16-14) - WiSection Tables (Revised).csv"
 CLASS_BENDING_CSV = DATA_DIR / "CISC 11th Edition - Class of Sections in Bending.csv"
 

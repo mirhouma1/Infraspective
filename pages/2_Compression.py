@@ -1,12 +1,13 @@
-# compression_cli.py
+# pages/2_Compression.py — CSA S16 Compression Check (Streamlit page)
 from __future__ import annotations
 
-import argparse
 import csv
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, Tuple
+
+import streamlit as st
 
 
 # ----------------------------
@@ -26,7 +27,7 @@ def _norm(s: str) -> str:
         .replace(" ", "_")
         .replace("^", "")
     )
-    return "".join(c for c in out if c.isalnum() or c == "_")
+    return "".join(c for c in out if (c.isalnum() or c == "_") and ord(c) < 128)
 
 
 CANON_SYNONYMS: Dict[str, List[str]] = {
@@ -71,8 +72,9 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _load_csv(path: Path) -> Dict[str, Dict[str, Any]]:
+def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     out: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for rec in reader:
@@ -81,26 +83,40 @@ def _load_csv(path: Path) -> Dict[str, Dict[str, Any]]:
             if des:
                 key = str(des).strip()
                 out[key] = rec2
-    return out
+                order.append(key)
+    return out, order
 
 
-def load_shapes() -> Dict[str, Dict[str, Any]]:
+@st.cache_data(ttl=60)
+def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     merged: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
 
     for p in [WI_SECTION_CSV, CLASS_BENDING_CSV]:
         if p.exists():
-            merged.update(_load_csv(p))
+            data, csv_order = _load_csv(p)
+            merged.update(data)
+            order.extend(csv_order)
 
     if DATA_DIR.exists():
         for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
             if p.suffix.lower() == ".csv" and p not in (WI_SECTION_CSV, CLASS_BENDING_CSV):
-                merged.update(_load_csv(p))
+                data, csv_order = _load_csv(p)
+                merged.update(data)
+                order.extend(csv_order)
 
-    return merged
+    seen: set[str] = set()
+    order_unique: List[str] = []
+    for k in order:
+        if k not in seen:
+            seen.add(k)
+            order_unique.append(k)
+
+    return merged, order_unique
 
 
 def get_shape(designation: str) -> Optional[Dict[str, Any]]:
-    shapes = load_shapes()
+    shapes, _ = load_shapes()
     return shapes.get(designation)
 
 
@@ -361,66 +377,155 @@ def compression_csa_v1(db: ColumnDBProps, u: ColumnUserInputs) -> Dict[str, Any]
 
 
 # ----------------------------
-# CLI
+# STREAMLIT UI
 # ----------------------------
-def main() -> int:
-    ap = argparse.ArgumentParser(description="CSA S16 Compression (CLI) — W-shapes only (v1)")
-    ap.add_argument("--section", default="W250x73", help="e.g., W250x73")
-    ap.add_argument("--Fy", type=float, default=350.0, help="MPa")
-    ap.add_argument("--E", type=float, default=200000.0, help="MPa")
-    ap.add_argument("--G", type=float, default=77000.0, help="MPa")
-    ap.add_argument("--Kx", type=float, default=1.0)
-    ap.add_argument("--Ky", type=float, default=1.0)
-    ap.add_argument("--Lx", type=float, default=3000.0, help="mm")
-    ap.add_argument("--Ly", type=float, default=3000.0, help="mm")
-    ap.add_argument("--phi_c", type=float, default=0.9)
-    ap.add_argument("--n", type=float, default=1.34)
-    ap.add_argument("--Pu", type=float, default=None, help="kN (optional demand)")
-    args = ap.parse_args()
+st.title("CSA S16 Compression Check")
+st.markdown("**Axially Loaded W-Section Column Check per CSA S16**")
 
-    shape = get_shape(args.section)
+shapes, designations = load_shapes()
+if not shapes:
+    st.error("No section data found. Add CSV files to the data/ folder.")
+    st.stop()
+
+st.markdown("---")
+
+input_col1, input_col2, input_col3 = st.columns([2, 1, 1])
+
+with input_col1:
+    st.markdown("### Choose a W-section")
+    search_query = st.text_input("Search sections", placeholder="e.g., W250", label_visibility="collapsed", key="comp_search")
+    if search_query:
+        qq = search_query.lower().strip()
+        filtered = [k for k in designations if qq in k.lower()]
+    else:
+        filtered = designations
+
+    if not filtered:
+        st.warning("No sections match your search.")
+        st.stop()
+
+    selected_section = st.selectbox("Select section", options=filtered, index=0, label_visibility="collapsed", key="comp_select")
+
+with input_col2:
+    st.markdown("### Material")
+    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=345.0, step=5.0, key="comp_fy")
+    E = st.number_input("E (MPa)", min_value=100000.0, max_value=300000.0, value=200000.0, step=1000.0, key="comp_E")
+    G = st.number_input("G (MPa)", min_value=50000.0, max_value=100000.0, value=77000.0, step=1000.0, key="comp_G")
+
+with input_col3:
+    st.markdown("### Demand Check")
+    check_demand = st.checkbox("Check against Pu", key="comp_demand")
+    Pu = st.number_input("Pu (kN)", min_value=0.0, value=500.0, step=50.0, key="comp_pu") if check_demand else None
+
+st.markdown("---")
+
+if selected_section:
+    shape = get_shape(selected_section)
     if shape is None:
-        print(f"ERROR: Section not found: {args.section}")
-        return 2
+        st.error(f"Section {selected_section} not found.")
+        st.stop()
 
-    props = adapt_wshape_to_column_props(shape)
+    len_col1, len_col2 = st.columns(2)
 
-    db = ColumnDBProps(
-        section_name=args.section,
-        section_family="W",
-        A_mm2=props["A_mm2"],
-        rx_mm=props["rx_mm"],
-        ry_mm=props["ry_mm"],
-        J_mm4=props["J_mm4"] if props["J_mm4"] > 0 else None,
-        Cw_mm6=props["Cw_mm6"] if props["Cw_mm6"] > 0 else None,
-    )
+    with len_col1:
+        st.markdown("### Effective Lengths")
+        Kx = st.number_input("Kx (effective length factor, strong axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="comp_kx")
+        Lx_m = st.number_input("Lx (unbraced length, strong axis) (m)", min_value=0.1, value=3.0, step=0.5, key="comp_lx")
 
-    u = ColumnUserInputs(
-        Kx=args.Kx,
-        Ky=args.Ky,
-        Lx_mm=args.Lx,
-        Ly_mm=args.Ly,
-        Fy_MPa=args.Fy,
-        E_MPa=args.E,
-        G_MPa=args.G,
-        phi_c=args.phi_c,
-        n=args.n,
-        Pu_kN=args.Pu,
-    )
+    with len_col2:
+        st.markdown("### &nbsp;")
+        Ky = st.number_input("Ky (effective length factor, weak axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="comp_ky")
+        Ly_m = st.number_input("Ly (unbraced length, weak axis) (m)", min_value=0.1, value=3.0, step=0.5, key="comp_ly")
 
-    out = compression_csa_v1(db, u)
+    phi_c = 0.9
+    n_curve = 1.34
 
-    print(f"Section: {out['section_name']}")
-    print(f"Cr = {out['Cr_kN']:.1f} kN")
-    b = out["buckling"]
-    print(f"Governing: {b['governing_mode']}  Fe_min={b['Fe_min_MPa']:.1f} MPa  Fcr={b['Fcr_MPa']:.1f} MPa  λ={b['lambda']:.3f}")
+    st.markdown("---")
 
-    if out["utilization"]:
-        uo = out["utilization"]
-        print(f"Pu = {uo['Pu_kN']:.1f} kN  Util = {uo['util_percent']:.1f}%  Pass = {uo['passes']}")
+    try:
+        props = adapt_wshape_to_column_props(shape)
 
-    return 0
+        db = ColumnDBProps(
+            section_name=selected_section,
+            section_family="W",
+            A_mm2=props["A_mm2"],
+            rx_mm=props["rx_mm"],
+            ry_mm=props["ry_mm"],
+            J_mm4=props["J_mm4"] if props["J_mm4"] > 0 else None,
+            Cw_mm6=props["Cw_mm6"] if props["Cw_mm6"] > 0 else None,
+        )
 
+        u = ColumnUserInputs(
+            Kx=Kx,
+            Ky=Ky,
+            Lx_mm=Lx_m * 1000.0,
+            Ly_mm=Ly_m * 1000.0,
+            Fy_MPa=float(Fy),
+            E_MPa=float(E),
+            G_MPa=float(G),
+            phi_c=phi_c,
+            n=n_curve,
+            Pu_kN=float(Pu) if Pu is not None else None,
+        )
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+        out = compression_csa_v1(db, u)
+        buck = out["buckling"]
+
+        res_col1, res_col2 = st.columns(2)
+
+        with res_col1:
+            st.subheader(f"Section: {selected_section}")
+            st.markdown("**Section Properties**")
+            st.markdown(f"- A = {props['A_mm2']:,.0f} mm²")
+            st.markdown(f"- rx = {props['rx_mm']:.1f} mm, ry = {props['ry_mm']:.1f} mm")
+            if props['J_mm4'] > 0:
+                st.markdown(f"- J = {props['J_mm4']:,.0f} mm⁴")
+            if props['Cw_mm6'] > 0:
+                st.markdown(f"- Cw = {props['Cw_mm6']:,.0f} mm⁶")
+
+        with res_col2:
+            st.subheader("Compression Resistance")
+            st.metric("Factored Compression Resistance (Cr)", f"{out['Cr_kN']:,.1f} kN")
+            st.caption(f"φc = {phi_c}, n = {n_curve}")
+
+        st.divider()
+
+        st.subheader("Buckling Details")
+        buck_col1, buck_col2, buck_col3 = st.columns(3)
+
+        with buck_col1:
+            st.markdown("**Slenderness Ratios**")
+            st.markdown(f"- KL/r (x) = {buck['KLr_x']:.1f}")
+            st.markdown(f"- KL/r (y) = {buck['KLr_y']:.1f}")
+            st.markdown(f"- Governing KL/r = {buck['KLr_controlling']:.1f}")
+
+        with buck_col2:
+            st.markdown("**Euler Stresses**")
+            st.markdown(f"- Fex = {buck['Fex_MPa']:,.1f} MPa")
+            st.markdown(f"- Fey = {buck['Fey_MPa']:,.1f} MPa")
+            if buck['Fez_MPa'] is not None:
+                st.markdown(f"- Fez = {buck['Fez_MPa']:,.1f} MPa")
+            st.markdown(f"- **Governing: {buck['governing_mode']}** ({buck['Fe_min_MPa']:,.1f} MPa)")
+
+        with buck_col3:
+            st.markdown("**CSA Column Curve**")
+            st.markdown(f"- λ = {buck['lambda']:.3f}")
+            st.markdown(f"- Fcr = {buck['Fcr_MPa']:,.1f} MPa")
+
+        if check_demand and Pu is not None:
+            st.divider()
+            st.subheader("Demand / Capacity Check")
+            util = out.get("utilization")
+            if util:
+                ratio = util["util_ratio"]
+                if util["passes"]:
+                    st.success(f"✅ **PASS** — Pu/Cr = {ratio:.2f} ≤ 1.0")
+                else:
+                    st.error(f"❌ **FAIL** — Pu/Cr = {ratio:.2f} > 1.0")
+                st.metric("Utilization", f"{util['util_percent']:.1f}%")
+
+        with st.expander("Raw Section Data"):
+            st.json(shape)
+
+    except Exception as e:
+        st.error(f"Compression calculation error: {e}")

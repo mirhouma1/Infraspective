@@ -143,7 +143,7 @@ def min_edge_distance_mm(d_mm: float, edge_type: EdgeType) -> float:
 
 def min_end_distance_mm(d_mm: float, bolts_in_line_parallel_to_load: int,
                         edge_type: EdgeType) -> float:
-    # Note-set rule described: if 1–2 bolts in line parallel to load => >= 1.5d, else Table 6
+    # Note-set rule described: if 1-2 bolts in line parallel to load => >= 1.5d, else Table 6
     if bolts_in_line_parallel_to_load <= 2:
         return 1.5 * d_mm
     return min_edge_distance_mm(d_mm, edge_type)
@@ -234,98 +234,88 @@ def prying_k_factor(a_mm: float, b_mm: float, t_mm: float) -> float:
 # ================================================================
 # Streamlit UI
 # ================================================================
-st.set_page_config(layout="wide",
-                   page_title="CSA S16 Bolted Connection Solver — Part 1")
-st.title(
-    "🔩 CSA S16 Bolted Connection Solver — Chapter 6 Part 1 (Bolted Details)")
+st.title("CSA S16 Bolted Connection Solver -- Chapter 6 Part 1 (Bolted Details)")
 st.caption(
     "Implements Vr, Br, Tr, Vs (Table 3), interaction checks, and Table 6 detailing checks. Internal units: N; display: kN, mm."
 )
 
-with st.sidebar:
-    st.header("1) Connection Inputs")
+st.markdown("---")
 
+input_col1, input_col2, input_col3 = st.columns(3)
+
+with input_col1:
+    st.markdown("### Connection Inputs")
     conn_type = st.selectbox("Connection Type",
-                             ["Bearing-type", "Slip-critical"])
-
+                             ["Bearing-type", "Slip-critical"],
+                             key="bolt_conn_type")
     grade = st.selectbox("Bolt Grade",
                          list(BoltGrade),
-                         format_func=lambda g: g.label)
-    d_mm = st.selectbox("Bolt Diameter d [mm]", [16, 20, 22, 24, 27, 30, 36])
-    n = int(st.number_input("Total bolts n", min_value=1, value=4, step=1))
-    m = int(st.number_input("Shear planes m", min_value=1, value=1, step=1))
+                         format_func=lambda g: g.label,
+                         key="bolt_grade")
+    d_mm = st.selectbox("Bolt Diameter d [mm]", [16, 20, 22, 24, 27, 30, 36],
+                        key="bolt_d")
+    n = int(st.number_input("Total bolts n", min_value=1, value=4, step=1,
+                            key="bolt_n"))
+    m = int(st.number_input("Shear planes m", min_value=1, value=1, step=1,
+                            key="bolt_m"))
 
-    st.divider()
-    st.header("2) Plate Material")
-    t_mm = float(
-        st.number_input("Plate thickness t [mm]",
-                        min_value=1.0,
-                        value=10.0,
-                        step=1.0))
-    Fu_plate_MPa = float(
-        st.number_input("Plate Fu [MPa]",
-                        min_value=1.0,
-                        value=450.0,
-                        step=10.0))
+    st.markdown("### Plate Material")
+    t_mm = float(st.number_input("Plate thickness t [mm]",
+                                 min_value=1.0, value=10.0, step=1.0,
+                                 key="bolt_t"))
+    Fu_plate_MPa = float(st.number_input("Plate Fu [MPa]",
+                                         min_value=1.0, value=450.0, step=10.0,
+                                         key="bolt_fu_plate"))
 
-    st.divider()
-    st.header("3) Detailing Geometry Provided")
-    pitch_prov_mm = float(
-        st.number_input("Provided pitch p [mm]",
-                        min_value=0.0,
-                        value=0.0,
-                        step=1.0))
+with input_col2:
+    st.markdown("### Detailing Geometry")
+    pitch_prov_mm = float(st.number_input("Provided pitch p [mm]",
+                                          min_value=0.0, value=0.0, step=1.0,
+                                          key="bolt_pitch"))
     edge_type = st.radio("Edge type",
                          list(EdgeType),
-                         format_func=lambda e: e.value)
-    edge_prov_mm = float(
-        st.number_input("Provided edge distance e [mm]",
-                        min_value=0.0,
-                        value=0.0,
-                        step=1.0))
+                         format_func=lambda e: e.value,
+                         key="bolt_edge_type")
+    edge_prov_mm = float(st.number_input("Provided edge distance e [mm]",
+                                         min_value=0.0, value=0.0, step=1.0,
+                                         key="bolt_edge"))
+    bolts_in_line = int(st.number_input("Bolts in line parallel to load (for end distance)",
+                                        min_value=1, value=2, step=1,
+                                        key="bolt_inline"))
+    end_prov_mm = float(st.number_input("Provided end distance a_end [mm]",
+                                        min_value=0.0, value=0.0, step=1.0,
+                                        key="bolt_end"))
 
-    bolts_in_line = int(
-        st.number_input("Bolts in line parallel to load (for end distance)",
-                        min_value=1,
-                        value=2,
-                        step=1))
-    end_prov_mm = float(
-        st.number_input("Provided end distance a_end [mm]",
-                        min_value=0.0,
-                        value=0.0,
-                        step=1.0))
+with input_col3:
+    st.markdown("### Factored Loads")
+    Vu_kN = float(st.number_input("Factored shear Vu [kN]",
+                                  min_value=0.0, value=0.0, step=1.0,
+                                  key="bolt_vu"))
+    Tu_kN = float(st.number_input("Factored tension Tu [kN]",
+                                  min_value=0.0, value=0.0, step=1.0,
+                                  key="bolt_tu"))
 
-    st.divider()
-    st.header("4) Factored Loads")
-    Vu_kN = float(
-        st.number_input("Factored shear Vu [kN]",
-                        min_value=0.0,
-                        value=0.0,
-                        step=1.0))
-    Tu_kN = float(
-        st.number_input("Factored tension Tu [kN]",
-                        min_value=0.0,
-                        value=0.0,
-                        step=1.0))
+    st.markdown("### Options")
+    threads_intercepted = st.checkbox("Threads intercepted by shear plane?",
+                                     key="bolt_threads")
+    long_slotted = st.checkbox("Long-slotted holes?",
+                               key="bolt_long_slot")
 
-    st.divider()
-    st.header("5) Options")
-    threads_intercepted = st.checkbox("Threads intercepted by shear plane?")
-    long_slotted = st.checkbox("Long-slotted holes?")
-
-    # Slip-only inputs
     slip_surface = SlipSurfaceClass.A
     slip_method = InstallationMethod.TURN_OF_NUT
     if conn_type == "Slip-critical":
-        st.divider()
-        st.subheader("Slip-Critical (Table 3)")
+        st.markdown("### Slip-Critical (Table 3)")
         slip_surface = st.selectbox(
             "Surface class",
             list(SlipSurfaceClass),
-            format_func=lambda s: f"{s.label} — {SLIP_CS[s]['desc']}")
+            format_func=lambda s: f"{s.label} -- {SLIP_CS[s]['desc']}",
+            key="bolt_surface")
         slip_method = st.selectbox("Installation method",
                                    list(InstallationMethod),
-                                   format_func=lambda x: x.value)
+                                   format_func=lambda x: x.value,
+                                   key="bolt_install")
+
+st.markdown("---")
 
 # Convert loads to N
 Vu_N = Vu_kN * 1000.0
@@ -364,7 +354,6 @@ col_calc, col_detail = st.columns([3, 2], gap="large")
 with col_calc:
     st.subheader("Capacities (Resistance Results)")
 
-    # Display kN
     def kN(xN: float) -> float:
         return xN / 1000.0
 
@@ -377,18 +366,16 @@ with col_calc:
     st.divider()
     st.subheader("Interaction Checks")
 
-    # Bearing-type interaction uses group Vr and group Tr (loads assumed to be group loads)
     u_bearing = unity_bearing_type(Vu_N, Tu_N, Vr_N, Tr_group_N)
     u1, u2 = st.columns(2)
     u1.write(
-        f"**Bearing-type unity**: {u_bearing:.3f}  \nCriterion: (Vu/Vr)² + (Tu/Tr)² ≤ 1.0"
+        f"**Bearing-type unity**: {u_bearing:.3f}  \nCriterion: (Vu/Vr)^2 + (Tu/Tr)^2 <= 1.0"
     )
     if math.isfinite(u_bearing) and u_bearing <= 1.0:
         u2.success("PASS")
     else:
         u2.error("FAIL")
 
-    # Slip-critical interaction
     if conn_type == "Slip-critical":
         st.divider()
         st.subheader("Slip-Critical Capacity + Interaction")
@@ -405,7 +392,7 @@ with col_calc:
             u_sc = unity_slip_critical(Vu_N, Tu_N, Vs_N, n, d_mm, Fu_bolt_MPa)
             s1, s2 = st.columns(2)
             s1.write(
-                f"**Slip-critical unity**: {u_sc:.3f}  \nCriterion: Vu/Vs + 1.9Tu/(nAbFu) ≤ 1.0"
+                f"**Slip-critical unity**: {u_sc:.3f}  \nCriterion: Vu/Vs + 1.9Tu/(nAbFu) <= 1.0"
             )
             if math.isfinite(u_sc) and u_sc <= 1.0:
                 s2.success("PASS")
@@ -415,8 +402,6 @@ with col_calc:
     st.divider()
     st.subheader("Governing Summary (within Part 1 scope)")
 
-    # For Part 1 scope: show governing among the computed capacities relevant to chosen type
-    # Note: full design may also require block shear, net section fracture, tear-out, etc. (Part 2 / other sections).
     if conn_type == "Bearing-type":
         caps = {
             "Bolt shear Vr": Vr_N,
@@ -428,8 +413,7 @@ with col_calc:
             caps = {
                 "Slip Vs": Vs_N,
                 "Bolt tension Tr (group)": Tr_group_N,
-                "Bearing Br":
-                Br_N,  # still useful to view, even if mechanism is slip
+                "Bearing Br": Br_N,
                 "Bolt shear Vr": Vr_N,
             }
         else:
@@ -449,13 +433,12 @@ with col_calc:
 with col_detail:
     st.subheader("Detailing Checks (Table 6 + Limits)")
 
-    # Pitch
     p_min = min_pitch_mm(d_mm)
     st.write(f"**Min pitch p_min = 2.7d = {p_min:.1f} mm**")
     if pitch_prov_mm > 0:
         if pitch_prov_mm >= p_min:
             st.success(
-                f"Pitch PASS (provided {pitch_prov_mm:.1f} mm ≥ {p_min:.1f} mm)"
+                f"Pitch PASS (provided {pitch_prov_mm:.1f} mm >= {p_min:.1f} mm)"
             )
         else:
             st.error(
@@ -466,7 +449,6 @@ with col_detail:
 
     st.divider()
 
-    # Edge distance min/max
     e_min = min_edge_distance_mm(d_mm, edge_type)
     e_max = max_edge_distance_mm(t_mm)
     st.write(
@@ -484,23 +466,22 @@ with col_detail:
             )
         else:
             st.success(
-                f"Edge distance PASS ({e_min:.1f} ≤ {edge_prov_mm:.1f} ≤ {e_max:.1f})"
+                f"Edge distance PASS ({e_min:.1f} <= {edge_prov_mm:.1f} <= {e_max:.1f})"
             )
     else:
         st.caption("Enter a provided edge distance to get PASS/FAIL.")
 
     st.divider()
 
-    # End distance min check (rule + Table 6)
     a_end_min = min_end_distance_mm(d_mm, bolts_in_line, edge_type)
     st.write(
-        f"**Min end distance a_end,min = {a_end_min:.1f} mm**  \nRule: 1–2 bolts in line → 1.5d; >2 → Table 6"
+        f"**Min end distance a_end,min = {a_end_min:.1f} mm**  \nRule: 1-2 bolts in line = 1.5d; >2 = Table 6"
     )
 
     if end_prov_mm > 0:
         if end_prov_mm >= a_end_min:
             st.success(
-                f"End distance PASS (provided {end_prov_mm:.1f} mm ≥ {a_end_min:.1f} mm)"
+                f"End distance PASS (provided {end_prov_mm:.1f} mm >= {a_end_min:.1f} mm)"
             )
         else:
             st.error(
@@ -517,17 +498,19 @@ with col_detail:
             st.number_input("Distance a [mm]",
                             min_value=0.0,
                             value=50.0,
-                            step=1.0))
+                            step=1.0,
+                            key="bolt_pry_a"))
         b_mm = float(
             st.number_input("Distance b [mm]",
                             min_value=0.0,
                             value=40.0,
-                            step=1.0))
+                            step=1.0,
+                            key="bolt_pry_b"))
         k = prying_k_factor(a_mm, b_mm, t_mm)
         if math.isfinite(k):
             st.write(f"**k = {k:.4f}** (per note-set simplified expression)")
             st.caption(
-                "If P is the bolt force, prying estimate: Q = k·P; total bolt force ≈ P + Q."
+                "If P is the bolt force, prying estimate: Q = k*P; total bolt force = P + Q."
             )
         else:
             st.warning("Invalid a (must be > 0).")

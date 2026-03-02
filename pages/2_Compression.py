@@ -1,531 +1,430 @@
-# pages/2_Compression.py — CSA S16 Compression Check (Streamlit page)
 from __future__ import annotations
 
 import csv
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Literal, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
+# ============================================================
+# CONFIG
+# ============================================================
 
-# ----------------------------
-# CSV LOADER (no Streamlit)
-# ----------------------------
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-WI_SECTION_CSV = DATA_DIR / "CISC 11th Edition (CSA S16-14) - WiSection Tables (Revised).csv"
-CLASS_BENDING_CSV = DATA_DIR / "CISC 11th Edition - Class of Sections in Bending.csv"
 
+# ============================================================
+# UTIL: NORMALIZE + PICK
+# ============================================================
 
 def _norm(s: str) -> str:
-    out = (
-        str(s).strip().lower()
-        .replace("(", "").replace(")", "")
-        .replace("[", "").replace("]", "")
-        .replace("/", "_").replace("-", "_")
-        .replace(" ", "_")
-        .replace("^", "")
-    )
-    return "".join(c for c in out if (c.isalnum() or c == "_") and ord(c) < 128)
+    s = str(s).strip().lower()
+    for ch in "()[]{}":
+        s = s.replace(ch, "")
+    s = s.replace("/", "_").replace("-", "_").replace(" ", "_")
+    return "".join(c for c in s if (c.isalnum() or c == "_") and ord(c) < 128)
 
-
-CANON_SYNONYMS: Dict[str, List[str]] = {
-    "designation": ["designation", "Designation", "shape", "section", "name", "w_shape"],
-    # Geometry
-    "d": ["d", "D", "depth", "overall_depth", "depth_d", "depth_d_mm"],
-    "b": ["b", "B", "bf", "flange_width", "flange_width_b", "flange_width_b_mm"],
-    "t": ["t", "T", "tf", "flange_thickness", "flange_thickness_t", "flange_thickness_t_mm"],
-    "w": ["w", "W", "tw", "web_thickness", "web_thickness_w", "web_thickness_w_mm"],
-    # Compression-needed props
-    "Area": ["Area", "area", "A", "A_mm2", "Area (mm²)", "Area (mm2)", "Area mm²", "Area mm2"],
-    "rx": ["rx", "rx_mm", "rx (mm)", "r_x", "r_x_mm"],
-    "ry": ["ry", "ry_mm", "ry (mm)", "r_y", "r_y_mm"],
-    "Ix": ["Ix", "ix", "i_x", "Ix_10e6", "ix_106_mm4", "ix_106_mm"],
-    "Iy": ["Iy", "iy", "i_y", "Iy_10e6", "iy_106_mm4", "iy_106_mm"],
-    "J":  ["J", "j", "J_10e3", "j_103_mm4", "j_103_mm"],
-    "Cw": ["Cw", "cw", "Cw_10e9", "cw_109_mm6", "cw_109_mm"],
-}
-
-
-def _pick(rec: Dict[str, Any], candidates: List[str]) -> Optional[Any]:
-    norm_map = {_norm(k): v for k, v in rec.items()}
-    for cand in candidates:
-        ck = _norm(cand)
-        if ck in norm_map and norm_map[ck] not in (None, ""):
-            return norm_map[ck]
-    return None
-
-
-def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(rec)
-
-    des = _pick(rec, CANON_SYNONYMS["designation"])
-    if des is not None:
-        out["designation"] = des
-
-    for sym in ("d", "b", "t", "w", "Area", "rx", "ry", "Ix", "Iy", "J", "Cw"):
-        v = _pick(rec, CANON_SYNONYMS[sym])
-        if v is not None:
-            out[sym] = v
-
-    return out
-
-
-def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    out: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for rec in reader:
-            rec2 = _canonicalize_record(rec)
-            des = rec2.get("designation")
-            if des:
-                key = str(des).strip()
-                out[key] = rec2
-                order.append(key)
-    return out, order
-
-
-@st.cache_data(ttl=60)
-def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-
-    for p in [WI_SECTION_CSV, CLASS_BENDING_CSV]:
-        if p.exists():
-            data, csv_order = _load_csv(p)
-            merged.update(data)
-            order.extend(csv_order)
-
-    if DATA_DIR.exists():
-        for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
-            if p.suffix.lower() == ".csv" and p not in (WI_SECTION_CSV, CLASS_BENDING_CSV):
-                data, csv_order = _load_csv(p)
-                merged.update(data)
-                order.extend(csv_order)
-
-    seen: set[str] = set()
-    order_unique: List[str] = []
-    for k in order:
-        if k not in seen:
-            seen.add(k)
-            order_unique.append(k)
-
-    return merged, order_unique
-
-
-def get_shape(designation: str) -> Optional[Dict[str, Any]]:
-    shapes, _ = load_shapes()
-    return shapes.get(designation)
-
-
-# ----------------------------
-# COMPRESSION SOLVER (pure python)
-# ----------------------------
-def _to_float(x: Any, field: str) -> float:
+def _to_float(x: Any) -> Optional[float]:
     if x is None:
-        raise ValueError(f"Missing required field: {field}")
+        return None
     if isinstance(x, (int, float)):
         return float(x)
     s = str(x).strip().replace(",", "")
-    if s == "":
-        raise ValueError(f"Missing required field: {field}")
+    if not s:
+        return None
     try:
         return float(s)
-    except Exception as e:
-        raise ValueError(f"Field '{field}' not numeric: {x!r}") from e
+    except:
+        return None
 
-
-def _pick_shape(shape: Dict[str, Any], keys: List[str]) -> Optional[Any]:
-    for k in keys:
-        if k in shape and shape[k] not in (None, "", " "):
-            return shape[k]
+def _pick(rec: Dict[str, Any], candidates: List[str]) -> Optional[Any]:
+    m = {_norm(k): v for k, v in rec.items()}
+    for c in candidates:
+        k = _norm(c)
+        if k in m and m[k] not in ("", None):
+            return m[k]
     return None
 
+# ============================================================
+# CSV LOADING (all CSVs in /data)
+# ============================================================
 
-def adapt_wshape_to_column_props(shape: Dict[str, Any]) -> Dict[str, float]:
-    # Area in mm^2
-    A_raw = _pick_shape(shape, ["Area", "area", "A", "Area (mm²)", "Area (mm2)", "Area mm²", "Area mm2"])
-    A_mm2 = _to_float(A_raw, "Area")
-
-    # rx, ry in mm
-    rx_raw = _pick_shape(shape, ["rx", "rx (mm)", "rx_mm"])
-    ry_raw = _pick_shape(shape, ["ry", "ry (mm)", "ry_mm"])
-    rx_mm = _to_float(rx_raw, "rx")
-    ry_mm = _to_float(ry_raw, "ry")
-
-    # Ix, Iy often in 10^6 mm^4 in tables -> mm^4 (if present)
-    Ix_raw = _pick_shape(shape, ["Ix", "Ix_10e6"])
-    Iy_raw = _pick_shape(shape, ["Iy", "Iy_10e6"])
-    Ix_mm4 = _to_float(Ix_raw, "Ix") * 1e6 if Ix_raw is not None else 0.0
-    Iy_mm4 = _to_float(Iy_raw, "Iy") * 1e6 if Iy_raw is not None else 0.0
-
-    # J in 10^3 mm^4 -> mm^4 (if present)
-    J_raw = _pick_shape(shape, ["J", "J_10e3"])
-    J_mm4 = _to_float(J_raw, "J") * 1e3 if J_raw is not None else 0.0
-
-    # Cw in 10^9 mm^6 -> mm^6 (if present)
-    Cw_raw = _pick_shape(shape, ["Cw", "Cw_10e9"])
-    Cw_mm6 = _to_float(Cw_raw, "Cw") * 1e9 if Cw_raw is not None else 0.0
-
-    if A_mm2 <= 0 or rx_mm <= 0 or ry_mm <= 0:
-        raise ValueError(f"Bad section props: A={A_mm2}, rx={rx_mm}, ry={ry_mm} (must be > 0)")
-
-    return {
-        "A_mm2": A_mm2,
-        "rx_mm": rx_mm,
-        "ry_mm": ry_mm,
-        "Ix_mm4": Ix_mm4,
-        "Iy_mm4": Iy_mm4,
-        "J_mm4": J_mm4 if J_mm4 > 0 else 0.0,
-        "Cw_mm6": Cw_mm6 if Cw_mm6 > 0 else 0.0,
-    }
-
-
-class InputError(ValueError):
-    pass
-
-
-Symmetry = Literal["doubly_symmetric_or_axisymmetric", "singly_symmetric"]
-
-
-def normalize_family(raw: str) -> str:
-    if raw is None:
-        raise InputError("section_family is required")
-    s = raw.strip().upper()
-    if s in {"RHS", "SHS", "CHS", "PIPE"}:
-        return "HSS"
-    return s
-
-
-FAMILY_TO_SYMMETRY: Dict[str, Symmetry] = {
-    "W": "doubly_symmetric_or_axisymmetric",
-    "WWF": "doubly_symmetric_or_axisymmetric",
-    "HSS": "doubly_symmetric_or_axisymmetric",
-    "BOX": "doubly_symmetric_or_axisymmetric",
-    "C": "singly_symmetric",
-    "MC": "singly_symmetric",
-    "WT": "singly_symmetric",
-    "ST": "singly_symmetric",
-    "MT": "singly_symmetric",
-    "L": "singly_symmetric",
-    "2L": "singly_symmetric",
+CANON = {
+    "designation": ["designation", "Designation", "section", "Section", "shape", "name"],
+    "d": ["d", "D", "depth", "Depth (mm)", "Depth_mm", "OD (mm)", "OD", "Outside Diameter (mm)", "Outside Dimension (mm)"],
+    "b": ["b", "B", "width", "Width (mm)", "Width_mm", "bf", "flange_width"],
+    "t": ["t", "T", "thickness", "Wall Thickness (mm)", "Wall_Thickness_mm", "wall_thickness"],
+    "A": ["Area", "area", "A", "Area (mm2)", "Area (mm²)", "Area_mm2"],
+    "rx": ["rx", "rx (mm)", "rx_mm", "r_x", "r (mm)", "r"],
+    "ry": ["ry", "ry (mm)", "ry_mm", "r_y"],
 }
 
+def _canonicalize(rec: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(rec)
+    des = _pick(rec, CANON["designation"])
+    if des is not None:
+        out["designation"] = str(des).strip()
+
+    for k in ("d", "b", "t", "A", "rx", "ry"):
+        v = _pick(rec, CANON[k])
+        if v is not None:
+            out[k] = v
+    return out
+
+@st.cache_data(ttl=120)
+def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    shapes: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+
+    if not DATA_DIR.exists():
+        return {}, []
+
+    for p in sorted(DATA_DIR.glob("*.csv"), key=lambda x: x.name.lower()):
+        try:
+            fh = p.open("r", encoding="utf-8", newline="")
+            fh.read(256)
+            fh.seek(0)
+        except UnicodeDecodeError:
+            fh = p.open("r", encoding="latin-1", newline="")
+        with fh as f:
+            reader = csv.DictReader(f)
+            for rec in reader:
+                r2 = _canonicalize(rec)
+                des = r2.get("designation")
+                if not des:
+                    continue
+                shapes[des] = r2
+                order.append(des)
+
+    # de-dupe keep order
+    seen = set()
+    order2 = []
+    for k in order:
+        if k not in seen:
+            seen.add(k)
+            order2.append(k)
+    return shapes, order2
+
+# ============================================================
+# HSS DESIGNATION PARSER (for robust type/dims)
+# ============================================================
+
+def parse_hss_designation(des: str) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    """
+    Returns (d_mm, b_mm, t_mm, hss_type)
+      - RHS/SHS: HSS 305x203x9.5  -> (d=305, b=203, t=9.5, 'RHS/SHS')
+      - CHS:     HSS 273x12.7     -> (d=273, b=None, t=12.7, 'CHS')
+    Heuristic: count of 'x' in the dimension string:
+      - >=2 => rectangular/square
+      - ==1 => circular
+    """
+    s = des.upper().replace("HSS", "").strip()
+    s = s.replace("×", "X").replace("x", "X").replace(" ", "")
+    parts = s.split("X")
+    nums = []
+    for p in parts:
+        try:
+            nums.append(float(p))
+        except:
+            pass
+
+    if len(nums) >= 3:
+        d, b, t = nums[0], nums[1], nums[2]
+        return d, b, t, "RHS/SHS"
+    if len(nums) == 2:
+        d, t = nums[0], nums[1]
+        return d, None, t, "CHS"
+    return None, None, None, "UNKNOWN"
+
+def section_family(des: str) -> str:
+    n = des.strip().upper()
+    if n.startswith("W"):
+        return "W"
+    if "HSS" in n:
+        return "HSS"
+    return "OTHER"
+
+def hss_type(des: str) -> str:
+    d, b, t, typ = parse_hss_designation(des)
+    return typ
+
+# ============================================================
+# SECTION MODEL
+# ============================================================
 
 @dataclass(frozen=True)
-class ColumnDBProps:
-    section_name: str
-    section_family: str
+class SectionProps:
+    designation: str
+    family: str
     A_mm2: float
     rx_mm: float
     ry_mm: float
-    J_mm4: Optional[float] = None
-    Cw_mm6: Optional[float] = None
+    # Optional geometry for HSS local buckling
+    d_mm: Optional[float] = None
+    b_mm: Optional[float] = None
+    t_mm: Optional[float] = None
+    hss_kind: Optional[str] = None
 
+def build_section(designation: str, rec: Dict[str, Any]) -> SectionProps:
+    A = _to_float(rec.get("A")) or _to_float(rec.get("Area")) or _to_float(rec.get("A_mm2"))
+    rx = _to_float(rec.get("rx"))
+    ry = _to_float(rec.get("ry"))
 
-@dataclass(frozen=True)
-class ColumnUserInputs:
-    Kx: float = 1.0
-    Ky: float = 1.0
-    Lx_mm: float = 3000.0
-    Ly_mm: float = 3000.0
+    if A is None or rx is None or ry is None:
+        raise ValueError(f"Missing A/rx/ry for {designation}. Check CSV headers / values.")
 
-    Fy_MPa: float = 350.0
-    E_MPa: float = 200000.0
-    G_MPa: float = 77000.0
+    fam = section_family(designation)
 
-    phi_c: float = 0.9
-    n: float = 1.34
+    d = _to_float(rec.get("d"))
+    b = _to_float(rec.get("b"))
+    t = _to_float(rec.get("t"))
 
-    Pu_kN: Optional[float] = None
+    # If geometry missing, try parse from designation for HSS
+    kind = None
+    if fam == "HSS":
+        pd, pb, pt, kind = parse_hss_designation(designation)
+        if d is None and pd is not None:
+            d = pd
+        if b is None and pb is not None:
+            b = pb
+        if t is None and pt is not None:
+            t = pt
 
-    Kz: float = 1.0
-    Lz_mm: Optional[float] = None
+    return SectionProps(
+        designation=designation,
+        family=fam,
+        A_mm2=float(A),
+        rx_mm=float(rx),
+        ry_mm=float(ry),
+        d_mm=d,
+        b_mm=b,
+        t_mm=t,
+        hss_kind=kind,
+    )
 
+# ============================================================
+# CSA COMPRESSION ENGINE (DOUBLY SYMMETRIC / AXISYMMETRIC ONLY)
+# ============================================================
 
-def _req_pos(name: str, x: float) -> None:
-    if not (isinstance(x, (int, float)) and math.isfinite(x) and x > 0.0):
-        raise InputError(f"{name} must be a finite positive number; got {x!r}")
+def effective_area_hss(sec: SectionProps, Fy_MPa: float) -> Tuple[float, str, Optional[float], Optional[float]]:
+    """
+    Local buckling reduction for HSS only (simplified):
+      - RHS/SHS: (b-3t)/t <= 670/sqrt(Fy)
+      - CHS: D/t <= 23000/Fy
+    Returns (Ae_mm2, label, lambda, limit)
+    """
+    if sec.family != "HSS":
+        return sec.A_mm2, "N/A (not HSS)", None, None
 
+    if not sec.t_mm or sec.t_mm <= 0:
+        return sec.A_mm2, "HSS (t missing)", None, None
 
-def _sanity_db(db: ColumnDBProps) -> None:
-    _req_pos("A_mm2", db.A_mm2)
-    _req_pos("rx_mm", db.rx_mm)
-    _req_pos("ry_mm", db.ry_mm)
-    if db.A_mm2 < 100:
-        raise InputError(f"A_mm2 too small (A={db.A_mm2}). Units wrong?")
-    if db.rx_mm < 5 or db.ry_mm < 5:
-        raise InputError(f"rx/ry too small (rx={db.rx_mm}, ry={db.ry_mm}). Units wrong?")
-    if db.J_mm4 is not None and db.J_mm4 > 0:
-        _req_pos("J_mm4", db.J_mm4)
-    if db.Cw_mm6 is not None and db.Cw_mm6 > 0:
-        _req_pos("Cw_mm6", db.Cw_mm6)
+    t = sec.t_mm
 
+    # Circular
+    if sec.hss_kind == "CHS" and sec.d_mm:
+        lam = sec.d_mm / t
+        limit = 23000.0 / Fy_MPa
+        if lam <= limit:
+            return sec.A_mm2, "CHS non-slender", lam, limit
+        Ae = sec.A_mm2 * (limit / lam)
+        return Ae, "CHS slender", lam, limit
 
-def _sanity_user(u: ColumnUserInputs) -> None:
-    for k in ("Kx", "Ky", "Lx_mm", "Ly_mm", "Fy_MPa", "E_MPa", "G_MPa", "phi_c", "n"):
-        _req_pos(k, float(getattr(u, k)))
-    if u.E_MPa > 1e7:
-        raise InputError(f"E_MPa too large (E={u.E_MPa}). Did you pass Pa?")
-    if u.Pu_kN is not None:
-        if not (math.isfinite(u.Pu_kN) and u.Pu_kN >= 0):
-            raise InputError(f"Pu_kN must be finite and ≥ 0; got {u.Pu_kN!r}")
+    # Rect/Square
+    if sec.hss_kind == "RHS/SHS" and sec.b_mm:
+        bflat = sec.b_mm - 3.0 * t
+        lam = bflat / t
+        limit = 670.0 / math.sqrt(Fy_MPa)
+        if lam <= limit:
+            return sec.A_mm2, "HSS non-slender", lam, limit
+        Ae = sec.A_mm2 * (limit / lam)
+        return Ae, "HSS slender", lam, limit
 
+    return sec.A_mm2, "HSS (unknown kind)", None, None
 
-def euler_F_e(E_MPa: float, KL_over_r: float) -> float:
-    _req_pos("E_MPa", E_MPa)
-    _req_pos("KL_over_r", KL_over_r)
+def euler_Fe(E_MPa: float, KL_over_r: float) -> float:
     return (math.pi ** 2) * E_MPa / (KL_over_r ** 2)
 
-
 def csa_lambda(KL_over_r: float, Fy_MPa: float, E_MPa: float) -> float:
-    _req_pos("KL_over_r", KL_over_r)
-    _req_pos("Fy_MPa", Fy_MPa)
-    _req_pos("E_MPa", E_MPa)
     return KL_over_r * math.sqrt(Fy_MPa / ((math.pi ** 2) * E_MPa))
-
 
 def csa_Fcr(Fy_MPa: float, E_MPa: float, KL_over_r: float, n: float) -> float:
     lam = csa_lambda(KL_over_r, Fy_MPa, E_MPa)
-    _req_pos("n", n)
     return Fy_MPa / ((1.0 + (lam ** (2.0 * n))) ** (1.0 / n))
 
+def compression_check(sec: SectionProps, Fy, E, phi_c, n, Kx, Ky, Lx_mm, Ly_mm) -> Dict[str, Any]:
+    # Local buckling (HSS only)
+    Ae, local_label, lam_local, lim_local = effective_area_hss(sec, Fy)
 
-def compute_Fe_candidates(db: ColumnDBProps, u: ColumnUserInputs) -> Dict[str, Any]:
-    KLr_x = (u.Kx * u.Lx_mm) / db.rx_mm
-    KLr_y = (u.Ky * u.Ly_mm) / db.ry_mm
-    Fex = euler_F_e(u.E_MPa, KLr_x)
-    Fey = euler_F_e(u.E_MPa, KLr_y)
+    # Global buckling
+    KLr_x = (Kx * Lx_mm) / sec.rx_mm
+    KLr_y = (Ky * Ly_mm) / sec.ry_mm
+    KLr = min(KLr_x, KLr_y)
 
-    candidates: Dict[str, float] = {"Fex": Fex, "Fey": Fey}
+    Fe = euler_Fe(E, KLr)
+    lam = csa_lambda(KLr, Fy, E)
+    Fcr = csa_Fcr(Fy, E, KLr, n)
 
-    Fez = None
-    if db.J_mm4 and db.Cw_mm6 and db.J_mm4 > 0 and db.Cw_mm6 > 0:
-        Lz = u.Lz_mm if u.Lz_mm is not None else max(u.Lx_mm, u.Ly_mm)
-        _req_pos("Kz", u.Kz)
-        _req_pos("Lz_mm", Lz)
-        r0_sq = (db.rx_mm ** 2) + (db.ry_mm ** 2)
-        _req_pos("r0_sq", r0_sq)
-
-        term_warp = (math.pi ** 2) * u.E_MPa * db.Cw_mm6 / ((u.Kz * Lz) ** 2)
-        term_stv = u.G_MPa * db.J_mm4
-        Fez = (term_warp + term_stv) / (db.A_mm2 * r0_sq)
-        candidates["Fez"] = Fez
-
-    governing_mode = min(candidates, key=candidates.get)
-    Fe_min = candidates[governing_mode]
-
-    if governing_mode == "Fex":
-        KLr_ctrl = KLr_x
-    elif governing_mode == "Fey":
-        KLr_ctrl = KLr_y
-    else:
-        KLr_ctrl = math.pi * math.sqrt(u.E_MPa / Fe_min)
-
-    return {
-        "KLr_x": KLr_x,
-        "KLr_y": KLr_y,
-        "Fex_MPa": Fex,
-        "Fey_MPa": Fey,
-        "Fez_MPa": Fez,
-        "governing_mode": governing_mode,
-        "Fe_min_MPa": Fe_min,
-        "KLr_controlling": KLr_ctrl,
-    }
-
-
-def compression_csa_v1(db: ColumnDBProps, u: ColumnUserInputs) -> Dict[str, Any]:
-    _sanity_db(db)
-    _sanity_user(u)
-
-    fam = normalize_family(db.section_family)
-    symmetry = FAMILY_TO_SYMMETRY.get(fam)
-    if symmetry is None:
-        raise InputError(f"Unknown section_family={db.section_family!r} (normalized={fam!r}).")
-
-    if symmetry != "doubly_symmetric_or_axisymmetric":
-        raise InputError("Singly-symmetric families not supported in this v1 CLI.")
-
-    FE = compute_Fe_candidates(db, u)
-    KLr = FE["KLr_controlling"]
-    lam = csa_lambda(KLr, u.Fy_MPa, u.E_MPa)
-    Fcr = csa_Fcr(u.Fy_MPa, u.E_MPa, KLr, u.n)
-
-    Cr_N = u.phi_c * db.A_mm2 * Fcr
+    Cr_N = phi_c * Ae * Fcr
     Cr_kN = Cr_N / 1000.0
 
-    util = None
-    if u.Pu_kN is not None:
-        Pu_N = u.Pu_kN * 1000.0
-        util_ratio = Pu_N / Cr_N if Cr_N > 0 else None
-        util = {
-            "Pu_kN": u.Pu_kN,
-            "util_ratio": util_ratio,
-            "util_percent": (util_ratio * 100.0) if util_ratio is not None else None,
-            "passes": (util_ratio <= 1.0) if util_ratio is not None else None,
-        }
-
     return {
-        "section_name": db.section_name,
-        "section_family_normalized": fam,
-        "buckling": {**FE, "lambda": lam, "Fcr_MPa": Fcr},
+        "Ae_mm2": Ae,
+        "local_label": local_label,
+        "local_lambda": lam_local,
+        "local_limit": lim_local,
+        "KLr_x": KLr_x,
+        "KLr_y": KLr_y,
+        "KLr_gov": KLr,
+        "Fe_MPa": Fe,
+        "lambda": lam,
+        "Fcr_MPa": Fcr,
         "Cr_kN": Cr_kN,
-        "utilization": util,
     }
 
-
-# ----------------------------
+# ============================================================
 # STREAMLIT UI
-# ----------------------------
+# ============================================================
+
 st.title("CSA S16 Compression Check")
-st.markdown("**Axially Loaded W-Section Column Check per CSA S16**")
 
 shapes, designations = load_shapes()
-if not shapes:
-    st.error("No section data found. Add CSV files to the data/ folder.")
+if not shapes or not designations:
+    st.error("No CSV shapes found in data/. Put your CISC CSVs in the app's data/ folder.")
     st.stop()
 
-st.markdown("---")
+# --- Filter UI
+st.subheader("Section Type")
 
-input_col1, input_col2, input_col3 = st.columns([2, 1, 1])
+family = st.selectbox(
+    "Choose section family",
+    ["All", "W", "HSS Rectangular/Square", "HSS Circular"],
+    index=0,
+    key="family_filter",
+)
 
-with input_col1:
-    st.markdown("### Choose a W-section")
-    search_query = st.text_input("Search sections", placeholder="e.g., W250", label_visibility="collapsed", key="comp_search")
-    if search_query:
-        qq = search_query.lower().strip()
-        filtered = [k for k in designations if qq in k.lower()]
+search = st.text_input("Search", placeholder="e.g., W250 or HSS 203", key="search_box")
+
+def matches_family(des: str) -> bool:
+    fam = section_family(des)
+    if family == "All":
+        return fam in ("W", "HSS")
+    if family == "W":
+        return fam == "W"
+    if family == "HSS Rectangular/Square":
+        return fam == "HSS" and hss_type(des) == "RHS/SHS"
+    if family == "HSS Circular":
+        return fam == "HSS" and hss_type(des) == "CHS"
+    return True
+
+filtered = []
+for d in designations:
+    if not matches_family(d):
+        continue
+    if search and search.strip().lower() not in d.lower():
+        continue
+    filtered.append(d)
+
+if not filtered:
+    st.warning("No sections match your filter/search. Try 'All' and clear search.")
+    st.stop()
+
+sec_name = st.selectbox("Section", filtered, key="section_select")
+
+# Build section props (safe)
+try:
+    sec = build_section(sec_name, shapes[sec_name])
+except Exception as e:
+    st.error(f"Failed to build section '{sec_name}': {e}")
+    st.stop()
+
+# --- Inputs
+c1, c2, c3 = st.columns([1.2, 1, 1])
+
+with c1:
+    st.subheader("Material")
+    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=350.0, step=5.0)
+    E = st.number_input("E (MPa)", min_value=100000.0, max_value=300000.0, value=200000.0, step=1000.0)
+    phi_c = st.number_input("φc", min_value=0.5, max_value=1.0, value=0.9, step=0.05)
+    n_curve = st.number_input("n (curve)", min_value=0.8, max_value=2.5, value=1.34, step=0.01)
+
+with c2:
+    st.subheader("Effective Lengths")
+    Kx = st.number_input("Kx", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
+    Lx_m = st.number_input("Lx (m)", min_value=0.1, max_value=50.0, value=3.0, step=0.5)
+    Ky = st.number_input("Ky", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
+    Ly_m = st.number_input("Ly (m)", min_value=0.1, max_value=50.0, value=3.0, step=0.5)
+
+with c3:
+    st.subheader("Demand")
+    check_demand = st.checkbox("Check Pu", value=False)
+    Pu = st.number_input("Pu (kN)", min_value=0.0, value=500.0, step=50.0) if check_demand else None
+
+st.divider()
+
+# --- Compute
+out = compression_check(
+    sec=sec,
+    Fy=float(Fy),
+    E=float(E),
+    phi_c=float(phi_c),
+    n=float(n_curve),
+    Kx=float(Kx),
+    Ky=float(Ky),
+    Lx_mm=float(Lx_m) * 1000.0,
+    Ly_mm=float(Ly_m) * 1000.0,
+)
+
+# --- Results
+st.subheader("Results")
+
+r1, r2 = st.columns(2)
+with r1:
+    st.markdown(f"**Section:** {sec.designation}")
+    st.markdown(f"- Family: `{sec.family}`")
+    st.markdown(f"- A = {sec.A_mm2:,.0f} mm²")
+    st.markdown(f"- rx = {sec.rx_mm:.1f} mm, ry = {sec.ry_mm:.1f} mm")
+    if sec.family == "HSS":
+        st.markdown(f"- HSS kind: `{sec.hss_kind}`")
+        st.markdown(f"- d = {sec.d_mm if sec.d_mm else '—'} mm, b = {sec.b_mm if sec.b_mm else '—'} mm, t = {sec.t_mm if sec.t_mm else '—'} mm")
+
+with r2:
+    st.metric("Factored Compression Resistance (Cr)", f"{out['Cr_kN']:,.1f} kN")
+    st.caption(f"Local: {out['local_label']} | φc={phi_c}, n={n_curve}")
+
+st.divider()
+
+st.subheader("Buckling Details")
+b1, b2, b3 = st.columns(3)
+
+with b1:
+    st.markdown("**Local (HSS only)**")
+    if out["local_lambda"] is None:
+        st.write("N/A")
     else:
-        filtered = designations
+        st.write(f"λ_local = {out['local_lambda']:.2f}")
+        st.write(f"limit = {out['local_limit']:.2f}")
 
-    if not filtered:
-        st.warning("No sections match your search.")
-        st.stop()
+with b2:
+    st.markdown("**Slenderness**")
+    st.write(f"KL/r (x) = {out['KLr_x']:.1f}")
+    st.write(f"KL/r (y) = {out['KLr_y']:.1f}")
+    st.write(f"Gov. KL/r = {out['KLr_gov']:.1f}")
 
-    selected_section = st.selectbox("Select section", options=filtered, index=0, label_visibility="collapsed", key="comp_select")
+with b3:
+    st.markdown("**Stresses**")
+    st.write(f"Fe = {out['Fe_MPa']:.1f} MPa")
+    st.write(f"λ = {out['lambda']:.3f}")
+    st.write(f"Fcr = {out['Fcr_MPa']:.1f} MPa")
 
-with input_col2:
-    st.markdown("### Material")
-    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=345.0, step=5.0, key="comp_fy")
-    E = st.number_input("E (MPa)", min_value=100000.0, max_value=300000.0, value=200000.0, step=1000.0, key="comp_E")
-    G = st.number_input("G (MPa)", min_value=50000.0, max_value=100000.0, value=77000.0, step=1000.0, key="comp_G")
+if check_demand and Pu is not None:
+    st.divider()
+    util = float(Pu) / float(out["Cr_kN"]) if out["Cr_kN"] > 0 else float("inf")
+    if util <= 1.0:
+        st.success(f" PASS — Pu/Cr = {util:.2f}")
+    else:
+        st.error(f" FAIL — Pu/Cr = {util:.2f}")
 
-with input_col3:
-    st.markdown("### Demand Check")
-    check_demand = st.checkbox("Check against Pu", key="comp_demand")
-    Pu = st.number_input("Pu (kN)", min_value=0.0, value=500.0, step=50.0, key="comp_pu") if check_demand else None
-
-st.markdown("---")
-
-if selected_section:
-    shape = get_shape(selected_section)
-    if shape is None:
-        st.error(f"Section {selected_section} not found.")
-        st.stop()
-
-    len_col1, len_col2 = st.columns(2)
-
-    with len_col1:
-        st.markdown("### Effective Lengths")
-        Kx = st.number_input("Kx (effective length factor, strong axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="comp_kx")
-        Lx_m = st.number_input("Lx (unbraced length, strong axis) (m)", min_value=0.1, value=3.0, step=0.5, key="comp_lx")
-
-    with len_col2:
-        st.markdown("### &nbsp;")
-        Ky = st.number_input("Ky (effective length factor, weak axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="comp_ky")
-        Ly_m = st.number_input("Ly (unbraced length, weak axis) (m)", min_value=0.1, value=3.0, step=0.5, key="comp_ly")
-
-    phi_c = 0.9
-    n_curve = 1.34
-
-    st.markdown("---")
-
-    try:
-        props = adapt_wshape_to_column_props(shape)
-
-        db = ColumnDBProps(
-            section_name=selected_section,
-            section_family="W",
-            A_mm2=props["A_mm2"],
-            rx_mm=props["rx_mm"],
-            ry_mm=props["ry_mm"],
-            J_mm4=props["J_mm4"] if props["J_mm4"] > 0 else None,
-            Cw_mm6=props["Cw_mm6"] if props["Cw_mm6"] > 0 else None,
-        )
-
-        u = ColumnUserInputs(
-            Kx=Kx,
-            Ky=Ky,
-            Lx_mm=Lx_m * 1000.0,
-            Ly_mm=Ly_m * 1000.0,
-            Fy_MPa=float(Fy),
-            E_MPa=float(E),
-            G_MPa=float(G),
-            phi_c=phi_c,
-            n=n_curve,
-            Pu_kN=float(Pu) if Pu is not None else None,
-        )
-
-        out = compression_csa_v1(db, u)
-        buck = out["buckling"]
-
-        res_col1, res_col2 = st.columns(2)
-
-        with res_col1:
-            st.subheader(f"Section: {selected_section}")
-            st.markdown("**Section Properties**")
-            st.markdown(f"- A = {props['A_mm2']:,.0f} mm²")
-            st.markdown(f"- rx = {props['rx_mm']:.1f} mm, ry = {props['ry_mm']:.1f} mm")
-            if props['J_mm4'] > 0:
-                st.markdown(f"- J = {props['J_mm4']:,.0f} mm⁴")
-            if props['Cw_mm6'] > 0:
-                st.markdown(f"- Cw = {props['Cw_mm6']:,.0f} mm⁶")
-
-        with res_col2:
-            st.subheader("Compression Resistance")
-            st.metric("Factored Compression Resistance (Cr)", f"{out['Cr_kN']:,.1f} kN")
-            st.caption(f"φc = {phi_c}, n = {n_curve}")
-
-        st.divider()
-
-        st.subheader("Buckling Details")
-        buck_col1, buck_col2, buck_col3 = st.columns(3)
-
-        with buck_col1:
-            st.markdown("**Slenderness Ratios**")
-            st.markdown(f"- KL/r (x) = {buck['KLr_x']:.1f}")
-            st.markdown(f"- KL/r (y) = {buck['KLr_y']:.1f}")
-            st.markdown(f"- Governing KL/r = {buck['KLr_controlling']:.1f}")
-
-        with buck_col2:
-            st.markdown("**Euler Stresses**")
-            st.markdown(f"- Fex = {buck['Fex_MPa']:,.1f} MPa")
-            st.markdown(f"- Fey = {buck['Fey_MPa']:,.1f} MPa")
-            if buck['Fez_MPa'] is not None:
-                st.markdown(f"- Fez = {buck['Fez_MPa']:,.1f} MPa")
-            st.markdown(f"- **Governing: {buck['governing_mode']}** ({buck['Fe_min_MPa']:,.1f} MPa)")
-
-        with buck_col3:
-            st.markdown("**CSA Column Curve**")
-            st.markdown(f"- λ = {buck['lambda']:.3f}")
-            st.markdown(f"- Fcr = {buck['Fcr_MPa']:,.1f} MPa")
-
-        if check_demand and Pu is not None:
-            st.divider()
-            st.subheader("Demand / Capacity Check")
-            util = out.get("utilization")
-            if util:
-                ratio = util["util_ratio"]
-                if util["passes"]:
-                    st.success(f"✅ **PASS** — Pu/Cr = {ratio:.2f} ≤ 1.0")
-                else:
-                    st.error(f"❌ **FAIL** — Pu/Cr = {ratio:.2f} > 1.0")
-                st.metric("Utilization", f"{util['util_percent']:.1f}%")
-
-        with st.expander("Raw Section Data"):
-            st.json(shape)
-
-    except Exception as e:
-        st.error(f"Compression calculation error: {e}")
+with st.expander("Raw CSV Record"):
+    st.json(shapes[sec_name])

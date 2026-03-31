@@ -178,7 +178,15 @@ def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     out: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
 
-    with path.open("r", encoding="utf-8", newline="") as f:
+    # Try UTF-8 first; fall back to latin-1 for files with non-UTF-8 characters
+    try:
+        fh = path.open("r", encoding="utf-8", newline="")
+        fh.read(512)
+        fh.seek(0)
+    except UnicodeDecodeError:
+        fh = path.open("r", encoding="latin-1", newline="")
+
+    with fh as f:
         reader = csv.DictReader(f)
         for rec in reader:
             rec2 = _canonicalize_record(rec)

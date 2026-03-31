@@ -38,7 +38,7 @@ def _norm(s: str) -> str:
 
 
 CANON_SYNONYMS: Dict[str, List[str]] = {
-    "designation": ["designation", "shape", "section", "name", "w_shape", "member"],
+    "designation": ["designation", "shape", "section", "Section", "name", "w_shape", "member"],
 
     # geometry (mm)
     "d": ["d", "depth", "overall_depth", "depth_mm"],
@@ -91,7 +91,15 @@ def _load_csv_dictreader(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[st
     out: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
 
-    with path.open("r", encoding="utf-8", newline="") as f:
+    # Try UTF-8 first; fall back to latin-1 for files with non-UTF-8 characters
+    try:
+        fh = path.open("r", encoding="utf-8", newline="")
+        fh.read(512)
+        fh.seek(0)
+    except UnicodeDecodeError:
+        fh = path.open("r", encoding="latin-1", newline="")
+
+    with fh as f:
         reader = csv.DictReader(f)
         for rec in reader:
             rec2 = _canonicalize_record(rec)

@@ -279,24 +279,17 @@ st.markdown("---")
 
 # ── 3. Axial case ─────────────────────────────────────────────────────────────
 st.subheader("3. Member Axial Condition")
-case_col1, case_col2 = st.columns(2)
-with case_col1:
-    tension_btn = st.button("Member in Axial Tension", use_container_width=True, key="bc4_tens_btn")
-with case_col2:
-    comp_btn = st.button("Member in Axial Compression", use_container_width=True, key="bc4_comp_btn")
+axial_case_label = st.selectbox(
+    "Axial condition",
+    ["— Select —", "Member in Axial Tension", "Member in Axial Compression"],
+    key="bc4_case_dd",
+)
 
-if tension_btn:
-    st.session_state["bc4_case"] = "TENSION"
-if comp_btn:
-    st.session_state["bc4_case"] = "COMPRESSION"
-
-axial_case = st.session_state.get("bc4_case", "")
-
-if not axial_case:
+if axial_case_label == "— Select —":
     st.info("Select an axial condition above to continue.")
     st.stop()
 
-st.markdown(f"**Selected: {axial_case}**")
+axial_case = "TENSION" if axial_case_label == "Member in Axial Tension" else "COMPRESSION"
 st.markdown("---")
 
 # ── 4. Inputs ─────────────────────────────────────────────────────────────────

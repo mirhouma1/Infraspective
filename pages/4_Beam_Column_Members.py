@@ -1,26 +1,23 @@
-# app.py  (Beam-Column Members — CSV-driven Streamlit app)
 from __future__ import annotations
 import csv
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import pandas as pd
 import streamlit as st
-
 
 # ============================================================
 # CONFIG
 # ============================================================
-APP_TITLE = "CSA S16 Beam-Column (Chapter 5) — CSV-driven"
+APP_TITLE = "CSA S16 Beam-Column Check (Chapter 13)"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
-PHI_B = 0.9
-E_MPA_DEFAULT = 200000.0  # MPa
+PHI = 0.9     # resistance factor for tension, compression, flexure
+N_CSA = 1.34  # CSA S16 column curve exponent (hot-rolled)
 
 
 # ============================================================
-# CSV NORMALIZATION
+# CSV LOADING
 # ============================================================
 def _norm(s: str) -> str:
     out = (
@@ -28,688 +25,455 @@ def _norm(s: str) -> str:
         .replace("(", "").replace(")", "")
         .replace("[", "").replace("]", "")
         .replace("/", "_").replace("-", "_")
-        .replace(" ", "_")
-        .replace("^", "")
+        .replace(" ", "_").replace("^", "")
     )
-    return "".join(c for c in out if c.isalnum() or c == "_")
-
-
-CANON_SYNONYMS: Dict[str, List[str]] = {
-    "designation": ["designation", "shape", "section", "name", "member"],
-
-    # geometry (mm)
-    "d": ["d", "depth", "overall_depth", "depth_mm"],
-    "b": ["b", "bf", "flange_width", "bf_mm"],
-    "t": ["t", "tf", "flange_thickness", "tf_mm"],
-    "w": ["w", "tw", "web_thickness", "tw_mm"],
-    "h": ["h", "web_depth", "clear_web_depth", "h_mm"],
-
-    # area and radii
-    "Area": ["area", "a", "a_mm2", "area_mm2"],
-    "rx": ["rx", "r_x", "rx_mm"],
-    "ry": ["ry", "r_y", "ry_mm"],
-
-    # second moments
-    "Ix": ["ix", "i_x", "ix_106_mm4", "ix_10e6_mm4", "ix_10^6_mm4", "ix_mm4"],
-    "Iy": ["iy", "i_y", "iy_106_mm4", "iy_10e6_mm4", "iy_10^6_mm4", "iy_mm4"],
-
-    # section modulus
-    "Zx": ["zx", "z_x", "zx_103_mm3", "zx_10e3_mm3", "zx_mm3"],
-    "Sx": ["sx", "s_x", "sx_103_mm3", "sx_10e3_mm3", "sx_mm3"],
-    "Zy": ["zy", "z_y", "zy_103_mm3", "zy_10e3_mm3", "zy_mm3"],
-    "Sy": ["sy", "s_y", "sy_103_mm3", "sy_10e3_mm3", "sy_mm3"],
-
-    # optional class field if your CSV contains it
-    "section_class": ["section_class", "class", "sectionclass", "cls"],
-}
+    return "".join(c for c in out if (c.isalnum() or c == "_") and ord(c) < 128)
 
 
 def _pick(rec: Dict[str, Any], candidates: List[str]) -> Optional[Any]:
     norm_map = {_norm(k): v for k, v in rec.items()}
     for cand in candidates:
         ck = _norm(cand)
-        if ck in norm_map and norm_map[ck] not in (None, ""):
+        if ck in norm_map and norm_map[ck] not in (None, "", " "):
             return norm_map[ck]
     return None
 
 
-def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(rec)
-
-    des = _pick(rec, CANON_SYNONYMS["designation"])
-    if des is not None:
-        out["designation"] = str(des).strip()
-
-    for sym in (
-        "d", "b", "t", "w", "h",
-        "Area", "rx", "ry", "Ix", "Iy", "Zx", "Sx", "Zy", "Sy",
-        "section_class",
-    ):
-        v = _pick(rec, CANON_SYNONYMS[sym])
-        if v is not None:
-            out[sym] = v
-
-    return out
-
-
-def _load_csv_dictreader(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    out: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-
-    try:
-        fh = path.open("r", encoding="utf-8", newline="")
-        fh.read(512)
-        fh.seek(0)
-    except UnicodeDecodeError:
-        fh = path.open("r", encoding="latin-1", newline="")
-
-    with fh as f:
-        reader = csv.DictReader(f)
-        for rec in reader:
-            rec2 = _canonicalize_record(rec)
-            des = rec2.get("designation")
-            if des:
-                key = str(des).strip()
-                out[key] = rec2
-                order.append(key)
-
-    return out, order
-
-
-@st.cache_data(ttl=60)
-def load_shapes_from_data_dir() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-
-    if DATA_DIR.exists():
-        for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
-            if p.suffix.lower() == ".csv":
-                data, csv_order = _load_csv_dictreader(p)
-                merged.update(data)
-                order.extend(csv_order)
-
-    seen: set[str] = set()
-    uniq: List[str] = []
-    for k in order:
-        if k not in seen:
-            seen.add(k)
-            uniq.append(k)
-
-    return merged, uniq
-
-
-# ============================================================
-# Numeric helpers
-# ============================================================
-EPS = 1e-12
-MULT_ZS = 1000.0  # assumes Z/S in 10^3 mm^3 if small-table format
-
-
-def safe_div(a: float, b: float) -> float:
-    if abs(b) < EPS:
-        raise ValueError("Division by ~0 encountered.")
-    return a / b
-
-
-def opt_float(x: Any) -> Optional[float]:
+def _flt(x: Any) -> Optional[float]:
     if x in (None, ""):
         return None
     try:
-        return float(x)
+        return float(str(x).replace(",", "").strip())
     except Exception:
         return None
 
 
-def fmt_num(x: Optional[float], digits: int = 4) -> str:
-    if x is None or not math.isfinite(x):
-        return "—"
-    return f"{x:.{digits}f}"
+# Column alias lists — covers w_sections.csv, HSS Rectangular (UTF-8), HSS Circle/Square (latin-1)
+_ALIASES: Dict[str, List[str]] = {
+    "designation": [
+        "Designation", "designation", "Section", "section", "shape", "name",
+    ],
+    "Area": [
+        "Area (mm2)", "Area (mmý)", "Area (mm²)", "Area",
+    ],
+    "Ix": [
+        "Ix (10^6 mm4)", "Ix (10^6 mm?)", "Ix (10^6 mm4)", "Ix (10e6 mm4)",
+        "Ix (10^6 mm?)", "Ix (106 mm?)", "Ix (10 mm)", "Ix",
+        "I (10? mm?)", "I (10^4 mm4)", "I",
+    ],
+    "Iy": [
+        "Iy (10^6 mm4)", "Iy (10^6 mm?)", "Iy (10e6 mm4)",
+        "Iy (10 mm)", "Iy",
+    ],
+    "Sx": [
+        "Sx (10^3 mm3)", "Sx (10^3 mm?)", "Sx (10e3 mm3)",
+        "Sx (10 mm)", "Sx",
+        "S (10? mm?)", "S (10^3 mm3)", "S",
+    ],
+    "Sy": [
+        "Sy (10^3 mm3)", "Sy (10^3 mm?)", "Sy (10e3 mm3)",
+        "Sy (10 mm)", "Sy",
+    ],
+    "Zx": [
+        "Zx (10^3 mm3)", "Zx (10^3 mm?)", "Zx (10e3 mm3)",
+        "Zx (10 mm)", "Zx",
+        "Z (10? mm?)", "Z (10^3 mm3)", "Z",
+    ],
+    "Zy": [
+        "Zy (10^3 mm3)", "Zy (10^3 mm?)", "Zy (10e3 mm3)",
+        "Zy (10 mm)", "Zy",
+    ],
+    "rx": ["rx (mm)", "rx", "r (mm)", "r"],
+    "ry": ["ry (mm)", "ry", "r (mm)", "r"],
+    "J":  ["J (10^3 mm4)", "J (10^3 mm?)", "J (10e3 mm4)", "J"],
+    "Cw": ["Cw (10^9 mm6)", "Cw (10^9 mm?)", "Cw (10e9 mm6)", "Cw"],
+    "d":  ["Depth d (mm)", "Depth (mm)", "d (mm)", "Outside Diameter (mm)", "d"],
+    "b":  ["Flange Width b (mm)", "Width (mm)", "b (mm)", "b"],
+    "t":  ["Flange Thickness t (mm)", "Wall Thickness (mm)", "tf (mm)", "t"],
+    "w":  ["Web Thickness w (mm)", "tw (mm)", "w"],
+}
+
+# Multipliers to convert from table units to base SI (mm)
+_MULT: Dict[str, float] = {
+    "Ix": 1e6, "Iy": 1e6,
+    "Sx": 1e3, "Sy": 1e3,
+    "Zx": 1e3, "Zy": 1e3,
+    "J": 1e3,
+    "Cw": 1e9,
+}
 
 
-def fmt_sci(x: Optional[float]) -> str:
-    if x is None or not math.isfinite(x):
-        return "—"
-    return f"{x:.3e}"
+def _canonicalize(rec: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for sym, aliases in _ALIASES.items():
+        v = _pick(rec, aliases)
+        if v is not None:
+            out[sym] = v
+    return out
 
 
-def to_mm4_from_csv(val: Optional[float]) -> Optional[float]:
-    if val is None:
+def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    shapes: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    try:
+        fh = path.open("r", encoding="utf-8", newline="")
+        fh.read(512); fh.seek(0)
+    except UnicodeDecodeError:
+        fh = path.open("r", encoding="latin-1", newline="")
+    with fh as f:
+        for rec in csv.DictReader(f):
+            c = _canonicalize(rec)
+            des = c.get("designation")
+            if des:
+                key = str(des).strip()
+                shapes[key] = c
+                order.append(key)
+    return shapes, order
+
+
+@st.cache_data(ttl=120)
+def load_all_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    if DATA_DIR.exists():
+        for p in sorted(DATA_DIR.glob("*.csv"), key=lambda x: x.name.lower()):
+            data, csv_order = _load_csv(p)
+            merged.update(data)
+            order.extend(csv_order)
+    seen: set = set()
+    uniq = [k for k in order if not (k in seen or seen.add(k))]
+    return merged, uniq
+
+
+def get_prop(shape: Dict[str, Any], sym: str) -> Optional[float]:
+    v = _flt(shape.get(sym))
+    if v is None:
         return None
-    # if small, assume 10^6 mm^4 table style
-    return val * 1e6 if val < 1e6 else val
-
-
-def to_mm3_from_csv(val: Optional[float]) -> Optional[float]:
-    if val is None:
-        return None
-    # if small-ish, assume 10^3 mm^3 table style
-    return val * MULT_ZS if val < 1e6 else val
+    # CSV tables always store values in scaled units (e.g. 10^6 mm^4, 10^3 mm^3)
+    # Always apply the defined multiplier unconditionally
+    return v * _MULT.get(sym, 1.0)
 
 
 # ============================================================
-# Beam-column math
+# CSA S16 ENGINEERING CALCULATIONS
 # ============================================================
-def omega1_from_kappa(kappa: float) -> float:
-    return max(0.4, 0.6 - 0.4 * kappa)
+
+def calc_Tr(A_mm2: float, Fy_MPa: float) -> float:
+    return PHI * Fy_MPa * A_mm2 / 1000.0  # kN
 
 
-def omega1_case(case: str, kappa: Optional[float]) -> float:
-    if case == "no_transverse_loads":
-        if kappa is None:
-            raise ValueError("κ is required for no_transverse_loads.")
-        return omega1_from_kappa(float(kappa))
-    if case == "distributed_or_series":
-        return 1.0
-    if case == "concentrated_between_supports":
-        return 0.85
-    raise ValueError("Unknown ω₁ case")
+def calc_Mr(Z_mm3: float, Fy_MPa: float) -> float:
+    return PHI * Fy_MPa * Z_mm3 / 1e6  # kN·m
 
 
-def Ce_euler_N(E_MPa: float, I_mm4: float, L_mm: float) -> float:
-    return (math.pi**2) * E_MPa * I_mm4 / (L_mm**2)
+def calc_Cr(A_mm2: float, Fy_MPa: float, E_MPa: float,
+            KLr: float) -> Tuple[float, float, float]:
+    """Returns (Cr_kN, Fe_MPa, Fcr_MPa) using CSA S16 column curve."""
+    if KLr <= 0:
+        return PHI * A_mm2 * Fy_MPa / 1000.0, float("inf"), Fy_MPa
+    Fe = (math.pi ** 2) * E_MPa / (KLr ** 2)
+    lam = KLr * math.sqrt(Fy_MPa / ((math.pi ** 2) * E_MPa))
+    Fcr = Fy_MPa / ((1.0 + lam ** (2.0 * N_CSA)) ** (1.0 / N_CSA))
+    Cr = PHI * A_mm2 * Fcr / 1000.0
+    return Cr, Fe, Fcr
 
 
-def lambda_y(L_mm: float, ry_mm: float, Fy_MPa: float, E_MPa: float) -> float:
-    return safe_div(L_mm, (math.pi * ry_mm)) * math.sqrt(safe_div(Fy_MPa, E_MPa))
-
-
-def beta_weak_axis(lam_y: float) -> float:
-    return min(0.85, 0.6 + 0.4 * lam_y)
-
-
-def U1_braced(omega1: float, Cf_N: float, Ce_N: float) -> float:
-    denom = 1.0 - safe_div(Cf_N, Ce_N)
+def calc_U1(omega1: float, Cf_kN: float, Ce_kN: float) -> float:
+    denom = 1.0 - Cf_kN / Ce_kN if Ce_kN > 0 else 0.0
     if denom <= 0:
         return float("inf")
-    return omega1 / denom
+    return max(1.0, omega1 / denom)
 
 
-def U1_sway() -> float:
-    return 1.0
-
-
-def util_tension_bending(Tf: float, Tr: float, Mf: float, Mr: float) -> float:
-    return safe_div(Tf, Tr) + safe_div(Mf, Mr)
-
-
-def util_class12_biaxial(
-    Cf: float, Cr: float,
-    U1x: float, Mfx: float, Mrx: float,
-    U1y: float, Mfy: float, Mry: float,
-    beta: float,
-) -> float:
-    return safe_div(Cf, Cr) + 0.85 * safe_div(U1x * Mfx, Mrx) + beta * safe_div(U1y * Mfy, Mry)
-
-
-def util_other_biaxial(
-    Cf: float, Cr: float,
-    U1x: float, Mfx: float, Mrx: float,
-    U1y: float, Mfy: float, Mry: float,
-) -> float:
-    return safe_div(Cf, Cr) + safe_div(U1x * Mfx, Mrx) + safe_div(U1y * Mfy, Mry)
-
-
-def util_braced_extra(Mfx: float, Mrx: float, Mfy: float, Mry: float) -> float:
-    return safe_div(Mfx, Mrx) + safe_div(Mfy, Mry)
-
-
-def Mr_from_modulus_kNm(Z_or_S_csv: float, Fy_MPa: float) -> float:
-    z_mm3 = to_mm3_from_csv(Z_or_S_csv)
-    if z_mm3 is None:
-        raise ValueError("Section modulus is missing.")
-    Mr_Nmm = PHI_B * z_mm3 * Fy_MPa
-    return Mr_Nmm / 1e6
+def Ce_euler(E_MPa: float, I_mm4: float, L_mm: float) -> float:
+    if L_mm <= 0 or I_mm4 <= 0:
+        return float("inf")
+    return (math.pi ** 2) * E_MPa * I_mm4 / (L_mm ** 2) / 1000.0  # kN
 
 
 # ============================================================
-# Optional section-class helper
-# - read from CSV if present
-# - otherwise give a light auto-suggestion if geometry exists
-# ============================================================
-def guess_section_class(shape: Dict[str, Any], Fy: float) -> Tuple[str, List[str]]:
-    notes: List[str] = []
-
-    csv_class = shape.get("section_class")
-    if csv_class not in (None, ""):
-        return str(csv_class), ["Section class taken directly from CSV field."]
-
-    b = opt_float(shape.get("b"))
-    t = opt_float(shape.get("t"))
-    d = opt_float(shape.get("d"))
-    w = opt_float(shape.get("w"))
-    h = opt_float(shape.get("h"))
-
-    if h is None and d is not None and t is not None:
-        h = max(d - 2.0 * t, 0.0)
-
-    if any(v is None for v in [b, t, h, w]):
-        return "Unknown", ["Section class not in CSV and geometry is incomplete, so class could not be auto-suggested."]
-
-    # heuristic only
-    flange_sl = b / t if t and t > 0 else float("inf")
-    web_sl = h / w if w and w > 0 else float("inf")
-
-    fl_c1 = 145.0 / math.sqrt(Fy)
-    fl_c2 = 170.0 / math.sqrt(Fy)
-    fl_c3 = 200.0 / math.sqrt(Fy)
-
-    def cls(x: float, c1: float, c2: float, c3: float) -> int:
-        if x <= c1:
-            return 1
-        if x <= c2:
-            return 2
-        if x <= c3:
-            return 3
-        return 4
-
-    flange_class = cls(flange_sl, fl_c1, fl_c2, fl_c3)
-
-    # very rough generic web classification placeholder
-    web_c1 = 1100.0 / math.sqrt(Fy)
-    web_c2 = 1700.0 / math.sqrt(Fy)
-    web_c3 = 1900.0 / math.sqrt(Fy)
-    web_class = cls(web_sl, web_c1, web_c2, web_c3)
-
-    overall = max(flange_class, web_class)
-    notes.append("Section class is auto-suggested from geometry only. Verify manually before relying on it.")
-    notes.append(f"Flange slenderness b/t = {flange_sl:.3f} → Class {flange_class}")
-    notes.append(f"Web slenderness h/w = {web_sl:.3f} → Class {web_class}")
-    return f"Class {overall}", notes
-
-
-# ============================================================
-# Streamlit UI helpers
-# ============================================================
-def read_or_override_number(
-    label: str,
-    table_value: Optional[float],
-    default_if_missing: float,
-    key_base: str,
-    format_str: Optional[str] = None,
-    help_text: Optional[str] = None,
-) -> Tuple[float, str]:
-    """
-    Returns (value, source) where source is:
-    - table
-    - override
-    - fallback
-    """
-    use_override = st.checkbox(f"Override {label}", key=f"ovr_{key_base}", value=False)
-
-    if table_value is None and not use_override:
-        st.warning(f"{label} is not present in the CSV. Using fallback value unless overridden.")
-        val = st.number_input(
-            label,
-            key=f"fallback_{key_base}",
-            value=float(default_if_missing),
-            format=format_str if format_str else None,
-            help=help_text,
-        )
-        return float(val), "fallback"
-
-    if use_override:
-        base = table_value if table_value is not None else default_if_missing
-        val = st.number_input(
-            label,
-            key=f"val_{key_base}",
-            value=float(base),
-            format=format_str if format_str else None,
-            help=help_text,
-        )
-        return float(val), "override"
-
-    # default read-only display
-    if format_str == "%.3e":
-        st.text_input(label, value=fmt_sci(table_value), disabled=True, help=help_text)
-    else:
-        st.text_input(label, value=str(table_value), disabled=True, help=help_text)
-
-    return float(table_value), "table"
-
-
-def formula_block(title: str, symbolic: str, substitution: str, result: str):
-    st.markdown(f"**{title}**")
-    st.latex(symbolic)
-    st.caption("Substitution")
-    st.code(substitution, language="text")
-    st.caption("Result")
-    st.code(result, language="text")
-
-
-# ============================================================
-# APP
+# STREAMLIT UI
 # ============================================================
 st.title(APP_TITLE)
-st.caption("Loads in kN / kN·m, geometry in mm, E and Fy in MPa. Section properties come from the CSV by default.")
+st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads in kN / kN·m, geometry in mm")
 
-shapes, order = load_shapes_from_data_dir()
+shapes, order = load_all_shapes()
 if not shapes:
-    st.error(f"No CSVs found in: {DATA_DIR}")
+    st.error(f"No section data found. Add CSV files to: {DATA_DIR}")
     st.stop()
 
-# -----------------------------
-# Section selection
-# -----------------------------
-st.subheader("1) Select section")
+st.markdown("---")
 
-section_type = st.selectbox(
-    "Section type",
-    ["All sections", "W sections", "HSS sections"],
-    index=0,
-    key="bc_section_type",
-)
+# ── 1. Section selection ──────────────────────────────────────────────────────
+st.subheader("1. Section Selection")
+sel_col1, sel_col2, sel_col3 = st.columns([1, 1.5, 2])
 
-if section_type == "W sections":
-    type_filtered = [s for s in order if s.upper().startswith("W") and len(s) > 1 and s[1].isdigit()]
-elif section_type == "HSS sections":
-    type_filtered = [s for s in order if s.upper().startswith("HSS")]
-else:
-    type_filtered = order
+with sel_col1:
+    section_type = st.selectbox(
+        "Section type",
+        ["All sections", "W sections", "HSS sections"],
+        key="bc4_type",
+    )
 
-search = st.text_input("Search designation", placeholder="e.g., W310 or HSS 305", key="bc_search")
-options = type_filtered
-if search:
-    qq = search.strip().lower()
-    options = [s for s in type_filtered if qq in s.lower()]
+with sel_col2:
+    if section_type == "W sections":
+        filtered = [s for s in order if s.upper().startswith("W") and len(s) > 1 and s[1].isdigit()]
+    elif section_type == "HSS sections":
+        filtered = [s for s in order if s.upper().startswith("HSS")]
+    else:
+        filtered = order
 
-if not options:
-    st.warning("No matching section found.")
-    st.stop()
+    search = st.text_input("Search", placeholder="e.g. W310 or HSS 203", key="bc4_search")
+    if search:
+        filtered = [s for s in filtered if search.strip().lower() in s.lower()]
 
-designation = st.selectbox("Designation", options, index=0, key="bc_designation")
+with sel_col3:
+    if not filtered:
+        st.warning("No sections match.")
+        st.stop()
+    designation = st.selectbox("Designation", filtered, index=0, key="bc4_des")
+
 shape = shapes[designation]
 
-# canonical raw pulls
-Ix_raw = opt_float(shape.get("Ix"))
-Iy_raw = opt_float(shape.get("Iy"))
-ry_raw = opt_float(shape.get("ry"))
-rx_raw = opt_float(shape.get("rx"))
-Zx_raw = opt_float(shape.get("Zx"))
-Sx_raw = opt_float(shape.get("Sx"))
-Zy_raw = opt_float(shape.get("Zy"))
-Sy_raw = opt_float(shape.get("Sy"))
-Area_raw = opt_float(shape.get("Area"))
-d_raw = opt_float(shape.get("d"))
-b_raw = opt_float(shape.get("b"))
-t_raw = opt_float(shape.get("t"))
-w_raw = opt_float(shape.get("w"))
-h_raw = opt_float(shape.get("h"))
+# Pull raw properties
+A    = get_prop(shape, "Area")
+Ix   = get_prop(shape, "Ix")
+Iy   = get_prop(shape, "Iy")
+rx   = get_prop(shape, "rx")
+ry   = get_prop(shape, "ry")
+Zx   = get_prop(shape, "Zx")
+Zy   = get_prop(shape, "Zy")
+Sx   = get_prop(shape, "Sx")
+Sy   = get_prop(shape, "Sy")
+J    = get_prop(shape, "J")
+Cw   = get_prop(shape, "Cw")
 
-Ix_csv_mm4 = to_mm4_from_csv(Ix_raw)
-Iy_csv_mm4 = to_mm4_from_csv(Iy_raw)
+# Show section properties
+with st.expander(f"Section properties — {designation}", expanded=True):
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("A (mm²)",  f"{A:,.0f}"   if A  else "—")
+    p1.metric("Ix (mm⁴)", f"{Ix:.3e}"   if Ix else "—")
+    p1.metric("Iy (mm⁴)", f"{Iy:.3e}"   if Iy else "—")
+    p2.metric("rx (mm)",  f"{rx:.1f}"   if rx else "—")
+    p2.metric("ry (mm)",  f"{ry:.1f}"   if ry else "—")
+    p3.metric("Zx (mm³)", f"{Zx:.3e}"   if Zx else "—")
+    p3.metric("Zy (mm³)", f"{Zy:.3e}"   if Zy else "—")
+    p4.metric("Sx (mm³)", f"{Sx:.3e}"   if Sx else "—")
+    p4.metric("Sy (mm³)", f"{Sy:.3e}"   if Sy else "—")
+    if J:
+        p1.metric("J (mm⁴)",  f"{J:.3e}")
+    if Cw:
+        p2.metric("Cw (mm⁶)", f"{Cw:.3e}")
 
-class_guess, class_notes = guess_section_class(shape, 350.0)
+st.markdown("---")
 
-with st.expander("Selected shape record / canonicalized CSV fields", expanded=False):
-    st.json({
-        "designation": designation,
-        "Area": Area_raw,
-        "d": d_raw,
-        "b": b_raw,
-        "t": t_raw,
-        "w": w_raw,
-        "h": h_raw,
-        "rx": rx_raw,
-        "ry": ry_raw,
-        "Ix_raw": Ix_raw,
-        "Iy_raw": Iy_raw,
-        "Zx_raw": Zx_raw,
-        "Sx_raw": Sx_raw,
-        "Zy_raw": Zy_raw,
-        "Sy_raw": Sy_raw,
-        "section_class_guess": class_guess,
-        "section_class_notes": class_notes,
-    })
+# ── 2. Material ───────────────────────────────────────────────────────────────
+st.subheader("2. Material Properties")
+mat1, mat2 = st.columns(2)
+with mat1:
+    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=350.0, step=5.0, key="bc4_fy")
+with mat2:
+    E  = st.number_input("E (MPa)",  min_value=100000.0, max_value=300000.0, value=200000.0, step=1000.0, key="bc4_e")
 
-# -----------------------------
-# Main inputs
-# -----------------------------
-st.divider()
-c1, c2, c3 = st.columns([1.1, 1.1, 1.8])
+st.markdown("---")
 
-with c1:
-    st.subheader("2) Material / lengths")
-    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=350.0, step=5.0)
-    E = st.number_input("E (MPa)", min_value=100000.0, max_value=300000.0, value=float(E_MPA_DEFAULT), step=10000.0)
-    L = st.number_input("Member / unbraced length L (m)", min_value=0.1, value=4.3, step=0.1)
-    L_mm = float(L) * 1000.0
+# ── 3. Axial case ─────────────────────────────────────────────────────────────
+st.subheader("3. Member Axial Condition")
+case_col1, case_col2 = st.columns(2)
+with case_col1:
+    tension_btn = st.button("Member in Axial Tension", use_container_width=True, key="bc4_tens_btn")
+with case_col2:
+    comp_btn = st.button("Member in Axial Compression", use_container_width=True, key="bc4_comp_btn")
 
-with c2:
-    st.subheader("3) Applied loads (factored)")
-    axial_kN = st.number_input("Axial (kN) (+compression, −tension)", value=1200.0, step=10.0)
-    Mx_kNm = st.number_input("Mfx (kN·m)", value=300.0, step=10.0)
-    My_kNm = st.number_input("Mfy (kN·m)", value=0.0, step=10.0)
+if tension_btn:
+    st.session_state["bc4_case"] = "TENSION"
+if comp_btn:
+    st.session_state["bc4_case"] = "COMPRESSION"
 
-    Cf_N = max(0.0, float(axial_kN) * 1e3)
-    Tf_N = max(0.0, -float(axial_kN) * 1e3)
-    Mfx_Nmm = abs(float(Mx_kNm) * 1e6)
-    Mfy_Nmm = abs(float(My_kNm) * 1e6)
+axial_case = st.session_state.get("bc4_case", "")
 
-with c3:
-    st.subheader("4) Section properties (from CSV by default)")
-    st.caption("These are read from the table immediately. Only override them if needed.")
+if not axial_case:
+    st.info("Select an axial condition above to continue.")
+    st.stop()
 
-    Ix_mm4, src_Ix = read_or_override_number(
-        "Ix (mm⁴)", Ix_csv_mm4, 8.0e8, "Ix", "%.3e", "Major-axis second moment."
-    )
-    Iy_mm4, src_Iy = read_or_override_number(
-        "Iy (mm⁴)", Iy_csv_mm4, 1.2e8, "Iy", "%.3e", "Minor-axis second moment."
-    )
-    ry_mm, src_ry = read_or_override_number(
-        "ry (mm)", ry_raw, 55.0, "ry", None, "Minor-axis radius of gyration."
-    )
+st.markdown(f"**Selected: {axial_case}**")
+st.markdown("---")
 
-    st.markdown("**Property sources**")
-    st.write(
-        f"Ix: `{src_Ix}`  |  Iy: `{src_Iy}`  |  ry: `{src_ry}`"
-    )
+# ── 4. Inputs ─────────────────────────────────────────────────────────────────
+if axial_case == "TENSION":
+    st.subheader("4. Tension + Bending Inputs")
+    t1, t2 = st.columns(2)
+    with t1:
+        Tf  = st.number_input("Factored Tension Tf (kN)",         min_value=0.0, value=500.0,  step=10.0, key="bc4_tf")
+        Mfx = st.number_input("Factored Moment Mfx (kN·m)",       min_value=0.0, value=100.0,  step=10.0, key="bc4_mfx_t")
+    with t2:
+        Mfy = st.number_input("Factored Moment Mfy (kN·m)",       min_value=0.0, value=0.0,    step=10.0, key="bc4_mfy_t")
 
-st.divider()
+else:  # COMPRESSION
+    st.subheader("4. Compression + Bending Inputs")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        Cf  = st.number_input("Factored Compression Cf (kN)",     min_value=0.0, value=1200.0, step=50.0,  key="bc4_cf")
+        Mfx = st.number_input("Factored Moment Mfx (kN·m)",       min_value=0.0, value=200.0,  step=10.0,  key="bc4_mfx_c")
+        Mfy = st.number_input("Factored Moment Mfy (kN·m)",       min_value=0.0, value=0.0,    step=10.0,  key="bc4_mfy_c")
+    with c2:
+        Kx  = st.number_input("Kx (eff. length factor, x-axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="bc4_kx")
+        Lx  = st.number_input("Lx — unbraced length x (m)",      min_value=0.1, value=4.0,    step=0.5,  key="bc4_lx")
+    with c3:
+        Ky  = st.number_input("Ky (eff. length factor, y-axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="bc4_ky")
+        Ly  = st.number_input("Ly — unbraced length y (m)",      min_value=0.1, value=4.0,    step=0.5,  key="bc4_ly")
 
-f1, f2, f3 = st.columns(3)
-with f1:
-    st.subheader("5) Frame")
-    frame_type = st.selectbox("Frame type", ["braced", "sway"], index=0)
-
-with f2:
-    st.subheader("6) ω₁ pattern (x)")
-    omega1_case_x = st.selectbox(
-        "ω₁ case x",
-        ["no_transverse_loads", "distributed_or_series", "concentrated_between_supports"],
-        index=0,
-    )
-    kappa_x = st.number_input("κx", value=1.0, step=0.1)
-
-with f3:
-    st.subheader("7) ω₁ pattern (y)")
-    omega1_case_y = st.selectbox(
-        "ω₁ case y",
-        ["no_transverse_loads", "distributed_or_series", "concentrated_between_supports"],
-        index=0,
-    )
-    kappa_y = st.number_input("κy", value=1.0, step=0.1)
-
-st.divider()
-
-r1, r2 = st.columns([1.2, 1.8])
-
-with r1:
-    st.subheader("8) Resistances")
-    auto_Mr = st.checkbox("Auto-calc Mrx / Mry from table Z or S", value=True)
-
-    Mrx_default = 600.0
-    Mry_default = 250.0
-
-    if auto_Mr:
-        if Zx_raw is not None:
-            Mrx_default = Mr_from_modulus_kNm(Zx_raw, Fy)
-        elif Sx_raw is not None:
-            Mrx_default = Mr_from_modulus_kNm(Sx_raw, Fy)
-
-        if Zy_raw is not None:
-            Mry_default = Mr_from_modulus_kNm(Zy_raw, Fy)
-        elif Sy_raw is not None:
-            Mry_default = Mr_from_modulus_kNm(Sy_raw, Fy)
-
-    Mrx_kNm = st.number_input("Mrx (kN·m)", value=float(Mrx_default), step=10.0)
-    Mry_kNm = st.number_input("Mry (kN·m)", value=float(Mry_default), step=10.0)
-
-    # Keep Cr manual here because it is not a raw table property;
-    # it depends on member/system behavior, effective length, etc.
-    Cr_kN = st.number_input("Cr (kN)", value=2000.0, step=10.0, help="Project/design resistance input.")
-    Tr_kN = st.number_input("Tr (kN)", value=2000.0, step=10.0, help="Only used when axial force is tension.")
-
-    Mrx_Nmm = float(Mrx_kNm) * 1e6
-    Mry_Nmm = float(Mry_kNm) * 1e6
-    Cr_N = float(Cr_kN) * 1e3
-    Tr_N = float(Tr_kN) * 1e3
-
-with r2:
-    st.subheader("9) Interaction form")
-    st.caption("Use the table/section-class logic in your office standard to confirm this choice.")
-    st.info(f"Auto-suggested section class: **{class_guess}**")
-
-    interaction_form = st.selectbox(
-        "Compression interaction form",
-        [
-            "Class 1-2 I-shape (0.85*Mx + β*My)",
-            "Other classes (Mx + My)",
-        ],
-        index=0 if "Class 1" in class_guess or "Class 2" in class_guess else 1,
-    )
-    use_braced_extra = st.checkbox("Apply extra braced-frame Mx/Mrx + My/Mry ≤ 1", value=True)
-
-    if class_notes:
-        with st.expander("Section class notes", expanded=False):
-            for n in class_notes:
-                st.write(f"- {n}")
-
-# -----------------------------
-# Run check
-# -----------------------------
-if st.button("Run beam-column check", type="primary"):
-    try:
-        omx = omega1_case(omega1_case_x, kappa_x if omega1_case_x == "no_transverse_loads" else None)
-        omy = omega1_case(omega1_case_y, kappa_y if omega1_case_y == "no_transverse_loads" else None)
-
-        Cex = Ce_euler_N(E, Ix_mm4, L_mm)
-        Cey = Ce_euler_N(E, Iy_mm4, L_mm)
-
-        if frame_type == "sway":
-            U1x = U1_sway()
-            U1y = U1_sway()
+    st.markdown("**Moment gradient factor ω₁** (per CSA S16 Clause 13.8)")
+    w1_col1, w1_col2 = st.columns(2)
+    with w1_col1:
+        omega1_case_x = st.selectbox(
+            "ω₁ case — x-axis",
+            ["No transverse loads (κ-based)", "Distributed / series moments", "Concentrated between supports"],
+            key="bc4_w1x_case",
+        )
+        if omega1_case_x == "No transverse loads (κ-based)":
+            kappa_x = st.number_input("κx (ratio of smaller/larger end moment, −1 to 1)", min_value=-1.0, max_value=1.0, value=1.0, step=0.1, key="bc4_kx_kappa")
+            omega1_x = max(0.4, 0.6 - 0.4 * kappa_x)
+        elif omega1_case_x == "Distributed / series moments":
+            omega1_x = 1.0
         else:
-            U1x = U1_braced(omx, Cf_N, Cex)
-            U1y = U1_braced(omy, Cf_N, Cey)
+            omega1_x = 0.85
+    with w1_col2:
+        omega1_case_y = st.selectbox(
+            "ω₁ case — y-axis",
+            ["No transverse loads (κ-based)", "Distributed / series moments", "Concentrated between supports"],
+            key="bc4_w1y_case",
+        )
+        if omega1_case_y == "No transverse loads (κ-based)":
+            kappa_y = st.number_input("κy (ratio of smaller/larger end moment, −1 to 1)", min_value=-1.0, max_value=1.0, value=1.0, step=0.1, key="bc4_ky_kappa")
+            omega1_y = max(0.4, 0.6 - 0.4 * kappa_y)
+        elif omega1_case_y == "Distributed / series moments":
+            omega1_y = 1.0
+        else:
+            omega1_y = 0.85
 
-        lam = lambda_y(L_mm, ry_mm, Fy, E)
-        beta = beta_weak_axis(lam)
+st.markdown("---")
 
-        utils: Dict[str, float] = {}
-        passes: Dict[str, bool] = {}
-        details: List[Tuple[str, str, str, str]] = []
+# ── 5. Calculate & display results ────────────────────────────────────────────
+st.subheader("5. Results")
 
-        # -----------------------------------
-        # Tension + bending
-        # -----------------------------------
-        if Tf_N > 0:
-            if Mfx_Nmm > 0:
-                util_tx = util_tension_bending(Tf_N, Tr_N, Mfx_Nmm, Mrx_Nmm)
-                utils["tension_bending_x"] = util_tx
-                passes["tension_bending_x"] = util_tx <= 1.0
-                details.append((
-                    "Axial tension + bending (x)",
-                    r"\frac{T_f}{T_r} + \frac{M_{fx}}{M_{rx}} \le 1.0",
-                    f"({Tf_N:.1f}/{Tr_N:.1f}) + ({Mfx_Nmm:.1f}/{Mrx_Nmm:.1f})",
-                    f"{util_tx:.4f} → {'PASS' if util_tx <= 1.0 else 'FAIL'}",
-                ))
+try:
+    if axial_case == "TENSION":
+        if A is None:
+            st.error("Area (A) not found in section data.")
+            st.stop()
 
-            if Mfy_Nmm > 0:
-                util_ty = util_tension_bending(Tf_N, Tr_N, Mfy_Nmm, Mry_Nmm)
-                utils["tension_bending_y"] = util_ty
-                passes["tension_bending_y"] = util_ty <= 1.0
-                details.append((
-                    "Axial tension + bending (y)",
-                    r"\frac{T_f}{T_r} + \frac{M_{fy}}{M_{ry}} \le 1.0",
-                    f"({Tf_N:.1f}/{Tr_N:.1f}) + ({Mfy_Nmm:.1f}/{Mry_Nmm:.1f})",
-                    f"{util_ty:.4f} → {'PASS' if util_ty <= 1.0 else 'FAIL'}",
-                ))
+        Tr_kN  = calc_Tr(A, Fy)
+        Mrx_kNm = calc_Mr(Zx, Fy) if Zx else None
+        Mry_kNm = calc_Mr(Zy, Fy) if Zy else None
 
-        # -----------------------------------
-        # Compression + bending
-        # -----------------------------------
-        if Cf_N > 0:
-            if "Class 1-2" in interaction_form:
-                u = util_class12_biaxial(Cf_N, Cr_N, U1x, Mfx_Nmm, Mrx_Nmm, U1y, Mfy_Nmm, Mry_Nmm, beta)
-                details.append((
-                    "Compression + bending interaction",
-                    r"\frac{C_f}{C_r} + 0.85\frac{U_{1x}M_{fx}}{M_{rx}} + \beta\frac{U_{1y}M_{fy}}{M_{ry}} \le 1.0",
-                    f"({Cf_N:.1f}/{Cr_N:.1f}) + 0.85*({U1x:.4f}*{Mfx_Nmm:.1f}/{Mrx_Nmm:.1f}) + {beta:.4f}*({U1y:.4f}*{Mfy_Nmm:.1f}/{Mry_Nmm:.1f})",
-                    f"{u:.4f} → {'PASS' if u <= 1.0 else 'FAIL'}",
-                ))
+        ratio_T  = Tf / Tr_kN if Tr_kN > 0 else 0.0
+        ratio_Mx = Mfx / Mrx_kNm if (Mrx_kNm and Mrx_kNm > 0) else 0.0
+        ratio_My = Mfy / Mry_kNm if (Mry_kNm and Mry_kNm > 0) else 0.0
+        interaction = ratio_T + ratio_Mx + ratio_My
+
+        res1, res2 = st.columns(2)
+        with res1:
+            st.markdown("**Resistances**")
+            st.metric("φTr (kN)",    f"{Tr_kN:.1f}")
+            st.metric("φMrx (kN·m)", f"{Mrx_kNm:.1f}" if Mrx_kNm else "—")
+            st.metric("φMry (kN·m)", f"{Mry_kNm:.1f}" if Mry_kNm else "—")
+        with res2:
+            st.markdown("**Interaction Check — CSA S16 Cl. 13.9**")
+            st.latex(r"\frac{T_f}{\phi T_r} + \frac{M_{fx}}{\phi M_{rx}} + \frac{M_{fy}}{\phi M_{ry}} \leq 1.0")
+            st.code(
+                f"= {ratio_T:.4f} + {ratio_Mx:.4f} + {ratio_My:.4f} = {interaction:.4f}",
+                language="text",
+            )
+            if interaction <= 1.0:
+                st.success(f"PASS   Interaction = {interaction:.3f} ≤ 1.0")
             else:
-                u = util_other_biaxial(Cf_N, Cr_N, U1x, Mfx_Nmm, Mrx_Nmm, U1y, Mfy_Nmm, Mry_Nmm)
-                details.append((
-                    "Compression + bending interaction",
-                    r"\frac{C_f}{C_r} + \frac{U_{1x}M_{fx}}{M_{rx}} + \frac{U_{1y}M_{fy}}{M_{ry}} \le 1.0",
-                    f"({Cf_N:.1f}/{Cr_N:.1f}) + ({U1x:.4f}*{Mfx_Nmm:.1f}/{Mrx_Nmm:.1f}) + ({U1y:.4f}*{Mfy_Nmm:.1f}/{Mry_Nmm:.1f})",
-                    f"{u:.4f} → {'PASS' if u <= 1.0 else 'FAIL'}",
-                ))
+                st.error(f"FAIL   Interaction = {interaction:.3f} > 1.0")
 
-            utils["compression_bending_interaction"] = u
-            passes["compression_bending_interaction"] = u <= 1.0
+    else:  # COMPRESSION
+        missing = [s for s, v in [("A", A), ("rx", rx), ("ry", ry), ("Ix", Ix), ("Iy", Iy)] if v is None]
+        if missing:
+            st.error(f"Missing required section properties: {', '.join(missing)}")
+            st.stop()
 
-            if frame_type == "braced" and use_braced_extra:
-                u2 = util_braced_extra(Mfx_Nmm, Mrx_Nmm, Mfy_Nmm, Mry_Nmm)
-                utils["braced_extra_M_interaction"] = u2
-                passes["braced_extra_M_interaction"] = u2 <= 1.0
-                details.append((
-                    "Additional braced-frame moment check",
-                    r"\frac{M_{fx}}{M_{rx}} + \frac{M_{fy}}{M_{ry}} \le 1.0",
-                    f"({Mfx_Nmm:.1f}/{Mrx_Nmm:.1f}) + ({Mfy_Nmm:.1f}/{Mry_Nmm:.1f})",
-                    f"{u2:.4f} → {'PASS' if u2 <= 1.0 else 'FAIL'}",
-                ))
+        Lx_mm = Lx * 1000.0
+        Ly_mm = Ly * 1000.0
+        KLr_x = (Kx * Lx_mm) / rx
+        KLr_y = (Ky * Ly_mm) / ry
+        KLr   = max(KLr_x, KLr_y)
+        gov_axis = "x" if KLr_x >= KLr_y else "y"
 
-        overall = all(passes.values()) if passes else False
+        Cr_kN, Fe_MPa, Fcr_MPa = calc_Cr(A, Fy, E, KLr)
+        lam = KLr * math.sqrt(Fy / ((math.pi ** 2) * E))
 
-        # -----------------------------
-        # Results
-        # -----------------------------
-        st.divider()
-        st.subheader("Results")
+        Mrx_kNm = calc_Mr(Zx, Fy) if Zx else None
+        Mry_kNm = calc_Mr(Zy, Fy) if Zy else None
 
-        top1, top2 = st.columns(2)
-        with top1:
-            st.metric("Overall result", "PASS" if overall else "FAIL")
-            st.write(f"Selected section: **{designation}**")
-            st.write(f"Frame type: **{frame_type}**")
-            st.write(f"Interaction form: **{interaction_form}**")
+        Ce_x = Ce_euler(E, Ix, Lx_mm)
+        Ce_y = Ce_euler(E, Iy, Ly_mm)
 
-        with top2:
-            st.write("**Derived parameters**")
-            st.write(f"ω₁x = {omx:.4f}")
-            st.write(f"ω₁y = {omy:.4f}")
-            st.write(f"Ce,x = {Cex:,.0f} N")
-            st.write(f"Ce,y = {Cey:,.0f} N")
-            st.write(f"U1x = {U1x:.4f}")
-            st.write(f"U1y = {U1y:.4f}")
-            st.write(f"λy = {lam:.4f}")
-            st.write(f"β = {beta:.4f}")
+        U1x = calc_U1(omega1_x, Cf, Ce_x)
+        U1y = calc_U1(omega1_y, Cf, Ce_y)
 
-        st.markdown("### Step-by-step calculation sheet")
-        for title, symbolic, substitution, result_text in details:
-            formula_block(title, symbolic, substitution, result_text)
+        lam_y = (Ly_mm / (math.pi * ry)) * math.sqrt(Fy / E)
+        beta  = min(0.85, 0.6 + 0.4 * lam_y)
 
-        st.markdown("### Utilization summary")
-        for k, v in utils.items():
-            st.write(f"- **{k}** = {v:.4f} → {'PASS' if v <= 1.0 else 'FAIL'}")
+        ratio_C  = Cf / Cr_kN if Cr_kN > 0 else float("inf")
+        ratio_Mx = (0.85 * U1x * Mfx / Mrx_kNm) if (Mrx_kNm and Mrx_kNm > 0) else 0.0
+        ratio_My = (beta * U1y * Mfy / Mry_kNm)  if (Mry_kNm and Mry_kNm > 0) else 0.0
+        interaction = ratio_C + ratio_Mx + ratio_My
 
-        with st.expander("Property provenance", expanded=False):
-            st.write(f"Ix source: `{src_Ix}`")
-            st.write(f"Iy source: `{src_Iy}`")
-            st.write(f"ry source: `{src_ry}`")
-            st.write("Mrx / Mry source: `auto from table` if auto-calc enabled, otherwise `manual design input`.")
-            st.write("Cr source: `manual design input` (project/design dependent, not a raw table field).")
+        # Braced-frame extra moment check
+        extra_mx = Mfx / Mrx_kNm if (Mrx_kNm and Mrx_kNm > 0) else 0.0
+        extra_my = Mfy / Mry_kNm if (Mry_kNm and Mry_kNm > 0) else 0.0
+        extra_interaction = extra_mx + extra_my
 
-    except Exception as e:
-        st.error(f"Calculation failed: {e}")
+        r1, r2 = st.columns(2)
+        with r1:
+            st.markdown("**Column Buckling**")
+            st.markdown(f"- KL/r (x) = {KLr_x:.2f}")
+            st.markdown(f"- KL/r (y) = {KLr_y:.2f}")
+            st.markdown(f"- Governing KL/r = **{KLr:.2f}** ({gov_axis}-axis)")
+            st.markdown(f"- λ = {lam:.4f}")
+            st.markdown(f"- Fe = {Fe_MPa:.1f} MPa")
+            st.markdown(f"- Fcr = {Fcr_MPa:.1f} MPa")
+            st.metric("φCr (kN)", f"{Cr_kN:.1f}")
+
+            st.markdown("**Moment Resistances**")
+            st.metric("φMrx (kN·m)", f"{Mrx_kNm:.1f}" if Mrx_kNm else "—")
+            st.metric("φMry (kN·m)", f"{Mry_kNm:.1f}" if Mry_kNm else "—")
+
+        with r2:
+            st.markdown("**Amplification Factors**")
+            st.markdown(f"- Ce,x = {Ce_x:,.0f} kN  |  ω₁x = {omega1_x:.3f}  →  U1x = {U1x:.4f}")
+            st.markdown(f"- Ce,y = {Ce_y:,.0f} kN  |  ω₁y = {omega1_y:.3f}  →  U1y = {U1y:.4f}")
+            st.markdown(f"- λy = {lam_y:.4f}  →  β = {beta:.4f}")
+
+            st.markdown("**Interaction Check — CSA S16 Cl. 13.8.2 (Class 1/2)**")
+            st.latex(r"\frac{C_f}{C_r} + 0.85\frac{U_{1x}M_{fx}}{M_{rx}} + \beta\frac{U_{1y}M_{fy}}{M_{ry}} \leq 1.0")
+            st.code(
+                f"= {ratio_C:.4f} + {ratio_Mx:.4f} + {ratio_My:.4f} = {interaction:.4f}",
+                language="text",
+            )
+            if interaction <= 1.0:
+                st.success(f"PASS   Interaction = {interaction:.3f} ≤ 1.0")
+            else:
+                st.error(f"FAIL   Interaction = {interaction:.3f} > 1.0")
+
+            if Mfx > 0 or Mfy > 0:
+                st.markdown("**Additional braced-frame moment check (Cl. 13.8.2)**")
+                st.latex(r"\frac{M_{fx}}{M_{rx}} + \frac{M_{fy}}{M_{ry}} \leq 1.0")
+                st.code(
+                    f"= {extra_mx:.4f} + {extra_my:.4f} = {extra_interaction:.4f}",
+                    language="text",
+                )
+                if extra_interaction <= 1.0:
+                    st.success(f"PASS   {extra_interaction:.3f} ≤ 1.0")
+                else:
+                    st.error(f"FAIL   {extra_interaction:.3f} > 1.0")
+
+except Exception as e:
+    st.error(f"Calculation error: {e}")
+    import traceback
+    with st.expander("Full traceback"):
+        st.code(traceback.format_exc())

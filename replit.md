@@ -1,47 +1,69 @@
-# CSA S16 Flexure Calculator
+# CSA S16 Structural Calculator
 
 ## Overview
-A Streamlit-based structural engineering calculator for checking W-section steel beams per CSA S16 (Canadian steel design standard). The app performs:
-- Section classification per CSA S16 Table 2 (Class 1-4)
-- Laterally supported moment resistance (Mr) calculations
-- Demand/capacity checks against factored moments
+A multi-page Streamlit app for checking steel members per CSA S16 (Canadian steel design standard).
 
 ## Project Structure
 ```
-├── app.py                 # Main Streamlit application
+├── app.py                                          # Page 1 — Flexure Calculator (W sections)
+├── pages/
+│   ├── 2_Compression.py                            # Page 2 — Compression (W + HSS)
+│   ├── 3_Bolted_Connections.py                     # Page 3 — Bolted Connections
+│   └── 4_Beam_Column_Members.py                    # Page 4 — Beam-Column Check (Cl. 13.8)
 ├── data/
-│   └── w_sections.csv     # W-section database (Canadian sections)
-├── .streamlit/
-│   └── config.toml        # Streamlit server configuration
-└── attached_assets/       # Original source files
+│   ├── w_sections.csv                              # 280 Canadian W-sections (UTF-8)
+│   ├── Properties Table - HSS - Rectangular.csv   # HSS Rectangular (UTF-8)
+│   ├── Property Table - HSS - Circle.csv           # HSS Circular (latin-1)
+│   └── Property Table - HSS - Square.csv           # HSS Square (latin-1)
+└── .streamlit/config.toml
 ```
 
-## Key Features
-- **Section Selection**: Search and select from 100+ Canadian W-sections
-- **Classification**: Automatic flange/web slenderness classification per Table 2
-- **Moment Resistance**: Calculates Mr using plastic (Zx) or elastic (Sx) section modulus
-- **Demand Check**: Optional pass/fail check against factored moment demand
+## Pages
 
-## Technical Details
+### Page 1 — Flexure (app.py)
+- Section classification per CSA S16 Table 2 (Class 1–4)
+- Flange/web slenderness using clear web depth h = d − 2k
+- Laterally supported Mr using Zx (Class 1/2) or Sx (Class 3)
+- Optional demand/capacity check
 
-### Section Classification (CSA S16 Table 2)
-- Flange outstand slenderness: (b/2)/tf
-- Web slenderness: h/w where h = d - 2k (clear web depth)
-- Limits based on Fy: 145/sqrt(Fy), 170/sqrt(Fy), 200/sqrt(Fy) for flanges
+### Page 2 — Compression (pages/2_Compression.py)
+- W sections and circular/rectangular/square HSS
+- CSA S16 Cl. 13.3 column curve: Fcr = Fy / (1 + λ^(2n))^(1/n), n=1.34
+- KL/r, λ, Fe, Cr calculations
 
-### Moment Resistance
-- Class 1-2: Mr = φb × Zx × Fy (plastic)
-- Class 3: Mr = φb × Sx × Fy (elastic)
-- φb = 0.9 (resistance factor for bending)
+### Page 3 — Bolted Connections (pages/3_Bolted_Connections.py)
+- Bolt shear, bearing, block shear, net section checks per CSA S16
 
-### Data Format
-CSV columns include: Designation, Depth d, Flange Width b, Flange Thickness t, Web Thickness w, Distance k, Zx, Sx, and more.
+### Page 4 — Beam-Column Members (pages/4_Beam_Column_Members.py)
+- W sections + HSS, section type filter, search box
+- Material inputs: Fy, E
+- Axial condition: TENSION or COMPRESSION
+- **Tension + Bending** (CSA S16 Cl. 13.9):
+  - Tr = φ·Fy·A; Mrx = φ·Fy·Zx; Mry = φ·Fy·Zy
+  - Interaction: Tf/Tr + Mfx/Mrx + Mfy/Mry ≤ 1.0
+- **Compression + Bending** (CSA S16 Cl. 13.8.2):
+  - CSA S16 column curve for Cr (n = 1.34)
+  - ω₁ moment gradient via κ-method or code defaults
+  - Amplified moments: U1 = ω₁ / (1 − Cf/Ce) ≥ 1.0
+  - β = min(0.85, 0.6 + 0.4λy)
+  - Interaction: Cf/Cr + 0.85·U1x·Mfx/Mrx + β·U1y·Mfy/Mry ≤ 1.0
+  - Additional moment check: Mfx/Mrx + Mfy/Mry ≤ 1.0
 
-## Running the App
+## Technical Notes
+
+### CSV Encoding
+- w_sections.csv and HSS Rectangular: UTF-8 (columns contain garbled `ý`, `?` for ², ⁴)
+- HSS Circle and Square: latin-1 fallback
+- `_norm()` strips all non-ASCII chars so garbled headers resolve correctly
+
+### Column Alias System
+Each page uses a `_norm()` + `_ALIASES` lookup to map raw CSV header variants to canonical property names. Multipliers are always applied unconditionally: Ix/Iy×1e6, Zx/Zy/Sx/Sy×1e3, J×1e3, Cw×1e9.
+
+### CSA S16 Constants
+- φ = 0.9 for all resistance factors
+- n = 1.34 (hot-rolled column curve exponent)
+
+## Running
 ```bash
-streamlit run app.py
+streamlit run app.py --server.port 5000
 ```
-
-## Recent Changes
-- 2025-12-25: Initial implementation with section classification, Mr calculation, and demand checking
-- 2025-12-25: Fixed web slenderness calculation to use CSA S16 clear web depth (d - 2k)

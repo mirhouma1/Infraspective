@@ -728,16 +728,8 @@ if not shapes or not designations:
     st.error("No CSV section tables found in `data/` directory.")
     st.stop()
 
+# ── Material & curve in sidebar ───────────────────────────────
 with st.sidebar:
-    st.header("Section Filter")
-    family_filter = st.selectbox(
-        "Section family",
-        ["All", "W", "WWF", "HSS Rectangular/Square", "HSS Circular", "Angle"],
-        key="comp_family_filter",
-    )
-    search = st.text_input("Search designation", placeholder="e.g., W250, HSS 203", key="comp_search")
-
-    st.divider()
     st.header("Material")
     Fy    = st.number_input("Fy (MPa)", 200.0, 700.0, 350.0, 5.0, key="comp_Fy")
     E     = st.number_input("E (MPa)", 150000.0, 250000.0, 200000.0, 1000.0, key="comp_E")
@@ -752,7 +744,20 @@ with st.sidebar:
     else:
         n_curve = 1.34
 
-# Filter sections
+# ── Section selection — on-page 3-column row ─────────────────
+st.subheader("1. Section Selection")
+sel_col1, sel_col2, sel_col3 = st.columns([1, 1.2, 2])
+
+with sel_col1:
+    family_filter = st.selectbox(
+        "Section family",
+        ["All", "W", "WWF", "HSS Rectangular/Square", "HSS Circular", "Angle"],
+        key="comp_family_filter",
+    )
+
+with sel_col2:
+    search = st.text_input("Search", placeholder="e.g. W250, HSS 203", key="comp_search")
+
 def _matches_family(des: str) -> bool:
     fam = section_family(des)
     if family_filter == "All":
@@ -770,11 +775,12 @@ def _matches_family(des: str) -> bool:
     return True
 
 filtered = [d for d in designations if _matches_family(d) and (not search or search.lower() in d.lower())]
-if not filtered:
-    st.warning("No sections match your filter. Try clearing the search or choosing 'All'.")
-    st.stop()
 
-sec_name = st.selectbox("**Select Section**", filtered, key="comp_sec")
+with sel_col3:
+    if not filtered:
+        st.warning("No sections match. Try clearing the search or choosing 'All'.")
+        st.stop()
+    sec_name = st.selectbox("Designation", filtered, index=0, key="comp_sec")
 
 try:
     sec = build_section(sec_name, shapes[sec_name])

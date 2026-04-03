@@ -1,0 +1,76 @@
+INFRASPEC SOLUTIONS – USER ACCESS AGREEMENT
+(Final – Ship Ready)
+
+---
+
+1. BETA EVALUATION & OPTIMIZATION
+
+Infraspec Solutions provides this application for testing and optimization purposes. By using the App, you agree to provide technical feedback and usage data to assist in the refinement of the calculation engine.
+
+---
+
+2. PROFESSIONAL VERIFICATION
+
+This tool is a calculation aid and does not replace professional engineering judgment. Under the Engineering and Geoscience Professions Act (Alberta), the User is responsible for the independent verification of all outputs.
+
+All results must be validated by a licensed Professional Engineer (P.Eng) prior to any project application.
+
+The User agrees not to rely on any App output for any project purpose unless and until that output has been independently verified.
+
+The User acknowledges that any use of App outputs without independent verification is done entirely at their own risk.
+
+Use of this App does not create an engineer-client relationship between the User and Infraspec Solutions.
+
+---
+
+3. DATA USAGE
+
+In exchange for access to the Beta platform, Infraspec Solutions collects technical input parameters and interaction patterns. This data is used exclusively to optimize the software's logic and performance. Personal information is managed in accordance with the Alberta Personal Information Protection Act (PIPA).
+
+---
+
+4. LIMITATION OF LIABILITY
+
+This software is provided "AS IS" and is in a Beta state, meaning it may contain errors, incomplete features, or incorrect calculations.
+
+Infraspec Solutions disclaims all warranties regarding the accuracy of the Beta calculations.
+
+The User assumes all risk associated with the use of the App's outputs. Use of this App is entirely at the User's own risk.
+
+To the maximum extent permitted by law, Infraspec Solutions shall not be liable for any direct, indirect, incidental, or consequential damages arising from use of the App.
+
+This limitation of liability applies even if the App fails its essential purpose or is found to be in fundamental breach of contract.
+
+No compensation or damages of any kind are payable for errors, omissions, or inaccuracies in the App or its outputs.
+
+---
+
+5. INDEMNITY
+
+The User agrees to indemnify, defend, and hold harmless Infraspec Solutions from any and all claims, demands, losses, or legal fees (including solicitor-client costs) arising from the User's use of, misuse of, or reliance on the App, whether the claim is made by the User or a third party.
+
+---
+
+6. GOVERNING LAW & JURISDICTION
+
+This agreement is governed by the laws of the Province of Alberta and the federal laws of Canada applicable therein. Any dispute shall be resolved exclusively in the courts of Calgary, Alberta.
+
+---
+
+7. SEVERABILITY
+
+If any provision of this Agreement is found unenforceable, the remaining provisions shall remain in full force and effect.
+
+---
+
+8. VERIFICATION ACKNOWLEDGMENT MECHANISM
+
+Before each use of the App, the User shall be required to affirmatively check a box or click a button stating:
+
+"I have read and agree to the User Access Agreement. I understand this is Beta software and will independently verify all outputs before any reliance."
+
+The User acknowledges that failure to verify does not transfer liability to Infraspec Solutions.
+
+---
+
+BY USING THIS APP, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO ALL TERMS ABOVE.

@@ -61,44 +61,66 @@ class EdgeType(Enum):
 
 
 # ── Table 3 ──────────────────────────────────────────────────────────────────
-SLIP_CS = {
-    SlipSurfaceClass.A: {
-        "turn_of_nut": {BoltGrade.A325M: 1.00, BoltGrade.A490M: 0.92},
-        "other": 0.78, "desc": "Clean mill scale",
-    },
-    SlipSurfaceClass.B: {
-        "turn_of_nut": {BoltGrade.A325M: 1.04, BoltGrade.A490M: 0.96},
-        "other": 0.81, "desc": "Blast-cleaned",
-    },
+# Separate typed structures to avoid pyright dict-subscript warnings
+
+# cs values: turn-of-nut method, keyed by (surface_class, bolt_grade)
+_CS_TURN: dict[tuple[SlipSurfaceClass, BoltGrade], float] = {
+    (SlipSurfaceClass.A, BoltGrade.A325M): 1.00,
+    (SlipSurfaceClass.A, BoltGrade.A490M): 0.92,
+    (SlipSurfaceClass.B, BoltGrade.A325M): 1.04,
+    (SlipSurfaceClass.B, BoltGrade.A490M): 0.96,
 }
 
-def get_cs(surface, grade, method):
+# cs values: other installation method
+_CS_OTHER: dict[SlipSurfaceClass, float] = {
+    SlipSurfaceClass.A: 0.78,
+    SlipSurfaceClass.B: 0.81,
+}
+
+# Surface class descriptions (for UI display)
+SLIP_DESC: dict[SlipSurfaceClass, str] = {
+    SlipSurfaceClass.A: "Clean mill scale",
+    SlipSurfaceClass.B: "Blast-cleaned",
+}
+
+# Retained for UI label lookups (desc only)
+SLIP_CS = {
+    SlipSurfaceClass.A: {"desc": "Clean mill scale"},
+    SlipSurfaceClass.B: {"desc": "Blast-cleaned"},
+}
+
+
+def get_cs(surface: SlipSurfaceClass, grade: BoltGrade,
+           method: InstallationMethod) -> float:
     if method == InstallationMethod.OTHER:
-        return float(SLIP_CS[surface]["other"])
-    if grade in (BoltGrade.A325M, BoltGrade.A490M):
-        return float(SLIP_CS[surface]["turn_of_nut"][grade])
-    return float(SLIP_CS[surface]["other"])
+        return _CS_OTHER[surface]
+    # Turn-of-nut: only defined for A325M and A490M
+    key = (surface, grade)
+    if key in _CS_TURN:
+        return _CS_TURN[key]
+    # A307 or unrecognised — fall back to "other" column (conservative)
+    return _CS_OTHER[surface]
 
 
 # ── Table 6 ──────────────────────────────────────────────────────────────────
-TABLE_6 = {16:(28,22), 20:(34,26), 22:(38,28), 24:(42,30),
+TABLE_6: dict[int, tuple[int, int]] = {16:(28,22), 20:(34,26), 22:(38,28), 24:(42,30),
            27:(48,34), 30:(52,38), 36:(64,46)}
 
-def min_edge_dist(d, edge_type):
+def min_edge_dist(d: float, edge_type: EdgeType) -> float:
     if d > 36:
         return 1.75*d if edge_type == EdgeType.SHEARED else 1.25*d
     s, r = TABLE_6[int(round(d))]
     return s if edge_type == EdgeType.SHEARED else r
 
-def min_end_dist(d, n_in_line, edge_type):
+def min_end_dist(d: float, n_in_line: int, edge_type: EdgeType) -> float:
     return 1.5*d if n_in_line <= 2 else min_edge_dist(d, edge_type)
 
-def max_edge_dist(t): return min(EDGE_MAX_MULT_T*t, EDGE_MAX_LIMIT)
-def min_pitch(d):     return PITCH_MIN_MULT * d
+def max_edge_dist(t: float) -> float: return min(EDGE_MAX_MULT_T*t, EDGE_MAX_LIMIT)
+def min_pitch(d: float) -> float: return PITCH_MIN_MULT * d
 
 
 # ── Core resistance functions (all return N) ──────────────────────────────────
-def bolt_area(d): return math.pi * d**2 / 4.0
+def bolt_area(d: float) -> float: return math.pi * d**2 / 4.0
 
 def vr_N(n, m, d, Fu_bolt, threads, long_splice):
     Ab  = bolt_area(d)
@@ -153,7 +175,7 @@ def block_shear_N(n_rows, n_cols, pitch, end_dist, t, d_h, Fy, Fu, Ut):
     Vr_bs = min(case1, case2)
     return Vr_bs, Agv, Anv, Ane, case1, case2
 
-def prying_k(a, b, t):
+def prying_k(a: float, b: float, t: float) -> float:
     if a <= 0: return float("nan")
     return (3*b)/(8*a) - t**3/328e3
 
@@ -425,6 +447,7 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
 # ================================================================
 # STREAMLIT UI
 # ================================================================
+st.set_page_config(layout="wide")
 st.title("CSA S16 — Bolted Connection Solver")
 st.caption("Chapter 6 Part 1 · Failure modes: Vr, Br, Tr(bolt), Tr(gross), Tr(net), Vr(block shear), Vs · Prying integrated · 4 diagrams")
 
@@ -451,7 +474,7 @@ with col_a:
     Fu_plate  = float(st.number_input("Plate Fu (MPa)", min_value=200.0, value=450.0, step=10.0, key="Fu_plate"))
     d_h_auto  = d_mm + 2.0
     d_h       = float(st.number_input(f"Hole diameter d_h (mm)  [auto = {d_h_auto:.0f}]",
-                                       min_value=d_mm, value=d_h_auto, step=1.0, key="d_h"))
+                                       min_value=float(d_mm), value=d_h_auto, step=1.0, key="d_h"))
 
 with col_b:
     st.markdown("### 📐 Detailing Geometry")
@@ -477,7 +500,7 @@ with col_b:
     if conn_type == "Slip-critical":
         st.markdown("### 🔒 Slip-Critical (Table 3)")
         slip_surface = st.selectbox("Surface class", list(SlipSurfaceClass),
-                                    format_func=lambda s: f"{s.label} — {SLIP_CS[s]['desc']}", key="surf")
+                                    format_func=lambda s: f"{s.label} — {SLIP_DESC[s]}", key="surf")
         slip_method  = st.selectbox("Installation method", list(InstallationMethod),
                                     format_func=lambda x: x.value, key="method")
     else:
@@ -540,7 +563,7 @@ if conn_type == "Slip-critical" and slip_ok:
     cs_val = get_cs(slip_surface, grade, slip_method)
     Vs = vs_N(n, m, d_mm, Fu_bolt, ks_val, cs_val, long_slot)
 
-def kN(x): return x / 1e3
+def kN(x: float) -> float: return x / 1e3
 
 # Build capacity dict
 caps = {
@@ -661,7 +684,7 @@ with res_col:
         else:
             st.latex(r"V_s = 0.53\,c_s\,k_s\,n\,m\,A_b\,F_u")
             ls_note = " × 0.75 (long slot)" if long_slot else ""
-            st.code(f"  ks = {ks_val:.2f}  cs = {cs_val:.2f}  ({SLIP_CS[slip_surface]['desc']})\n"
+            st.code(f"  ks = {ks_val:.2f}  cs = {cs_val:.2f}  ({SLIP_DESC[slip_surface]})\n"
                     f"  = 0.53 × {cs_val:.2f} × {ks_val:.2f} × {n} × {m} × {Ab:.1f} × {Fu_bolt:.0f}{ls_note}\n"
                     f"  = {kN(Vs):.1f} kN", language="text")
 

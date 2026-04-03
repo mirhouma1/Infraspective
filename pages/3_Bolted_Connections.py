@@ -1,6 +1,15 @@
 import math
+import re
 from enum import Enum
 import streamlit as st
+import streamlit.components.v1 as components
+
+
+def _svg_html(svg: str) -> None:
+    """Render an SVG using components.html to bypass Streamlit's HTML sanitiser."""
+    m = re.search(r'height="(\d+)"', svg)
+    h = int(m.group(1)) + 16 if m else 320
+    components.html(svg, height=h, scrolling=False)
 
 # ================================================================
 # CSA S16 / CIVE 3205 — Chapter 6 Part 1 — Bolted Connections
@@ -447,7 +456,6 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
 # ================================================================
 # STREAMLIT UI
 # ================================================================
-st.set_page_config(layout="wide")
 st.title("CSA S16 — Bolted Connection Solver")
 st.caption("Chapter 6 Part 1 · Failure modes: Vr, Br, Tr(bolt), Tr(gross), Tr(net), Vr(block shear), Vs · Prying integrated · 4 diagrams")
 
@@ -457,7 +465,7 @@ st.markdown("---")
 col_a, col_b, col_c = st.columns(3)
 
 with col_a:
-    st.markdown("### 🔩 Bolt Configuration")
+    st.markdown("### Bolt Configuration")
     conn_type = st.selectbox("Connection type", ["Bearing-type", "Slip-critical"], key="conn_type")
     grade     = st.selectbox("Bolt grade", list(BoltGrade), format_func=lambda g: g.label, key="grade")
     d_mm      = st.selectbox("Bolt diameter d (mm)", [16,20,22,24,27,30,36], key="d_mm")
@@ -467,7 +475,7 @@ with col_a:
     st.info(f"Total bolts n = {n_rows} × {n_cols} = **{n}**")
     m         = int(st.number_input("Shear planes m", min_value=1, value=1, step=1, key="m"))
 
-    st.markdown("### 🪨 Plate Material")
+    st.markdown("### Plate Material")
     t_mm      = float(st.number_input("Plate thickness t (mm)", min_value=1.0, value=10.0, step=1.0, key="t_mm"))
     w_mm      = float(st.number_input("Plate width w (mm)", min_value=10.0, value=140.0, step=5.0, key="w_mm"))
     Fy_plate  = float(st.number_input("Plate Fy (MPa)", min_value=200.0, value=350.0, step=10.0, key="Fy_plate"))
@@ -477,13 +485,13 @@ with col_a:
                                        min_value=float(d_mm), value=d_h_auto, step=1.0, key="d_h"))
 
 with col_b:
-    st.markdown("### 📐 Detailing Geometry")
+    st.markdown("### Detailing Geometry")
     edge_type     = st.radio("Edge type", list(EdgeType), format_func=lambda e: e.value, key="edge_type")
     pitch_mm      = float(st.number_input("Bolt pitch p (mm)", min_value=0.0, value=60.0, step=5.0, key="pitch"))
     edge_prov_mm  = float(st.number_input("Edge distance e (mm)", min_value=0.0, value=40.0, step=5.0, key="edge"))
     end_prov_mm   = float(st.number_input("End distance a_end (mm)", min_value=0.0, value=40.0, step=5.0, key="end"))
 
-    st.markdown("### ⚙️ Options")
+    st.markdown("### Options")
     threads       = st.checkbox("Threads intercepted by shear plane?", key="threads")
     long_slot     = st.checkbox("Long-slotted holes?", key="long_slot")
     L_splice      = float(st.number_input("Splice length L (mm)  [0 = not a lap splice]",
@@ -498,7 +506,7 @@ with col_b:
                              format_func=lambda x: x[0], key="Ut")[1])
 
     if conn_type == "Slip-critical":
-        st.markdown("### 🔒 Slip-Critical (Table 3)")
+        st.markdown("### Slip-Critical (Table 3)")
         slip_surface = st.selectbox("Surface class", list(SlipSurfaceClass),
                                     format_func=lambda s: f"{s.label} — {SLIP_DESC[s]}", key="surf")
         slip_method  = st.selectbox("Installation method", list(InstallationMethod),
@@ -508,11 +516,11 @@ with col_b:
         slip_method  = InstallationMethod.TURN_OF_NUT
 
 with col_c:
-    st.markdown("### ⬇️ Factored Loads")
+    st.markdown("### Factored Loads")
     Vu_kN = float(st.number_input("Factored shear Vu (kN)", min_value=0.0, value=150.0, step=5.0, key="Vu"))
     Tu_kN = float(st.number_input("Factored tension Tu (kN)", min_value=0.0, value=0.0, step=5.0, key="Tu"))
 
-    st.markdown("### 🪝 Prying Action")
+    st.markdown("### Prying Action")
     pry_enabled = st.checkbox("Include prying action?", value=False, key="pry_on")
     if pry_enabled:
         a_pry = float(st.number_input("Distance a (mm) — bolt to free edge", min_value=1.0, value=77.0, step=1.0, key="a_pry"))
@@ -605,8 +613,8 @@ with res_col:
     thr_str = f" × {THREADS_INTERCEPT} (threads)" if threads else ""
     st.code(f"  = {fac_used} × {PHI_B} × {n} × {m} × {Ab:.1f} × {Fu_bolt:.0f}{thr_str}\n  = {kN(Vr):.1f} kN",
             language="text")
-    _icon = "✅" if Vr >= Vu_N else "❌"
-    st.markdown(f"{_icon} Vr = **{kN(Vr):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
+    _icon = "PASS" if Vr >= Vu_N else "FAIL"
+    st.markdown(f"{_icon} — Vr = **{kN(Vr):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
 
     # Step 3 — Bearing
     st.markdown("---")
@@ -643,8 +651,8 @@ with res_col:
     st.code(f"  Ag = w × t = {w_mm:.0f} × {t_mm:.0f} = {Ag:.0f} mm²\n"
             f"  Tr,gross = {PHI} × {Ag:.0f} × {Fy_plate:.0f} = {kN(Tr_g):.1f} kN",
             language="text")
-    _icon = "✅" if Tr_g >= Tu_N else "❌"
-    st.markdown(f"{_icon} Tr,gross = **{kN(Tr_g):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
+    _icon = "PASS" if Tr_g >= Tu_N else "FAIL"
+    st.markdown(f"{_icon} — Tr,gross = **{kN(Tr_g):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
 
     # Step 7 — Net fracture
     st.markdown("---")
@@ -655,8 +663,8 @@ with res_col:
             f"      = ({w_mm:.0f} - {n_rows} × {d_h:.0f}) × {t_mm:.0f} = {Ane_plate:.0f} mm²\n"
             f"  Tr,net = {PHI_U} × {max(Ane_plate,0):.0f} × {Fu_plate:.0f} = {kN(Tr_n):.1f} kN",
             language="text")
-    _icon = "✅" if Tr_n >= Tu_N else "❌"
-    st.markdown(f"{_icon} Tr,net = **{kN(Tr_n):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
+    _icon = "PASS" if Tr_n >= Tu_N else "FAIL"
+    st.markdown(f"{_icon} — Tr,net = **{kN(Tr_n):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
 
     # Step 8 — Block shear
     st.markdown("---")
@@ -672,8 +680,8 @@ with res_col:
             f"  Case 2 (net shear):   {PHI_U}×({Ut}×{Ane:.0f}×{Fu_plate:.0f} + 0.6×{Anv:.0f}×{Fu_plate:.0f}) = {kN(bs_case2):.1f} kN\n"
             f"  Governing (lesser) = {kN(Vr_bs):.1f} kN",
             language="text")
-    _icon = "✅" if Vr_bs >= Vu_N else "❌"
-    st.markdown(f"{_icon} Vr,bs = **{kN(Vr_bs):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
+    _icon = "PASS" if Vr_bs >= Vu_N else "FAIL"
+    st.markdown(f"{_icon} — Vr,bs = **{kN(Vr_bs):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
 
     # Step 9 — Slip
     if conn_type == "Slip-critical":
@@ -697,30 +705,30 @@ with res_col:
     st.code(f"  = ({Vu_kN:.1f}/{kN(Vr):.1f})² + ({Tu_total_kN:.1f}/{kN(Tr_b_group):.1f})²\n"
             f"  = {(Vu_N/Vr)**2:.4f} + {(Tu_N/Tr_b_group)**2:.4f} = {u_bt:.4f}",
             language="text")
-    if u_bt <= 1.0: st.success(f"✅ PASS — bearing-type interaction = {u_bt:.3f}")
-    else:           st.error(f"❌ FAIL — bearing-type interaction = {u_bt:.3f}")
+    if u_bt <= 1.0: st.success(f"PASS — bearing-type interaction = {u_bt:.3f}")
+    else:           st.error(f"FAIL — bearing-type interaction = {u_bt:.3f}")
 
     if conn_type == "Slip-critical" and slip_ok and Vs > 0:
         u_sc = Vu_N/Vs + 1.9*Tu_N/(n*Ab*Fu_bolt)
         st.latex(r"\frac{V}{V_s} + \frac{1.9\,T}{n\,A_b\,F_u} \leq 1.0")
         st.code(f"  = {Vu_kN:.1f}/{kN(Vs):.1f} + 1.9×{Tu_total_kN:.1f}/({n}×{Ab:.1f}×{kN(Fu_bolt*1000):.0f})\n"
                 f"  = {u_sc:.4f}", language="text")
-        if u_sc <= 1.0: st.success(f"✅ PASS — slip-critical interaction = {u_sc:.3f}")
-        else:           st.error(f"❌ FAIL — slip-critical interaction = {u_sc:.3f}")
+        if u_sc <= 1.0: st.success(f"PASS — slip-critical interaction = {u_sc:.3f}")
+        else:           st.error(f"FAIL — slip-critical interaction = {u_sc:.3f}")
 
     # Step 11 — Governing
     st.markdown("---")
     st.markdown("#### Step 11 — Governing Summary")
     for label, val in caps.items():
         passes = val >= applied_chart
-        icon   = "✅" if passes else "❌"
+        icon   = "PASS" if passes else "FAIL"
         bold   = "**" if label == gov_label else ""
-        st.markdown(f"{icon} {bold}{label} = {val:.1f} kN{bold}")
+        st.markdown(f"{icon} — {bold}{label} = {val:.1f} kN{bold}")
     st.markdown("---")
     if gov_val >= applied_chart:
-        st.success(f"✅ **OVERALL PASS** — Governing: {gov_label} = {gov_val:.1f} kN ≥ {applied_chart:.1f} kN")
+        st.success(f"OVERALL PASS — Governing: {gov_label} = {gov_val:.1f} kN >= {applied_chart:.1f} kN")
     else:
-        st.error(f"❌ **OVERALL FAIL** — Governing: {gov_label} = {gov_val:.1f} kN < {applied_chart:.1f} kN")
+        st.error(f"OVERALL FAIL — Governing: {gov_label} = {gov_val:.1f} kN < {applied_chart:.1f} kN")
 
     # Detailing checks
     st.markdown("---")
@@ -738,24 +746,21 @@ with res_col:
             st.caption(f"{label}: enter value for PASS/FAIL")
             continue
         ok = prov >= req_min and (req_max is None or prov <= req_max)
-        req_str = f"≥ {req_min:.1f}" + (f" and ≤ {req_max:.1f}" if req_max else "")
-        icon = "✅" if ok else "❌"
-        st.markdown(f"{icon} **{label}**: {prov:.1f} mm  ({req_str})")
+        req_str = f">= {req_min:.1f}" + (f" and <= {req_max:.1f}" if req_max else "")
+        icon = "PASS" if ok else "FAIL"
+        st.markdown(f"{icon} — **{label}**: {prov:.1f} mm  ({req_str})")
 
 
 with diag_col:
-    st.markdown("#### 📊 Diagrams")
+    st.markdown("#### Diagrams")
 
     # Diagram 1 — bolt layout
     st.markdown("**Bolt Layout Plan**")
     use_edge = edge_prov_mm if edge_prov_mm > 0 else min_edge_dist(d_mm, edge_type)
-    st.markdown(svg_bolt_layout(n_rows, n_cols, use_pitch, use_end, use_edge, d_mm, d_h),
-                unsafe_allow_html=True)
-    st.markdown("")
+    _svg_html(svg_bolt_layout(n_rows, n_cols, use_pitch, use_end, use_edge, d_mm, d_h))
 
     # Diagram 2 — failure modes
     st.markdown("**Failure Mode Visualization**")
-    # Map governing label to diagram mode name
     gov_mode_map = {
         "Bolt shear Vr": "Bolt shear", "Bearing Br": "Bearing",
         "Net fracture":  "Net fracture", "Gross yielding": "Gross yielding",
@@ -763,17 +768,13 @@ with diag_col:
         "Slip Vs":       "Bolt shear",
     }
     gov_mode = gov_mode_map.get(gov_label, "Bolt shear")
-    st.markdown(svg_failure_modes(n_rows, n_cols, use_pitch, use_end, use_edge, d_h, gov_mode),
-                unsafe_allow_html=True)
-    st.markdown("")
+    _svg_html(svg_failure_modes(n_rows, n_cols, use_pitch, use_end, use_edge, d_h, gov_mode))
 
     # Diagram 3 — capacity bar chart
     st.markdown("**Capacity Bar Chart**")
-    st.markdown(svg_capacity_bars(caps, applied_chart, gov_label), unsafe_allow_html=True)
-    st.markdown("")
+    _svg_html(svg_capacity_bars(caps, applied_chart, gov_label))
 
-    # Diagram 4 — block shear geometry (only if layout justifies it)
+    # Diagram 4 — block shear geometry
     st.markdown("**Block Shear Geometry**")
-    st.markdown(svg_block_shear_detail(n_rows, n_cols, use_pitch, use_end,
-                                       use_edge, Agv, Anv, Ane, d_h),
-                unsafe_allow_html=True)
+    _svg_html(svg_block_shear_detail(n_rows, n_cols, use_pitch, use_end,
+                                     use_edge, Agv, Anv, Ane, d_h))

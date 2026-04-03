@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "GbQ7ogv2796BZoiR03kzt"
+uri = "file://insfraspective_csa_s16.zip"
+type = "unspecified"
+title = "Insfraspective CSA S16 Calculator — All Files"

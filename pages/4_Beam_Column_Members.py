@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
+from _theme import apply_theme, render_sidebar_logo, render_footer
 
 # ============================================================
 # CONFIG
@@ -378,6 +379,9 @@ def Ce_euler(E_MPa: float, I_mm4: float, L_mm: float) -> float:
 # ============================================================
 # STREAMLIT UI
 # ============================================================
+apply_theme()
+render_sidebar_logo()
+render_footer()
 st.title(APP_TITLE)
 st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads in kN / kN·m, geometry in mm")
 

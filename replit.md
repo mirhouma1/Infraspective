@@ -6,19 +6,37 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 ## Project Structure
 ```
 ├── app.py                                          # Page 1 — Flexure Calculator (W sections)
+├── _theme.py                                       # Global UI theme (CSS, logo, footer, disclaimer page)
 ├── connection_diagram.py                           # SVG connection diagram generator
+├── static/
+│   └── logo.png                                    # Infraspective Solutions brand logo
 ├── pages/
 │   ├── 2_Compression.py                            # Page 2 — Compression (W + HSS)
 │   ├── 3_Bolted_Connections.py                     # Page 3 — Bolted Connections
 │   ├── 4_Beam_Column_Members.py                    # Page 4 — Beam-Column Check (Cl. 13.8)
 │   └── 5_Tension_Members.py                        # Page 5 — Tension Member (Angle, one-leg)
 ├── data/
-│   ├── w_sections.csv                              # 280 Canadian W-sections (UTF-8)
+│   ├── w_sections.csv                              # 285 Canadian W-sections (UTF-8)
 │   ├── Properties Table - HSS - Rectangular.csv   # HSS Rectangular (UTF-8)
 │   ├── Property Table - HSS - Circle.csv           # HSS Circular (latin-1)
 │   └── Property Table - HSS - Square.csv           # HSS Square (latin-1)
 └── .streamlit/config.toml
 ```
+
+## Branding & Theme (_theme.py)
+- `apply_theme()` — injects global CSS; call once per page before any UI
+- `render_sidebar_logo()` — displays logo at sidebar top via `st.sidebar.image()`
+- `render_footer()` — sticky dark footer bar with "INFRASPECTIVE SOLUTIONS" text
+- `render_page_banner(title, subtitle)` — dark blue banner below page title
+- `disclaimer_page()` — full styled disclaimer gate (logo + scrollable agreement + checkbox/button)
+- Logo loaded from `static/logo.png`, base64-encoded at runtime for HTML embeds
+
+### Theme Palette
+- Dark: `#0F172A`, Nav: `#1E3A8A`, Mid: `#1E40AF`, Blue: `#2563EB`
+- Sidebar: dark navy → blue gradient with blueprint grid overlay
+- Metrics: blue-tinted cards with top accent border
+- Code blocks: dark terminal style with monospace font
+- Sticky footer: fixed bottom, dark with blue top border
 
 ## Pages
 

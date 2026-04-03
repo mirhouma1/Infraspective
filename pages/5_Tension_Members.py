@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from _theme import apply_theme, render_sidebar_logo, render_footer
 
 from connection_diagram import generate_connection_svg
 
@@ -274,6 +275,9 @@ def estimate_block_areas(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    apply_theme()
+    render_sidebar_logo()
+    render_footer()
     st.title("CSA S16 — Single-Angle Tension Member")
     st.caption(
         "Gross yielding (Cl. 13.2a), net fracture with shear lag (Cl. 13.2b, 12.3.3.3), "

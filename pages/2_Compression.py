@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
+from _theme import apply_theme, render_sidebar_logo, render_footer
 
 # ─────────────────────────────────────────────────────────────
 # DATA DIR  (pages/ is one level below root where data/ lives)
@@ -720,8 +721,11 @@ def render_report(
 # STREAMLIT UI
 # ─────────────────────────────────────────────────────────────
 
-st.title("\U0001f3d7\ufe0f CSA S16 \u2014 Compression Member Design Check")
-st.markdown("*Structural steel column capacity per CSA S16:19 \u2014 Clauses 11, 13.3.1, 13.3.2, 13.3.3*")
+apply_theme()
+render_sidebar_logo()
+render_footer()
+st.title("CSA S16 — Compression Member Design Check")
+st.markdown("*Structural steel column capacity per CSA S16:19 — Clauses 11, 13.3.1, 13.3.2, 13.3.3*")
 
 shapes, designations = load_shapes()
 if not shapes or not designations:

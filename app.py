@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import pandas as pd
 import streamlit as st
 
+from _theme import apply_theme, render_sidebar_logo, render_footer, disclaimer_page
+
 # ----------------------------
 # CONFIG
 # ----------------------------
@@ -133,33 +135,15 @@ except Exception:
 # DISCLAIMER GATE
 # ----------------------------
 def require_disclaimer_acceptance() -> None:
-    st.set_page_config(page_title=APP_TITLE, page_icon="🔧", layout="wide")
+    st.set_page_config(page_title=APP_TITLE, page_icon=":wrench:", layout="wide")
 
     if st.session_state.get("disclaimer_version") != DISCLAIMER_VERSION:
         st.session_state["accepted_disclaimer"] = False
         st.session_state["disclaimer_version"] = DISCLAIMER_VERSION
 
     if not st.session_state.get("accepted_disclaimer", False):
-        st.title(APP_TITLE)
-        st.warning("⚠️ Beta / Testing Mode")
-        st.markdown(DISCLAIMER_MD)
-
-        accept = st.checkbox("I Accept and Understand My Responsibility")
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            enter = st.button("Enter Application", type="primary", disabled=not accept)
-        with col2:
-            st.caption("You must accept the disclaimer to proceed.")
-
-        if enter and accept:
-            st.session_state["accepted_disclaimer"] = True
-            st.rerun()
-
+        disclaimer_page()
         st.stop()
-
-
-def render_footer_disclaimer() -> None:
-    st.markdown(FOOTER_HTML, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -841,7 +825,9 @@ DEFLECTION_CASES = [
 # STREAMLIT APP
 # ----------------------------
 require_disclaimer_acceptance()
-render_footer_disclaimer()
+apply_theme()
+render_sidebar_logo()
+render_footer()
 
 st.title(APP_TITLE)
 st.markdown("**Laterally Supported W-Section Bending Check per CSA S16**")

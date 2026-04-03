@@ -3,6 +3,7 @@ import re
 from enum import Enum
 import streamlit as st
 import streamlit.components.v1 as components
+from _theme import apply_theme, render_sidebar_logo, render_footer
 
 
 def _svg_html(svg: str) -> None:
@@ -456,6 +457,9 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
 # ================================================================
 # STREAMLIT UI
 # ================================================================
+apply_theme()
+render_sidebar_logo()
+render_footer()
 st.title("CSA S16 — Bolted Connection Solver")
 st.caption("Chapter 6 Part 1 · Failure modes: Vr, Br, Tr(bolt), Tr(gross), Tr(net), Vr(block shear), Vs · Prying integrated · 4 diagrams")
 

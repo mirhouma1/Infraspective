@@ -14,7 +14,8 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 │   ├── 2_Compression.py                            # Page 2 — Compression (W + HSS)
 │   ├── 3_Bolted_Connections.py                     # Page 3 — Bolted Connections
 │   ├── 4_Beam_Column_Members.py                    # Page 4 — Beam-Column Check (Cl. 13.8)
-│   └── 5_Tension_Members.py                        # Page 5 — Tension Member (Angle, one-leg)
+│   ├── 5_Tension_Members.py                        # Page 5 — Tension Member (Angle, one-leg)
+│   └── 6_Welded_Connections.py                     # Page 6 — Welded Connection Solver
 ├── data/
 │   ├── w_sections.csv                              # 285 Canadian W-sections (UTF-8)
 │   ├── Properties Table - HSS - Rectangular.csv   # HSS Rectangular (UTF-8)

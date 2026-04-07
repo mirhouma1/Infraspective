@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from _theme import apply_theme, render_sidebar_logo, render_footer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
 
 # ============================================================
 # CONFIG
@@ -144,6 +144,8 @@ def load_all_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
             order.extend(csv_order)
     seen: set = set()
     uniq = [k for k in order if not (k in seen or seen.add(k))]
+    import re as _re
+    uniq.sort(key=lambda s: [int(c) if c.isdigit() else c.lower() for c in _re.split(r"(\d+)", s)])
     return merged, uniq
 
 
@@ -380,6 +382,7 @@ def Ce_euler(E_MPa: float, I_mm4: float, L_mm: float) -> float:
 # STREAMLIT UI
 # ============================================================
 apply_theme()
+gate_disclaimer()
 render_sidebar_logo()
 render_footer()
 st.title(APP_TITLE)

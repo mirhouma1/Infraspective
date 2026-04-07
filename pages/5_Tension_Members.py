@@ -11,12 +11,19 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+import re as _re
+
 try:
-    from _theme import apply_theme, render_sidebar_logo, render_footer
+    from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
 except ImportError:
     def apply_theme(): pass
     def render_sidebar_logo(): pass
     def render_footer(): pass
+    def gate_disclaimer(): pass
+
+
+def _nat_key(s):
+    return [int(c) if c.isdigit() else c.lower() for c in _re.split(r"(\d+)", str(s))]
 
 try:
     from connection_diagram import generate_connection_svg
@@ -593,7 +600,7 @@ def panel_single_angle(mat: Material, Tf: float) -> None:
         st.warning("Angle Properties Table.xlsx not found in data/ folder.")
         return
 
-    chosen = st.selectbox("Angle designation", df["designation"].tolist(), key="sa_des")
+    chosen = st.selectbox("Angle designation", sorted(df["designation"].tolist(), key=_nat_key), key="sa_des")
     row    = df.loc[df["designation"] == chosen].iloc[0]
     Ag     = float(row["Ag"])
     t      = float(row["t"])
@@ -688,7 +695,7 @@ def panel_double_angle(mat: Material, Tf: float) -> None:
         )
         return
 
-    chosen = st.selectbox("Double angle designation", df["designation"].tolist(), key="da_des")
+    chosen = st.selectbox("Double angle designation", sorted(df["designation"].tolist(), key=_nat_key), key="da_des")
     row    = df.loc[df["designation"] == chosen].iloc[0]
     Ag     = float(row["Ag"])
     t      = float(row["t"])
@@ -776,7 +783,7 @@ def panel_wt(mat: Material, Tf: float) -> None:
         )
         return
 
-    chosen = st.selectbox("WT designation", df["designation"].tolist(), key="wt_des")
+    chosen = st.selectbox("WT designation", sorted(df["designation"].tolist(), key=_nat_key), key="wt_des")
     row    = df.loc[df["designation"] == chosen].iloc[0]
     Ag     = float(row["Area_mm2"])
     t_fl   = float(row["t_mm"])
@@ -864,7 +871,7 @@ def panel_channel(mat: Material, Tf: float) -> None:
         )
         return
 
-    chosen = st.selectbox("Channel designation", df["designation"].tolist(), key="ch_des")
+    chosen = st.selectbox("Channel designation", sorted(df["designation"].tolist(), key=_nat_key), key="ch_des")
     row    = df.loc[df["designation"] == chosen].iloc[0]
     Ag     = float(row["Area_mm2"])
     t_fl   = float(row["t_mm"])
@@ -941,6 +948,7 @@ def panel_channel(mat: Material, Tf: float) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     apply_theme()
+    gate_disclaimer()
     render_sidebar_logo()
     render_footer()
 

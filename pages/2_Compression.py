@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from _theme import apply_theme, render_sidebar_logo, render_footer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
 
 # ─────────────────────────────────────────────────────────────
 # DATA DIR  (pages/ is one level below root where data/ lives)
@@ -137,6 +137,8 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
         if k not in seen:
             seen.add(k)
             order2.append(k)
+    import re as _re
+    order2.sort(key=lambda s: [int(c) if c.isdigit() else c.lower() for c in _re.split(r"(\d+)", s)])
     return shapes, order2
 
 # ─────────────────────────────────────────────────────────────
@@ -722,6 +724,7 @@ def render_report(
 # ─────────────────────────────────────────────────────────────
 
 apply_theme()
+gate_disclaimer()
 render_sidebar_logo()
 render_footer()
 st.title("CSA S16 — Compression Member Design Check")

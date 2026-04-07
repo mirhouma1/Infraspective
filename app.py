@@ -1,6 +1,7 @@
 # app.py
 import csv
 import math
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -262,7 +263,7 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
                 merged.update(data)
                 order.extend(csv_order)
 
-    # Remove duplicates while preserving order
+    # Remove duplicates while preserving order, then sort ascending (natural)
     seen: set[str] = set()
     order_unique: List[str] = []
     for k in order:
@@ -270,6 +271,10 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
             seen.add(k)
             order_unique.append(k)
 
+    def _nat(s: str):
+        return [int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", s)]
+
+    order_unique.sort(key=_nat)
     return merged, order_unique
 
 

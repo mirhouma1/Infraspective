@@ -3,7 +3,7 @@ import math
 import streamlit as st
 import streamlit.components.v1 as st_html
 
-from _theme import apply_theme, render_sidebar_logo, render_footer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
 
 # ============================================================
 # CONFIG
@@ -319,6 +319,7 @@ def svg_detailing(D: float, D_min: float, D_max: float,
 # ============================================================
 
 apply_theme()
+gate_disclaimer()
 render_sidebar_logo()
 render_footer()
 

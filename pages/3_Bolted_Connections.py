@@ -3,7 +3,7 @@ import re
 from enum import Enum
 import streamlit as st
 import streamlit.components.v1 as components
-from _theme import apply_theme, render_sidebar_logo, render_footer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
 
 
 def _svg_html(svg: str) -> None:
@@ -458,6 +458,7 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
 # STREAMLIT UI
 # ================================================================
 apply_theme()
+gate_disclaimer()
 render_sidebar_logo()
 render_footer()
 st.title("CSA S16 — Bolted Connection Solver")

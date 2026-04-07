@@ -87,7 +87,29 @@ _CSS = """
     background: #0F172A !important;
     border-bottom: 2px solid #2563EB !important;
 }
-[data-testid="stHeader"] button svg { fill: #93C5FD !important; }
+[data-testid="stHeader"] button {
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+[data-testid="stHeader"] button svg,
+[data-testid="stHeader"] button span svg,
+[data-testid="stHeader"] [data-testid="baseButton-headerNoPadding"] svg,
+[data-testid="stHeader"] [data-testid="baseButton-header"] svg {
+    fill: #93C5FD !important;
+    color: #93C5FD !important;
+    opacity: 1 !important;
+}
+/* Collapsed sidebar expand button */
+[data-testid="collapsedControl"] {
+    background: #0F172A !important;
+    border-right: 2px solid #2563EB !important;
+}
+[data-testid="collapsedControl"] svg {
+    fill: #93C5FD !important;
+}
 
 /* ═══ MAIN CONTAINER ═════════════════════════════════════════════════ */
 .block-container {
@@ -448,6 +470,17 @@ def disclaimer_page() -> None:
             st.rerun()
     if not accept:
         st.caption("You must read and accept the agreement to continue.")
+
+
+def gate_disclaimer() -> None:
+    """
+    Page-level disclaimer gate.  Call at the top of every page (after apply_theme).
+    If the user has not yet accepted the disclaimer, shows the full disclaimer UI
+    and halts the page with st.stop().
+    """
+    if not st.session_state.get("accepted_disclaimer", False):
+        disclaimer_page()
+        st.stop()
 
 
 def _DISCLAIMER_TEXT() -> str:

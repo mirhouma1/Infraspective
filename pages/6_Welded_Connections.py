@@ -6,11 +6,16 @@ import streamlit.components.v1 as st_html
 from _theme import apply_theme, render_sidebar_logo, render_footer
 
 # ============================================================
-# CONSTANTS
+# CONFIG
 # ============================================================
+
 PHI_W = 0.67   # weld resistance factor (Cl. 13.13.1)
 PHI   = 0.90   # base metal yielding
 PHI_U = 0.75   # base metal fracture
+
+# ============================================================
+# TABLE 4 — Matching electrodes for G40.21 steels
+# ============================================================
 
 STEEL_GRADES: dict[int, tuple[float, float, int]] = {
     260: (260, 410, 490),
@@ -25,684 +30,294 @@ STEEL_GRADES: dict[int, tuple[float, float, int]] = {
 # ============================================================
 # DETAILING LIMITS (Cl. 6.2.3)
 # ============================================================
+
 def min_fillet_size(t_thicker: float) -> int:
-    if t_thicker <= 6:  return 3
-    if t_thicker <= 12: return 5
-    if t_thicker <= 20: return 6
+    if t_thicker <= 6:
+        return 3
+    if t_thicker <= 12:
+        return 5
+    if t_thicker <= 20:
+        return 6
     return 8
+
 
 def max_fillet_size(t_thinner: float) -> float:
     return t_thinner if t_thinner < 6 else t_thinner - 2
 
+
 def min_eff_length(D: float) -> float:
     return max(38.0, 4.0 * D)
 
+
 def lap_min_overlap(t1: float, t2: float) -> float:
-    return max(5 * min(t1, t2), 25.0)
+    t_thin = min(t1, t2)
+    return max(5 * t_thin, 25.0)
+
 
 # ============================================================
 # CORE CALCULATIONS
 # ============================================================
+
 def effective_throat(D: float) -> float:
+    """Fillet weld effective throat = D / sqrt(2)."""
     return D / math.sqrt(2)
 
+
 def fillet_Aw(D: float, L: float) -> float:
+    """Effective throat area = throat × length (mm²)."""
     return effective_throat(D) * L
 
+
 def orientation_factor(theta_deg: float) -> float:
+    """(1 + 0.5 × sin^1.5(theta)) — load angle factor for fillet weld."""
     t = math.radians(theta_deg)
     return 1.0 + 0.50 * (math.sin(t) ** 1.5)
 
+
 def Mw_factor(theta1: float, theta2_nearest90: float) -> float:
+    """Multi-orientation strength reduction factor."""
     return (0.85 + theta1 / 600) / (0.85 + theta2_nearest90 / 600)
 
-def vr_fillet_N(D: float, L: float, theta: float, Xu: float, Mw: float = 1.0) -> dict:
+
+def vr_fillet_N(D: float, L: float, theta: float,
+                Xu: float, Mw: float = 1.0) -> dict:
+    """
+    Fillet weld factored shear resistance (Cl. 13.13.2.2).
+    Returns dict with intermediate values.
+    """
     throat = effective_throat(D)
     Aw     = fillet_Aw(D, L)
     of_    = orientation_factor(theta)
     Vr     = 0.67 * PHI_W * Aw * Xu * of_ * Mw
     return {
-        "throat_mm": throat, "Aw_mm2": Aw, "theta": theta,
-        "orient_factor": of_, "Mw": Mw, "Vr_N": Vr, "Vr_kN": Vr / 1000,
+        "throat_mm":     throat,
+        "Aw_mm2":        Aw,
+        "theta":         theta,
+        "orient_factor": of_,
+        "Mw":            Mw,
+        "Vr_N":          Vr,
+        "Vr_kN":         Vr / 1000,
     }
+
 
 def vr_base_metal_N(Am_mm2: float, Fu: float) -> float:
+    """Base metal shear check: Vr = 0.67·φw·Am·Fu (N)."""
     return 0.67 * PHI_W * Am_mm2 * Fu
 
-def vr_groove_N(Am_mm2: float, Aw_mm2: float, Fu: float, Xu: float) -> dict:
+
+def vr_groove_N(Am_mm2: float, Aw_mm2: float,
+                Fu: float, Xu: float) -> dict:
+    """
+    Groove weld shear resistance (Cl. 13.13.2.1).
+    Returns both cases and the governing lesser value.
+    """
     Vr_base = 0.67 * PHI_W * Am_mm2 * Fu
     Vr_weld = 0.67 * PHI_W * Aw_mm2 * Xu
-    gov = min(Vr_base, Vr_weld)
+    gov     = min(Vr_base, Vr_weld)
     return {
-        "Vr_base_kN": Vr_base / 1000, "Vr_weld_kN": Vr_weld / 1000,
-        "Vr_kN": gov / 1000, "governs": "base metal" if Vr_base <= Vr_weld else "weld metal",
+        "Vr_base_N":  Vr_base, "Vr_base_kN": Vr_base / 1000,
+        "Vr_weld_N":  Vr_weld, "Vr_weld_kN": Vr_weld / 1000,
+        "Vr_N":       gov,     "Vr_kN":      gov / 1000,
+        "governs":    "base metal" if Vr_base <= Vr_weld else "weld metal",
     }
 
-def tr_pjp_N(An_mm2: float, Fu: float, Ag_mm2: float, Fy: float) -> dict:
+
+def tr_pjp_N(An_mm2: float, Fu: float,
+             Ag_mm2: float, Fy: float) -> dict:
+    """PJP groove weld tension (Cl. 13.13.3.2)."""
     Tr_weld = PHI_W * An_mm2 * Fu
     Tr_cap  = PHI   * Ag_mm2 * Fy
     Tr      = min(Tr_weld, Tr_cap)
     return {
-        "Tr_weld_kN": Tr_weld / 1000, "Tr_cap_kN": Tr_cap / 1000,
-        "Tr_kN": Tr / 1000, "governs": "weld" if Tr_weld <= Tr_cap else "base metal",
+        "Tr_weld_kN": Tr_weld / 1000,
+        "Tr_cap_kN":  Tr_cap  / 1000,
+        "Tr_kN":      Tr      / 1000,
+        "governs":    "weld" if Tr_weld <= Tr_cap else "base metal capacity",
     }
 
-def tr_pjp_combined_N(An_mm2: float, Aw_mm2: float, Fu: float, Xu: float,
+
+def tr_pjp_combined_N(An_mm2: float, Aw_mm2: float,
+                      Fu: float, Xu: float,
                       Ag_mm2: float, Fy: float) -> dict:
+    """PJP + fillet combined tension (Cl. 13.13.3.3)."""
     Tr_weld = PHI_W * math.sqrt((An_mm2 * Fu) ** 2 + (Aw_mm2 * Xu) ** 2)
     Tr_cap  = PHI   * Ag_mm2 * Fy
     Tr      = min(Tr_weld, Tr_cap)
     return {
-        "Tr_weld_kN": Tr_weld / 1000, "Tr_cap_kN": Tr_cap / 1000,
-        "Tr_kN": Tr / 1000, "governs": "weld" if Tr_weld <= Tr_cap else "base metal",
+        "Tr_weld_kN": Tr_weld / 1000,
+        "Tr_cap_kN":  Tr_cap  / 1000,
+        "Tr_kN":      Tr      / 1000,
+        "governs":    "weld" if Tr_weld <= Tr_cap else "base metal capacity",
     }
 
+
 def vr_flare_bevel_N(wf_mm: float, L_mm: float, Fu: float) -> dict:
+    """Flare bevel groove weld shear (Cl. 13.13.2.3)."""
     Aw = 0.50 * wf_mm * L_mm
     Vr = 0.67 * PHI_W * Aw * Fu
-    return {"Aw_mm2": Aw, "Vr_kN": Vr / 1000}
+    return {"Aw_mm2": Aw, "Vr_N": Vr, "Vr_kN": Vr / 1000}
+
 
 # ============================================================
-# SVG ENGINE — shared helpers
+# SVG DIAGRAMS
 # ============================================================
-_DEFS = (
-    '<defs>'
-    '<marker id="ah" markerWidth="7" markerHeight="6" refX="7" refY="3" orient="auto">'
-    '<polygon points="0 0,7 3,0 6" fill="#22c55e"/></marker>'
-    '<marker id="ah2" markerWidth="7" markerHeight="6" refX="0" refY="3" orient="auto">'
-    '<polygon points="7 0,0 3,7 6" fill="#22c55e"/></marker>'
-    '<marker id="bl" markerWidth="7" markerHeight="6" refX="7" refY="3" orient="auto">'
-    '<polygon points="0 0,7 3,0 6" fill="#60a5fa"/></marker>'
-    '<marker id="bl2" markerWidth="7" markerHeight="6" refX="0" refY="3" orient="auto">'
-    '<polygon points="7 0,0 3,7 6" fill="#60a5fa"/></marker>'
-    '<marker id="vio" markerWidth="7" markerHeight="6" refX="7" refY="3" orient="auto">'
-    '<polygon points="0 0,7 3,0 6" fill="#a78bfa"/></marker>'
-    '<marker id="vio2" markerWidth="7" markerHeight="6" refX="0" refY="3" orient="auto">'
-    '<polygon points="7 0,0 3,7 6" fill="#a78bfa"/></marker>'
-    '</defs>'
-)
 
-def _wrap(content: str, W: int = 460, H: int = 300) -> str:
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-        f'style="font-family:\'Courier New\',monospace;background:#0f172a;border-radius:10px;">'
-        + _DEFS + content + '</svg>'
-    )
-
-def _dim_h(x1, x2, y, label, col="green"):
-    """Horizontal dimension line."""
-    mk = {"green": ("ah", "ah2", "#22c55e"), "blue": ("bl", "bl2", "#60a5fa"),
-          "violet": ("vio", "vio2", "#a78bfa")}
-    me, ms, c = mk.get(col, mk["green"])
-    mx = (x1 + x2) / 2
-    return (
-        f'<line x1="{x1}" y1="{y}" x2="{x2}" y2="{y}" stroke="{c}" stroke-width="1.4" '
-        f'marker-start="url(#{ms})" marker-end="url(#{me})"/>'
-        f'<text x="{mx:.1f}" y="{y - 4}" fill="{c}" font-size="10" text-anchor="middle">{label}</text>'
-    )
-
-def _dim_v(x, y1, y2, label, col="green", side="right"):
-    """Vertical dimension line."""
-    mk = {"green": ("ah", "ah2", "#22c55e"), "blue": ("bl", "bl2", "#60a5fa"),
-          "violet": ("vio", "vio2", "#a78bfa")}
-    me, ms, c = mk.get(col, mk["green"])
-    my = (y1 + y2) / 2
-    tx = x + 4 if side == "right" else x - 4
-    anc = "start" if side == "right" else "end"
-    return (
-        f'<line x1="{x}" y1="{y1}" x2="{x}" y2="{y2}" stroke="{c}" stroke-width="1.4" '
-        f'marker-start="url(#{ms})" marker-end="url(#{me})"/>'
-        f'<text x="{tx}" y="{my + 4}" fill="{c}" font-size="10" text-anchor="{anc}">{label}</text>'
-    )
-
-def _svg_html(svg: str, height: int = 300) -> None:
+def _svg_html(svg: str, height: int = 280) -> None:
+    """Render an SVG string via st_html to bypass Streamlit's HTML sanitiser."""
     st_html.html(
-        "<!DOCTYPE html><html><body style='margin:0;padding:0;background:transparent;'>"
-        + svg + "</body></html>",
+        f"<!DOCTYPE html><html><body style='margin:0;padding:0;background:transparent;'>"
+        f"{svg}</body></html>",
         height=height,
     )
 
-# ============================================================
-# SVG — FILLET WELD JOINT CROSS-SECTIONS
-# ============================================================
-def _weld_scale(t_thin: float, t_thick: float, D: float) -> float:
-    """px per mm — normalize so the largest dimension ≈ 90px."""
-    ref = max(t_thick, t_thin, D * 3, 1.0)
-    return min(7.0, 90.0 / ref)
 
-def svg_tee_joint(D: float, t_web: float, t_flange: float) -> str:
-    W, H = 460, 300
-    s = _weld_scale(t_web, t_flange, D)
-    D_px    = max(10.0, D * s)
-    tw_px   = max(8.0,  t_web * s)
-    tf_px   = max(8.0,  t_flange * s)
-    throat  = D / math.sqrt(2)
-    cx      = W // 2
-    fl_y    = H - 65          # top of flange
-    fl_x0, fl_x1 = 30, W - 30
-    web_y0  = 50
-    wx0     = cx - tw_px / 2
-    wx1     = cx + tw_px / 2
+def svg_fillet_cross_section(D: float, theta: float) -> str:
+    W, H = 380, 260
+    cx, cy = 140, 130
+    fl_w, fl_h, web_h, web_w = 100, 14, 80, 10
+    weld_size = max(12, min(D * 3, 28))
 
-    # Fillet weld triangles
-    lw = f"{wx0:.1f},{fl_y} {wx0-D_px:.1f},{fl_y} {wx0:.1f},{fl_y-D_px:.1f}"
-    rw = f"{wx1:.1f},{fl_y} {wx1+D_px:.1f},{fl_y} {wx1:.1f},{fl_y-D_px:.1f}"
-    # Throat dashed
-    lt_x2 = wx0 - D_px * 0.5
-    lt_y2 = fl_y - D_px * 0.5
-
-    c = (
-        f'<text x="{W//2}" y="22" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">T-Joint — Fillet Weld Cross-Section</text>'
-        # Flange
-        f'<rect x="{fl_x0}" y="{fl_y}" width="{fl_x1-fl_x0}" height="{tf_px:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Web
-        f'<rect x="{wx0:.1f}" y="{web_y0}" width="{tw_px:.1f}" height="{fl_y - web_y0}" '
-        f'fill="#475569" stroke="#94a3b8" stroke-width="1.5"/>'
-        # Welds
-        f'<polygon points="{lw}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1.2"/>'
-        f'<polygon points="{rw}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1.2"/>'
-        # Throat dashed (left weld)
-        f'<line x1="{wx0:.1f}" y1="{fl_y}" x2="{lt_x2:.1f}" y2="{lt_y2:.1f}" '
-        f'stroke="#f97316" stroke-width="1.4" stroke-dasharray="4,2"/>'
-        # Labels
-        f'<text x="{fl_x0+10}" y="{fl_y + tf_px/2 + 5}" fill="#94a3b8" font-size="10">Flange</text>'
-        f'<text x="{wx1+4}" y="{(web_y0+fl_y)//2+4}" fill="#94a3b8" font-size="10">Web</text>'
-        f'<text x="{wx0-D_px/2:.1f}" y="{fl_y-D_px-6:.1f}" fill="#f59e0b" font-size="10" '
-        f'text-anchor="middle">Fillet weld</text>'
-        f'<text x="{lt_x2-8:.1f}" y="{lt_y2-8:.1f}" fill="#f97316" font-size="9">throat</text>'
-        # Dimensions
-        + _dim_h(wx0 - D_px, wx0, fl_y + tf_px + 20, f"D={D:.0f}mm", "green")
-        + _dim_v(fl_x1 + 14, fl_y, fl_y + tf_px, f"t={t_flange:.0f}mm", "violet")
-        + _dim_v(wx1 + 14, web_y0, fl_y, f"t={t_web:.0f}mm", "blue")
-        + _dim_h(wx0, wx0 + tw_px, fl_y - D_px - 22, f"t_web={t_web:.0f}mm", "blue")
-        + f'<text x="{lt_x2-32:.1f}" y="{lt_y2+14:.1f}" fill="#f97316" font-size="9">'
-        f'={throat:.1f}mm</text>'
-    )
-    return _wrap(c, W, H)
-
-
-def svg_lap_joint(D: float, t1: float, t2: float, L_lap: float) -> str:
-    W, H = 460, 280
-    s = _weld_scale(t1, t2, D)
-    D_px  = max(10.0, D * s)
-    t1_px = max(8.0,  t1 * s)
-    t2_px = max(8.0,  t2 * s)
-    L_px  = min(200.0, max(60.0, L_lap * s * 0.5))
-
-    # Layout: plate 2 (bottom), plate 1 (top, overlapping)
-    cx      = W // 2
-    p2_y    = H - 60          # top of bottom plate (t2)
-    p1_y    = p2_y - t1_px   # top of top plate
-    p2_x0   = 40
-    p2_x1   = W - 40
-    p1_x0   = cx - L_px / 2  # top plate starts here
-    p1_x1   = p2_x1          # shares right edge
-
-    # Left fillet (top plate left edge on top of bottom plate)
-    lw = (f"{p1_x0:.1f},{p2_y} {p1_x0-D_px:.1f},{p2_y} "
-          f"{p1_x0:.1f},{p2_y-D_px:.1f}")
-    # Right side: vertical (top plate right edge to top of bottom plate) — not commonly shown;
-    # typically there's a weld at the LEFT free edge only for standard lap. Show both.
-    rw = (f"{p1_x1:.1f},{p2_y} {p1_x1+D_px:.1f},{p2_y} "
-          f"{p1_x1:.1f},{p2_y-D_px:.1f}")
-
-    c = (
-        f'<text x="{W//2}" y="22" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">Lap Joint — Fillet Weld Cross-Section</text>'
-        # Bottom plate (t2)
-        f'<rect x="{p2_x0}" y="{p2_y}" width="{p2_x1-p2_x0}" height="{t2_px:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Top plate (t1) — overlaps right portion of bottom plate
-        f'<rect x="{p1_x0:.1f}" y="{p1_y:.1f}" width="{p1_x1-p1_x0:.1f}" height="{t1_px:.1f}" '
-        f'fill="#475569" stroke="#94a3b8" stroke-width="1.5"/>'
-        # Fillet welds
-        f'<polygon points="{lw}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1.2"/>'
-        f'<polygon points="{rw}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1.2"/>'
-        # Labels
-        f'<text x="{(p2_x0+p1_x0)/2:.1f}" y="{p2_y+t2_px/2+4:.1f}" '
-        f'fill="#94a3b8" font-size="10" text-anchor="middle">Plate 2</text>'
-        f'<text x="{(p1_x0+p1_x1)/2:.1f}" y="{p1_y+t1_px/2+4:.1f}" '
-        f'fill="#94a3b8" font-size="10" text-anchor="middle">Plate 1</text>'
-        f'<text x="{p1_x0-D_px/2:.1f}" y="{p2_y-D_px-6:.1f}" fill="#f59e0b" font-size="10" '
-        f'text-anchor="middle">Fillet weld</text>'
-        # Lap overlap dimension
-        + _dim_h(p1_x0, p1_x1, p2_y + t2_px + 22, f"L_lap={L_lap:.0f}mm", "green")
-        + _dim_v(p2_x0 - 14, p2_y, p2_y + t2_px, f"t2={t2:.0f}mm", "blue", "left")
-        + _dim_v(p1_x1 + 14, p1_y, p2_y, f"t1={t1:.0f}mm", "violet")
-        + _dim_h(p1_x0 - D_px, p1_x0, p2_y + t2_px + 40, f"D={D:.0f}mm", "green")
-    )
-    return _wrap(c, W, H)
-
-
-def svg_corner_joint(D: float, t1: float, t2: float) -> str:
-    W, H = 460, 280
-    s = _weld_scale(t1, t2, D)
-    D_px  = max(10.0, D * s)
-    t1_px = max(8.0, t1 * s)
-    t2_px = max(8.0, t2 * s)
-
-    cx = W // 2
-    # Horizontal plate (t2) at bottom
-    hp_y = H - 60
-    hp_x0, hp_x1 = 80, W - 80
-    # Vertical plate (t1) on right side, aligned with right edge of horizontal plate
-    vp_x0 = hp_x1 - t1_px
-    vp_x1 = hp_x1
-    vp_y0  = 50
-    vp_y1  = hp_y
-
-    # Corner fillet at outer right corner (inside corner)
-    # weld at inner corner: where vertical plate meets horizontal plate top
-    iw = (f"{vp_x0:.1f},{hp_y} {vp_x0-D_px:.1f},{hp_y} "
-          f"{vp_x0:.1f},{hp_y-D_px:.1f}")
-
-    c = (
-        f'<text x="{W//2}" y="22" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">Corner Joint — Fillet Weld Cross-Section</text>'
-        # Horizontal plate
-        f'<rect x="{hp_x0}" y="{hp_y}" width="{hp_x1-hp_x0}" height="{t2_px:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Vertical plate
-        f'<rect x="{vp_x0:.1f}" y="{vp_y0}" width="{t1_px:.1f}" height="{vp_y1-vp_y0}" '
-        f'fill="#475569" stroke="#94a3b8" stroke-width="1.5"/>'
-        # Inner fillet weld
-        f'<polygon points="{iw}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1.2"/>'
-        # Outer corner (no weld shown — user can add note)
-        f'<text x="{hp_x0+10}" y="{hp_y+t2_px/2+4:.1f}" fill="#94a3b8" font-size="10">Plate H</text>'
-        f'<text x="{vp_x0-30:.1f}" y="{(vp_y0+hp_y)//2+4}" fill="#94a3b8" font-size="10">Plate V</text>'
-        f'<text x="{vp_x0-D_px/2:.1f}" y="{hp_y-D_px-6:.1f}" fill="#f59e0b" font-size="10" '
-        f'text-anchor="middle">Fillet</text>'
-        + _dim_h(vp_x0 - D_px, vp_x0, hp_y + t2_px + 22, f"D={D:.0f}mm", "green")
-        + _dim_v(hp_x1 + 14, hp_y, hp_y + t2_px, f"t2={t2:.0f}mm", "blue")
-        + _dim_v(vp_x0 - 16, vp_y0, hp_y, f"t1={t1:.0f}mm", "violet", "left")
-    )
-    return _wrap(c, W, H)
-
-
-# ============================================================
-# SVG — THETA ORIENTATION DIAGRAM
-# ============================================================
-def svg_theta_diagram(segments: list[dict], theta2_idx: int) -> str:
-    """
-    Plan view of weld group showing load direction, weld axis for each
-    segment, and theta_1 / theta_2 labels.
-    """
-    W, H = 460, 260
-    SEG_COLORS = ["#f59e0b", "#22c55e", "#60a5fa", "#f97316", "#a78bfa", "#fb7185"]
-
-    cx, cy = 160, 130   # plate center
-    pw, ph = 180, 100   # plate size
-
-    # Load arrow (comes from left, horizontal)
-    c = (
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+        f'style="font-family:\'Courier New\',monospace;background:#1e293b;border-radius:10px;">'
         f'<text x="{W//2}" y="20" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">Weld Orientation — Plan View</text>'
-        # Plate rectangle
-        f'<rect x="{cx-pw//2}" y="{cy-ph//2}" width="{pw}" height="{ph}" '
-        f'fill="#1e293b" stroke="#475569" stroke-width="2" rx="3"/>'
-        # Load arrow
-        f'<defs><marker id="ldarr" markerWidth="9" markerHeight="7" refX="9" refY="3.5" orient="auto">'
-        f'<polygon points="0 0,9 3.5,0 7" fill="#f87171"/></marker></defs>'
-        f'<line x1="{cx-pw//2-60}" y1="{cy}" x2="{cx-pw//2-4}" y2="{cy}" '
-        f'stroke="#f87171" stroke-width="2.5" marker-end="url(#ldarr)"/>'
-        f'<text x="{cx-pw//2-62}" y="{cy-8}" fill="#f87171" font-size="11" '
-        f'font-weight="bold" text-anchor="middle">Vf</text>'
-        f'<text x="{cx-pw//2-62}" y="{cy+18}" fill="#f87171" font-size="9" '
-        f'text-anchor="middle">(load)</text>'
+        f'text-anchor="middle">Fillet Weld — Cross Section</text>'
+        f'<rect x="{cx-fl_w//2}" y="{cy+web_h//2}" width="{fl_w}" height="{fl_h}" '
+        f'fill="#475569" stroke="#94a3b8" stroke-width="1.5"/>'
+        f'<rect x="{cx-web_w//2}" y="{cy-web_h//2}" width="{web_w}" height="{web_h}" '
+        f'fill="#475569" stroke="#94a3b8" stroke-width="1.5"/>'
+        f'<polygon points="{cx-web_w//2-weld_size},{cy+web_h//2} {cx-web_w//2},{cy+web_h//2} '
+        f'{cx-web_w//2},{cy+web_h//2-weld_size}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1"/>'
+        f'<polygon points="{cx+web_w//2+weld_size},{cy+web_h//2} {cx+web_w//2},{cy+web_h//2} '
+        f'{cx+web_w//2},{cy+web_h//2-weld_size}" fill="#f59e0b" stroke="#fbbf24" stroke-width="1"/>'
+        f'<line x1="{cx-web_w//2-weld_size-4}" y1="{cy+web_h//2}" '
+        f'x2="{cx-web_w//2-4}" y2="{cy+web_h//2}" stroke="#22c55e" stroke-width="1.5"/>'
+        f'<text x="{cx-web_w//2-weld_size//2-4}" y="{cy+web_h//2+14}" '
+        f'fill="#22c55e" font-size="10" text-anchor="middle">D={D:.0f}mm</text>'
+        f'<line x1="{cx-web_w//2-2}" y1="{cy+web_h//2}" '
+        f'x2="{cx-web_w//2-weld_size//2-2}" y2="{cy+web_h//2-weld_size//2}" '
+        f'stroke="#60a5fa" stroke-width="1.5" stroke-dasharray="3,2"/>'
+        f'<text x="{cx-web_w//2-weld_size-10}" y="{cy+web_h//2-weld_size//2-4}" '
+        f'fill="#60a5fa" font-size="9">throat={D/math.sqrt(2):.1f}mm</text>'
+        f'<defs><marker id="arrf" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">'
+        f'<polygon points="0 0,8 3,0 6" fill="#f59e0b"/></marker></defs>'
+        f'<text x="280" y="60"  fill="#e2e8f0" font-size="11" font-weight="bold">Load angle</text>'
+        f'<text x="280" y="78"  fill="#f59e0b" font-size="13" font-weight="bold">theta = {theta:.0f} deg</text>'
+        f'<text x="280" y="96"  fill="#94a3b8" font-size="10">'
+        f'{"Transverse" if theta == 90 else "Longitudinal" if theta == 0 else "Inclined"}</text>'
+        f'<text x="280" y="124" fill="#e2e8f0" font-size="10">Orient. factor:</text>'
+        f'<text x="280" y="140" fill="#22c55e" font-size="12" font-weight="bold">'
+        f'{orientation_factor(theta):.3f}</text>'
+        f'<text x="{cx}" y="{cy+web_h//2+fl_h+18}" fill="#94a3b8" font-size="10" '
+        f'text-anchor="middle">Base plate</text>'
+        f'<text x="{cx+fl_w//2+8}" y="{cy}" fill="#94a3b8" font-size="10">Web</text>'
+        f'<text x="{cx-web_w//2-weld_size//2-4}" y="{cy+web_h//2-weld_size-8}" '
+        f'fill="#f59e0b" font-size="10">Fillet weld</text>'
+        f'</svg>'
+    )
+    return svg
+
+
+def svg_weld_group(segments: list[dict]) -> str:
+    W, H = 420, 300
+    cx, cy = 160, 150
+    plate_w, plate_h = 200, 100
+    colors = ["#f59e0b", "#22c55e", "#60a5fa", "#f97316", "#a78bfa"]
+
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+        f'style="font-family:\'Courier New\',monospace;background:#1e293b;border-radius:10px;">'
+        f'<text x="{W//2}" y="20" fill="#e2e8f0" font-size="12" font-weight="bold" '
+        f'text-anchor="middle">Weld Group — {len(segments)} segment(s)</text>'
+        f'<rect x="{cx-plate_w//2}" y="{cy-plate_h//2}" width="{plate_w}" height="{plate_h}" '
+        f'fill="#334155" stroke="#64748b" stroke-width="2" rx="3"/>'
+        f'<defs><marker id="arrg" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">'
+        f'<polygon points="0 0,8 3,0 6" fill="#f59e0b"/></marker></defs>'
+        f'<line x1="{cx-plate_w//2-35}" y1="{cy}" x2="{cx-plate_w//2-5}" y2="{cy}" '
+        f'stroke="#f59e0b" stroke-width="2.5" marker-end="url(#arrg)"/>'
+        f'<text x="{cx-plate_w//2-42}" y="{cy-6}" fill="#f59e0b" font-size="10" '
+        f'text-anchor="middle">Vu</text>'
     )
 
-    # Draw each weld segment on the plate
     for i, seg in enumerate(segments):
-        col   = SEG_COLORS[i % len(SEG_COLORS)]
+        col   = colors[i % len(colors)]
         theta = seg.get("theta", 0)
         L     = seg.get("L", 100)
-        rad   = math.radians(theta)
+        label = f"Seg {i+1}: theta={theta:.0f} deg  L={L:.0f}mm"
 
-        # Weld positioned along the plate edges
-        # Distribute segments evenly along top/bottom edges
-        offset = (i - (len(segments) - 1) / 2) * 25
-        if theta == 90 or abs(theta - 90) < 5:
-            # Transverse weld — draw on right face, vertical
-            wx, wy = cx + pw // 2, cy + offset
-            dx, dy = 0, ph // 2 - 5
-        elif theta == 0 or theta < 15:
-            # Longitudinal weld — draw along top
-            wx, wy = cx + offset, cy - ph // 2
-            dx, dy = L * 0.3, 0
-            dx, dy = min(dx, pw // 2 - 5), 0
+        if abs(theta - 90) < 5:
+            x1 = cx + plate_w // 2; y1 = cy - plate_h // 2
+            x2 = cx + plate_w // 2; y2 = cy + plate_h // 2
         else:
-            # Inclined — draw along bottom with angle
-            wx, wy = cx + offset, cy + ph // 2
-            dx = math.cos(math.radians(90 - theta)) * 40
-            dy = -math.sin(math.radians(90 - theta)) * 40
+            side  = 1 if i % 2 == 0 else -1
+            y_pos = cy - side * plate_h // 2
+            x1 = cx - plate_w // 4; y1 = y_pos
+            x2 = cx + plate_w // 4; y2 = y_pos
 
-        lx1, ly1 = wx - dx, wy - dy
-        lx2, ly2 = wx + dx, wy + dy
-
-        # Angle arc (small arc near start of weld)
-        arc_r = 20
-        # Arc from 0 to theta (measured from horizontal load direction)
-        arc_start_x = lx1 + arc_r
-        arc_start_y = ly1
-        arc_end_x   = lx1 + arc_r * math.cos(rad)
-        arc_end_y   = ly1 - arc_r * math.sin(rad)
-        large_flag  = 1 if theta > 180 else 0
-        sweep       = 0  # counter-clockwise
-
-        label = "theta_2 (governs Mw)" if i == theta2_idx and len(segments) > 1 else f"theta_1 = {theta:.0f} deg"
-        label_short = f"theta={theta:.0f}d"
-
-        c += (
-            # Weld line (thick colored line)
-            f'<line x1="{lx1:.1f}" y1="{ly1:.1f}" x2="{lx2:.1f}" y2="{ly2:.1f}" '
-            f'stroke="{col}" stroke-width="5" stroke-linecap="round" opacity="0.9"/>'
-            # Angle arc
-            f'<path d="M {lx1+arc_r:.1f} {ly1:.1f} A {arc_r} {arc_r} 0 {large_flag} {sweep} '
-            f'{arc_end_x:.1f} {arc_end_y:.1f}" stroke="{col}" fill="none" stroke-width="1.2" '
-            f'stroke-dasharray="3,2"/>'
-            # Angle label
-            f'<text x="{lx1+arc_r+6:.1f}" y="{ly1-arc_r/2:.1f}" fill="{col}" font-size="10">'
-            f'{label_short}</text>'
+        svg += (
+            f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" '
+            f'stroke="{col}" stroke-width="5" opacity="0.85"/>'
+            f'<rect x="295" y="{50 + i * 22}" width="14" height="10" fill="{col}"/>'
+            f'<text x="313" y="{50 + i * 22 + 9}" fill="{col}" font-size="10">{label}</text>'
         )
 
-    # Legend on the right
-    leg_x = cx + pw // 2 + 20
-    c += f'<text x="{leg_x}" y="40" fill="#e2e8f0" font-size="10" font-weight="bold">Legend</text>'
-    for i, seg in enumerate(segments):
-        col   = SEG_COLORS[i % len(SEG_COLORS)]
-        ly_   = 55 + i * 20
-        star  = "  [theta_2]" if i == theta2_idx and len(segments) > 1 else ""
-        c += (
-            f'<rect x="{leg_x}" y="{ly_-8}" width="14" height="10" fill="{col}"/>'
-            f'<text x="{leg_x+18}" y="{ly_}" fill="{col}" font-size="10">'
-            f'Seg {i+1}: theta={seg["theta"]:.0f} deg  L={seg["L"]:.0f}mm{star}</text>'
-        )
-
-    if len(segments) > 1:
-        c += (
-            f'<text x="{leg_x}" y="{55 + len(segments)*20 + 16}" fill="#94a3b8" font-size="9">'
-            f'theta_2 auto-identified</text>'
-            f'<text x="{leg_x}" y="{55 + len(segments)*20 + 28}" fill="#94a3b8" font-size="9">'
-            f'as segment nearest 90 deg</text>'
-        )
-
-    return _wrap(c, W, H)
+    svg += '</svg>'
+    return svg
 
 
-# ============================================================
-# SVG — CJP GROOVE WELD (Single-V)
-# ============================================================
-def svg_cjp_butt(t1: float, t2: float) -> str:
-    W, H = 460, 300
-    ref   = max(t1, t2, 1.0)
-    s     = min(6.0, 100.0 / ref)
-    t1_px = max(12.0, t1 * s)
-    t2_px = max(12.0, t2 * s)
-    p_h   = min(120.0, max(60.0, (t1_px + t2_px) / 2))
-
-    cx = W // 2
-    py = (H - p_h) // 2   # top of plate
-
-    # groove angle ≈ 60 degrees total opening (30 deg each side from vertical)
-    groove_half = 30  # degrees
-    g_rad = math.radians(groove_half)
-    g_offset = p_h * math.tan(g_rad) * 0.5  # horizontal offset at top of groove
-
-    # Left plate (t1)
-    lp_x0 = cx - 120
-    lp_x1 = cx - 4
-    # Right plate (t2)
-    rp_x0 = cx + 4
-    rp_x1 = cx + 120
-
-    # Groove: V shape filled with weld
-    # Left plate right face: angled at +30 deg (opens left)
-    # Right plate left face: angled at -30 deg (opens right)
-    # Weld fills the V
-    weld_pts = (
-        f"{cx:.1f},{py+p_h} "
-        f"{lp_x1-g_offset:.1f},{py} "
-        f"{rp_x0+g_offset:.1f},{py}"
-    )
-    weld_pts_r = weld_pts  # same points for the closed polygon
-    weld_poly = (
-        f"{cx:.1f},{py+p_h} "
-        f"{lp_x1-g_offset:.1f},{py} "
-        f"{rp_x0+g_offset:.1f},{py} "
-        f"{cx:.1f},{py+p_h}"
-    )
-
-    # Reinforcement bead at top
-    ry = py - 6
-    rx_l = lp_x1 - g_offset - 8
-    rx_r = rp_x0 + g_offset + 8
-
-    c = (
-        f'<text x="{W//2}" y="22" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">CJP Groove Weld — Single-V Butt Joint</text>'
-        f'<text x="{W//2}" y="38" fill="#60a5fa" font-size="10" text-anchor="middle">'
-        f'Complete Joint Penetration — Full Strength Restored</text>'
-        # Left plate
-        f'<rect x="{lp_x0}" y="{py}" width="{lp_x1-lp_x0-g_offset:.1f}" height="{p_h:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Bevel on left plate right edge (angled face)
-        f'<polygon points="{lp_x1-g_offset:.1f},{py} {lp_x1:.1f},{py+p_h} {lp_x1:.1f},{py}" '
-        f'fill="#1e293b" stroke="none"/>'
-        # Right plate
-        f'<rect x="{rp_x0+g_offset:.1f}" y="{py}" width="{rp_x1-rp_x0-g_offset:.1f}" height="{p_h:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Bevel on right plate left edge
-        f'<polygon points="{rp_x0+g_offset:.1f},{py} {rp_x0:.1f},{py+p_h} {rp_x0:.1f},{py}" '
-        f'fill="#1e293b" stroke="none"/>'
-        # Weld fill (amber)
-        f'<polygon points="{weld_poly}" fill="#f59e0b" opacity="0.85" stroke="#fbbf24" stroke-width="1"/>'
-        # Weld reinforcement bead
-        f'<ellipse cx="{cx:.1f}" cy="{ry:.1f}" rx="{(rx_r-rx_l)/2:.1f}" ry="6" '
-        f'fill="#f59e0b" opacity="0.7"/>'
-        # Root symbol (small dot at root)
-        f'<circle cx="{cx:.1f}" cy="{py+p_h:.1f}" r="4" fill="#fbbf24"/>'
-        # Groove angle label
-        f'<line x1="{lp_x1-g_offset:.1f}" y1="{py}" x2="{lp_x1-g_offset-20:.1f}" y2="{py-20}" '
-        f'stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2"/>'
-        f'<text x="{lp_x1-g_offset-22:.1f}" y="{py-22}" fill="#94a3b8" font-size="9" '
-        f'text-anchor="end">60 deg groove</text>'
-        # Labels
-        f'<text x="{(lp_x0+lp_x1)/2:.1f}" y="{py+p_h/2+4:.1f}" fill="#94a3b8" '
-        f'font-size="10" text-anchor="middle">Plate 1</text>'
-        f'<text x="{(rp_x0+rp_x1)/2+g_offset/2:.1f}" y="{py+p_h/2+4:.1f}" fill="#94a3b8" '
-        f'font-size="10" text-anchor="middle">Plate 2</text>'
-        f'<text x="{cx:.1f}" y="{py+p_h/2+4:.1f}" fill="#fbbf24" '
-        f'font-size="10" text-anchor="middle">Weld</text>'
-        f'<text x="{cx:.1f}" y="{ry-10}" fill="#f59e0b" font-size="9" '
-        f'text-anchor="middle">Reinforcement</text>'
-        f'<text x="{cx+8:.1f}" y="{py+p_h+14:.1f}" fill="#fbbf24" font-size="9">Root</text>'
-        # Dimension lines
-        + _dim_v(lp_x0 - 14, py, py + p_h, f"t1={t1:.0f}mm", "blue", "left")
-        + _dim_v(rp_x1 + 14, py, py + p_h, f"t2={t2:.0f}mm", "violet")
-        # Am label
-        + f'<text x="{W//2}" y="{H-14}" fill="#22c55e" font-size="10" text-anchor="middle">'
-        f'Am = fusion face area = t1 x L  (or t2 x L if t2 &lt; t1)</text>'
-    )
-    return _wrap(c, W, H)
-
-
-# ============================================================
-# SVG — PJP GROOVE WELD (Single-V)
-# ============================================================
-def svg_pjp_butt(t1: float, t2: float) -> str:
-    W, H = 460, 300
-    ref   = max(t1, t2, 1.0)
-    s     = min(6.0, 100.0 / ref)
-    t1_px = max(12.0, t1 * s)
-    t2_px = max(12.0, t2 * s)
-    p_h   = min(120.0, max(60.0, (t1_px + t2_px) / 2))
-    eff_frac = 0.60   # effective penetration depth as fraction of plate thickness
-
-    cx = W // 2
-    py = (H - p_h) // 2
-
-    g_rad    = math.radians(30)  # half groove angle
-    g_off_top = p_h * 0.35 * math.tan(g_rad)  # offset at top of weld (partial depth)
-    weld_h   = p_h * eff_frac   # weld only penetrates partway
-
-    weld_py_bot = py + p_h           # bottom of plate
-    weld_py_top = weld_py_bot - weld_h  # top of weld
-
-    lp_x0 = cx - 120
-    lp_x1 = cx - 4
-    rp_x0 = cx + 4
-    rp_x1 = cx + 120
-
-    g_off_top2 = g_off_top * 0.7  # partial — narrower opening at top
-
-    weld_poly = (
-        f"{cx:.1f},{weld_py_bot} "
-        f"{lp_x1-g_off_top2:.1f},{weld_py_top} "
-        f"{rp_x0+g_off_top2:.1f},{weld_py_top}"
-    )
-
-    c = (
-        f'<text x="{W//2}" y="22" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">PJP Groove Weld — Single-V Butt Joint</text>'
-        f'<text x="{W//2}" y="38" fill="#f97316" font-size="10" text-anchor="middle">'
-        f'Partial Joint Penetration — Effective Throat (a) governs</text>'
-        # Left plate
-        f'<rect x="{lp_x0}" y="{py}" width="{lp_x1-lp_x0:.1f}" height="{p_h:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Right plate
-        f'<rect x="{rp_x0}" y="{py}" width="{rp_x1-rp_x0:.1f}" height="{p_h:.1f}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Gap between plates (unfilled root)
-        f'<rect x="{lp_x1:.1f}" y="{py}" width="{rp_x0-lp_x1:.1f}" height="{p_h:.1f}" '
-        f'fill="#0f172a"/>'
-        # Unpenetrated root (darker region at bottom)
-        f'<rect x="{lp_x1:.1f}" y="{weld_py_top:.1f}" width="{rp_x0-lp_x1:.1f}" '
-        f'height="{weld_h:.1f}" fill="#1e293b" stroke="#475569" stroke-dasharray="3,2"/>'
-        # Weld fill (partial — amber)
-        f'<polygon points="{weld_poly}" fill="#f59e0b" opacity="0.85" stroke="#fbbf24" stroke-width="1"/>'
-        # Effective throat line (dashed)
-        f'<line x1="{lp_x1:.1f}" y1="{weld_py_top:.1f}" x2="{rp_x0:.1f}" y2="{weld_py_top:.1f}" '
-        f'stroke="#f97316" stroke-width="1.5" stroke-dasharray="5,3"/>'
-        f'<text x="{rp_x0+6}" y="{weld_py_top+4:.1f}" fill="#f97316" font-size="9">'
-        f'effective throat (a = Aw/L)</text>'
-        # Unpenetrated depth indicator
-        f'<line x1="{rp_x0+6}" y1="{weld_py_top:.1f}" x2="{rp_x0+6}" y2="{py+p_h:.1f}" '
-        f'stroke="#475569" stroke-width="1" stroke-dasharray="2,2"/>'
-        f'<text x="{rp_x0+10}" y="{(weld_py_top+py+p_h)/2+4:.1f}" fill="#475569" font-size="9">'
-        f'unfused root</text>'
-        # Labels
-        f'<text x="{(lp_x0+lp_x1)/2:.1f}" y="{py+p_h/2+4:.1f}" fill="#94a3b8" '
-        f'font-size="10" text-anchor="middle">Plate 1</text>'
-        f'<text x="{(rp_x0+rp_x1)/2:.1f}" y="{py+p_h/2+4:.1f}" fill="#94a3b8" '
-        f'font-size="10" text-anchor="middle">Plate 2</text>'
-        f'<text x="{cx:.1f}" y="{(weld_py_top+weld_py_bot)/2+4:.1f}" fill="#fbbf24" '
-        f'font-size="9" text-anchor="middle">Weld metal</text>'
-        + _dim_v(lp_x0 - 14, py, py + p_h, f"t1={t1:.0f}mm", "blue", "left")
-        + _dim_v(rp_x1 + 14, py, py + p_h, f"t2={t2:.0f}mm", "violet")
-        + _dim_v(cx + 40, weld_py_top, weld_py_bot, f"weld={weld_h:.0f}px", "green")
-        # An / Am notes
-        + f'<text x="{W//2}" y="{H-18}" fill="#22c55e" font-size="9" text-anchor="middle">'
-        f'An = fusion face area (governs tension)   |   Am = shear area</text>'
-        + f'<text x="{W//2}" y="{H-6}" fill="#f97316" font-size="9" text-anchor="middle">'
-        f'Aw (throat area) = effective throat x L</text>'
-    )
-    return _wrap(c, W, H)
-
-
-# ============================================================
-# SVG — FLARE BEVEL CROSS-SECTION
-# ============================================================
-def svg_flare_bevel_xsec(wf: float) -> str:
-    W, H = 460, 280
-    cx = W // 2
-    # Round bar on the right (radius r)
-    r = min(80, max(30, wf * 3))
-    bar_cx = cx + 80
-    bar_cy = H // 2
-    # Flat plate on the left
-    fp_x0, fp_x1 = 30, bar_cx - r + 2
-    fp_y0, fp_y1 = bar_cy - 20, bar_cy + 20
-    # Flare groove: the gap between flat plate and round bar
-    # Weld fills from flat plate face to tangent point on bar
-    tang_y_top = bar_cy - r * 0.7
-    tang_y_bot = bar_cy + r * 0.7
-    wf_px = min(50, max(15, wf * 3))
-
-    c = (
-        f'<text x="{W//2}" y="20" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">Flare Bevel Groove — Cross-Section</text>'
-        # Flat plate
-        f'<rect x="{fp_x0}" y="{fp_y0}" width="{fp_x1-fp_x0:.1f}" height="{fp_y1-fp_y0}" '
-        f'fill="#334155" stroke="#64748b" stroke-width="2"/>'
-        # Round bar
-        f'<circle cx="{bar_cx}" cy="{bar_cy}" r="{r:.1f}" '
-        f'fill="#475569" stroke="#94a3b8" stroke-width="2"/>'
-        # Weld fill (flare bevel groove)
-        f'<path d="M {fp_x1:.1f} {tang_y_top:.1f} '
-        f'Q {bar_cx-r-10:.1f} {bar_cy:.1f} {fp_x1:.1f} {tang_y_bot:.1f}" '
-        f'fill="#f59e0b" opacity="0.8" stroke="#fbbf24" stroke-width="1"/>'
-        # wf dimension (width of groove face)
-        f'<line x1="{fp_x1:.1f}" y1="{tang_y_top:.1f}" x2="{fp_x1:.1f}" y2="{tang_y_bot:.1f}" '
-        f'stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3,2"/>'
-        + _dim_v(fp_x1 + 14, tang_y_top, tang_y_bot, f"wf={wf:.0f}mm", "green")
-        # Labels
-        + f'<text x="{(fp_x0+fp_x1)/2:.1f}" y="{bar_cy+4}" fill="#94a3b8" font-size="10" '
-        f'text-anchor="middle">Flat plate</text>'
-        f'<text x="{bar_cx:.1f}" y="{bar_cy+4}" fill="#94a3b8" font-size="10" '
-        f'text-anchor="middle">Round bar</text>'
-        f'<text x="{fp_x1-20:.1f}" y="{bar_cy+4}" fill="#fbbf24" font-size="10" '
-        f'text-anchor="middle">Weld</text>'
-        f'<text x="{W//2}" y="{H-10}" fill="#22c55e" font-size="10" text-anchor="middle">'
-        f'Aw = 0.50 x wf x L</text>'
-    )
-    return _wrap(c, W, H)
-
-
-# ============================================================
-# SVG — DETAILING CHECKS (bar chart)
-# ============================================================
 def svg_detailing(D: float, D_min: float, D_max: float,
                   L: float, L_min: float,
                   t_thinner: float, t_thicker: float) -> str:
-    W, H = 460, 200
-    checks = [
-        ("Min weld size", D_min, D,    ">="),
-        ("Max weld size", D,     D_max, "<="),
-        ("Min eff. length", L_min, L,  ">="),
-    ]
-    bar_x0, bar_w = 180, 240
-    c = (
+    W, H = 420, 240
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+        f'style="font-family:\'Courier New\',monospace;background:#1e293b;border-radius:10px;">'
         f'<text x="{W//2}" y="20" fill="#e2e8f0" font-size="12" font-weight="bold" '
-        f'text-anchor="middle">Detailing Checks  (Cl. 6.2.3)</text>'
+        f'text-anchor="middle">Detailing Checks</text>'
     )
-    for i, (label, limit, actual, op) in enumerate(checks):
-        y  = 42 + i * 52
-        ok = actual >= limit if op == ">=" else actual <= limit
-        fill_ratio = min(actual / max(limit, 0.001), 1.5) if op == ">=" else min(actual / max(limit, 0.001), 1.0)
-        col  = "#22c55e" if ok else "#ef4444"
-        icon = "PASS" if ok else "FAIL"
+
+    checks = [
+        ("Min fillet size", D_min, D,    ">=", "D_min", "mm"),
+        ("Max fillet size", D,     D_max, "<=", "D_max", "mm"),
+        ("Min eff. length", L_min, L,    ">=", "L_min", "mm"),
+    ]
+
+    bar_x0, bar_w = 200, 170
+    for i, (label, limit, actual, op, lim_label, unit) in enumerate(checks):
+        y = 50 + i * 58
+        if op == ">=":
+            ok         = actual >= limit
+            fill_ratio = min(actual / max(limit, 0.001), 1.5)
+        else:
+            ok         = actual <= limit
+            fill_ratio = min(actual / max(limit, 0.001), 1.0)
+
+        col      = "#22c55e" if ok else "#ef4444"
+        icon     = "PASS" if ok else "FAIL"
         bar_fill = min(fill_ratio * bar_w, bar_w * 1.3)
-        ref_x = bar_x0 + bar_w * min(1.0, limit / max(actual, 0.001))
-        c += (
+        ref_x    = bar_x0 + bar_w * min(1.0, limit / max(actual, 0.001))
+
+        svg += (
             f'<text x="10" y="{y+12}" fill="#e2e8f0" font-size="11" font-weight="bold">{label}</text>'
-            f'<text x="10" y="{y+25}" fill="#94a3b8" font-size="9">'
-            f'limit={limit:.1f}mm  actual={actual:.1f}mm  {op}</text>'
-            f'<rect x="{bar_x0}" y="{y}" width="{bar_w}" height="18" fill="#1e293b" rx="3"/>'
-            f'<rect x="{bar_x0}" y="{y}" width="{bar_fill:.0f}" height="18" '
-            f'fill="{col}" opacity="0.7" rx="3"/>'
-            f'<line x1="{ref_x:.0f}" y1="{y-3}" x2="{ref_x:.0f}" y2="{y+21}" '
+            f'<text x="10" y="{y+26}" fill="#94a3b8" font-size="10">'
+            f'{lim_label}={limit:.1f} {unit},  actual={actual:.1f} {unit}</text>'
+            f'<rect x="{bar_x0}" y="{y}" width="{bar_w}" height="20" fill="#1e293b" rx="3"/>'
+            f'<rect x="{bar_x0}" y="{y}" width="{bar_fill:.0f}" height="20" '
+            f'fill="{col}" opacity="0.75" rx="3"/>'
+            f'<line x1="{ref_x:.0f}" y1="{y-3}" x2="{ref_x:.0f}" y2="{y+23}" '
             f'stroke="white" stroke-width="2" stroke-dasharray="3,2"/>'
-            f'<text x="{bar_x0+bar_w+8}" y="{y+13}" fill="{col}" font-size="11" '
+            f'<text x="{bar_x0+bar_w+8}" y="{y+14}" fill="{col}" font-size="11" '
             f'font-weight="bold">{icon}</text>'
         )
-    return _wrap(c, W, H)
+
+    svg += '</svg>'
+    return svg
 
 
 # ============================================================
 # STREAMLIT UI
 # ============================================================
+
 apply_theme()
 render_sidebar_logo()
 render_footer()
@@ -714,9 +329,11 @@ st.caption(
 )
 st.markdown("---")
 
-# ── Weld type (top row, full width) ──────────────────────────────────────────
+# ── Section 1: Weld Type ──────────────────────────────────────────────────────
+
+st.subheader("1. Weld Type")
 weld_type = st.selectbox(
-    "Weld type",
+    "Select weld type",
     [
         "Fillet Weld",
         "Complete Joint Penetration (CJP) Groove",
@@ -725,385 +342,287 @@ weld_type = st.selectbox(
     ],
     key="weld_type",
 )
+st.markdown("---")
 
-# Fillet sub-selector
-joint_config = "T-joint (web-to-flange)"
-if weld_type == "Fillet Weld":
-    joint_config = st.selectbox(
-        "Joint configuration",
-        ["T-joint (web-to-flange)", "Lap Joint", "Corner Joint"],
-        key="joint_cfg",
+# ── Section 2: Material ───────────────────────────────────────────────────────
+
+st.subheader("2. Material")
+mat1, mat2, mat3 = st.columns(3)
+
+with mat1:
+    grade_label = st.selectbox(
+        "Steel grade (G40.21)",
+        [f"G40.21-{g}" for g in STEEL_GRADES],
+        index=2,
+        key="steel_grade",
     )
+    grade_val                          = int(grade_label.split("-")[1])
+    Fy_default, Fu_default, Xu_default = STEEL_GRADES[grade_val]
+
+with mat2:
+    Fy = st.number_input("Fy (MPa)", min_value=200.0, value=float(Fy_default), step=5.0, key="Fy")
+    Fu = st.number_input("Fu (MPa)", min_value=200.0, value=float(Fu_default), step=5.0, key="Fu")
+
+with mat3:
+    Xu = st.number_input(
+        f"Electrode Xu (MPa)  [Table 4 match = {Xu_default}]",
+        min_value=300.0, value=float(Xu_default), step=10.0, key="Xu",
+    )
+    st.caption("Xu = 10 x first two digits of electrode classification (CSA W48)")
 
 st.markdown("---")
 
-# ── Two-column layout: inputs (left) | cross-section diagram (right) ─────────
-inp_col, dia_col = st.columns([3, 3], gap="large")
+# ── Section 3: Geometry ───────────────────────────────────────────────────────
 
-# ── Safe defaults (overwritten by widgets below) ─────────────────────────────
-D:             float = 8.0
-t_thinner:     float = 10.0
-t_thicker:     float = 12.0
-L_lap:         float = 0.0
-segments:      list  = []
-check_base:    bool  = False
-Am_mm2:        float = 0.0
-Am_mm2_groove: float = 0.0
-Aw_mm2:        float = 0.0
-An_mm2:        float = 0.0
-Ag_mm2:        float = 0.0
-has_fillet:    bool  = False
-Aw_fillet_mm2: float = 0.0
-wf_mm:         float = 20.0
-L_fb:          float = 150.0
-Fy:            float = 350.0
-Fu:            float = 450.0
-Xu:            float = 490.0
-is_lap:        bool  = False
+st.subheader("3. Geometry")
 
-with inp_col:
+# Declare variables that may be referenced later so they always exist
+segments:      list[dict] = []
+check_base:    bool       = False
+Am_mm2:        float      = 0.0
+Am_mm2_groove: float      = 0.0
+Aw_mm2:        float      = 0.0
+An_mm2:        float      = 0.0
+Ag_mm2:        float      = 0.0
+has_fillet:    bool       = False
+Aw_fillet_mm2: float      = 0.0
+wf_mm:         float      = 0.0
+L_fb:          float      = 0.0
+D:             float      = 8.0
 
-    # ── Material ──────────────────────────────────────────────────────────────
-    st.markdown("#### Material")
-    mc1, mc2, mc3 = st.columns(3)
-    with mc1:
-        grade_label = st.selectbox(
-            "Steel grade (G40.21)",
-            [f"G40.21-{g}" for g in STEEL_GRADES],
-            index=2, key="steel_grade",
-        )
-        grade_val                          = int(grade_label.split("-")[1])
-        Fy_def, Fu_def, Xu_def             = STEEL_GRADES[grade_val]
-    with mc2:
-        Fy = st.number_input("Fy (MPa)", min_value=200.0, value=float(Fy_def), step=5.0,  key="Fy")
-        Fu = st.number_input("Fu (MPa)", min_value=200.0, value=float(Fu_def), step=5.0,  key="Fu")
-    with mc3:
-        Xu = st.number_input(
-            f"Electrode Xu (MPa)  [match={Xu_def}]",
-            min_value=300.0, value=float(Xu_def), step=10.0, key="Xu",
-        )
-        st.caption("Xu = 10 x first two digits of electrode class (CSA W48)")
-
-    st.markdown("---")
-
-    # ── Plate Geometry (all types) ────────────────────────────────────────────
-    st.markdown("#### Plate Geometry")
-    pg1, pg2 = st.columns(2)
-    with pg1:
-        t_thinner = st.number_input(
-            "t_thinner (mm) — thinner plate", min_value=1.0, value=10.0, step=1.0, key="t_thin"
-        )
-        t_thicker = st.number_input(
-            "t_thicker (mm) — thicker plate", min_value=1.0, value=12.0, step=1.0, key="t_thick"
-        )
-    with pg2:
-        if weld_type == "Fillet Weld":
-            is_lap = joint_config == "Lap Joint"
-            if is_lap:
-                L_lap = st.number_input(
-                    "Lap overlap L_lap (mm)", min_value=10.0, value=80.0, step=5.0, key="L_lap"
-                )
-
-    # ── Weld Geometry ─────────────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("#### Weld Geometry")
-
-    if weld_type == "Fillet Weld":
-        wg1, wg2 = st.columns(2)
-        with wg1:
-            D = st.number_input(
-                "Weld leg size D (mm)", min_value=3.0, value=8.0, step=1.0, key="D"
-            )
-        with wg2:
-            check_base = st.checkbox("Check base metal (Cl. 13.13.2.2)?", key="chk_base")
-            if check_base:
-                Am_mm2 = st.number_input(
-                    "Am — fusion face shear area (mm2)", min_value=0.0, value=1000.0,
-                    step=50.0, key="Am_fillet"
-                )
-
-        # ── Weld Segments (fillet) ────────────────────────────────────────────
-        st.markdown("---")
-
-        # Theta_1 / Theta_2 explanation
-        with st.expander("Understanding theta_1 and theta_2  (Cl. 13.13.2.2)", expanded=True):
-            st.markdown(
-                r"""
-**theta_1** is the angle between the weld axis and the line of action of the applied force for the segment being checked.
-
-**theta_2** is the angle of the weld segment in the group that is **nearest to 90°** (most transverse). It is **automatically identified** — you do not enter it separately.
-
-The multi-orientation factor is:
-
-$$M_w = \frac{0.85 + \theta_1/600}{0.85 + \theta_2/600}$$
-
-- For a **single-segment** group: theta_1 = theta_2, so **Mw = 1.0** always.
-- For a **multi-segment** group: the segment nearest to 90° is identified as theta_2; all others use that as the denominator.
-- **Longitudinal weld** (parallel to load): theta = 0°, orientation factor = 1.00
-- **Transverse weld** (perpendicular to load): theta = 90°, orientation factor = 1.50
-
-The orientation diagram (right panel) highlights which segment is theta_2.
-                """
-            )
-
-        st.markdown("**Weld Segments**")
-        st.caption(
-            "Enter the length L and orientation theta for each weld segment. "
-            "theta = 0° = longitudinal (parallel to load). theta = 90° = transverse."
-        )
-
+if weld_type == "Fillet Weld":
+    g1, g2 = st.columns(2)
+    with g1:
+        D      = st.number_input("Weld leg size D (mm)", min_value=3.0, value=8.0, step=1.0, key="D")
         n_segs = int(st.number_input(
-            "Number of segments", min_value=1, max_value=6, value=1, step=1, key="n_segs"
+            "Number of weld segments", min_value=1, max_value=6, value=1, step=1, key="n_segs"
         ))
 
+        st.markdown("**Weld segments** *(each with length L and orientation theta)*")
+        st.caption(
+            "Note: Weld returns not accounted for in joint capacity "
+            "may be excluded from segment definition (Cl. 13.13.2.2)."
+        )
         seg_cols = st.columns(min(n_segs, 3))
         for i in range(n_segs):
-            ctx = seg_cols[i % 3] if n_segs <= 3 else st.container()
-            with ctx:
-                st.markdown(f"**Seg {i+1}**")
-                L_i = st.number_input(
+            col_ctx = seg_cols[i % 3] if n_segs <= 3 else st.container()
+            with col_ctx:
+                st.markdown(f"**Segment {i+1}**")
+                L_i     = st.number_input(
                     f"L_{i+1} (mm)", min_value=1.0, value=100.0, step=5.0, key=f"L_{i}"
                 )
-                th_i = st.number_input(
-                    f"theta_{i+1} (deg)",
+                theta_i = st.number_input(
+                    f"theta_{i+1} (deg)  [0 = longitudinal, 90 = transverse]",
                     min_value=0.0, max_value=90.0,
                     value=90.0 if i == 0 else 0.0,
                     step=5.0, key=f"theta_{i}",
                 )
-                segments.append({"L": L_i, "theta": th_i})
+                segments.append({"L": L_i, "theta": theta_i})
 
-    elif weld_type in ("Complete Joint Penetration (CJP) Groove",
-                       "Partial Joint Penetration (PJP) Groove"):
-        gg1, gg2 = st.columns(2)
-        with gg1:
-            Am_mm2_groove = st.number_input(
-                "Am — fusion face shear area (mm2)", min_value=0.0, value=2000.0,
-                step=50.0, key="Am_groove"
+    with g2:
+        check_base = st.checkbox("Check base metal (over-matched electrodes)?", key="chk_base")
+        if check_base:
+            Am_mm2 = st.number_input(
+                "Am — fusion face shear area (mm2)", min_value=0.0, value=1000.0, step=50.0, key="Am_fillet"
             )
-            Aw_mm2 = st.number_input(
-                "Aw — effective weld throat area (mm2)", min_value=0.0, value=2000.0,
-                step=50.0, key="Aw_groove"
+
+elif weld_type in ("Complete Joint Penetration (CJP) Groove",
+                   "Partial Joint Penetration (PJP) Groove"):
+    g1, g2 = st.columns(2)
+    with g1:
+        Am_mm2_groove = st.number_input(
+            "Am — shear area of fusion face (mm2)", min_value=0.0, value=2000.0, step=50.0, key="Am_groove"
+        )
+        Aw_mm2 = st.number_input(
+            "Aw — effective weld throat area (mm2)", min_value=0.0, value=2000.0, step=50.0, key="Aw_groove"
+        )
+    with g2:
+        if "Partial" in weld_type:
+            st.markdown("**PJP — Tension check**")
+            An_mm2 = st.number_input(
+                "An — nominal fusion face area (mm2)", min_value=0.0, value=2000.0, step=50.0, key="An"
             )
-        with gg2:
-            if "Partial" in weld_type:
-                An_mm2 = st.number_input(
-                    "An — nominal fusion face area (mm2)", min_value=0.0, value=2000.0,
-                    step=50.0, key="An"
+            Ag_mm2 = st.number_input(
+                "Ag — gross area of tension member (mm2)", min_value=0.0, value=3000.0, step=50.0, key="Ag"
+            )
+            has_fillet = st.checkbox("Combined with fillet weld? (Cl. 13.13.3.3)", key="has_fillet")
+            if has_fillet:
+                Aw_fillet_mm2 = st.number_input(
+                    "Aw_fillet — fillet throat area (mm2)", min_value=0.0, value=500.0, step=50.0, key="Aw_fillet"
                 )
-                Ag_mm2 = st.number_input(
-                    "Ag — gross tension member area (mm2)", min_value=0.0, value=3000.0,
-                    step=50.0, key="Ag"
-                )
-                has_fillet = st.checkbox(
-                    "Combined with fillet weld? (Cl. 13.13.3.3)", key="has_fillet"
-                )
-                if has_fillet:
-                    Aw_fillet_mm2 = st.number_input(
-                        "Aw_fillet — fillet throat area (mm2)", min_value=0.0,
-                        value=500.0, step=50.0, key="Aw_fillet"
-                    )
 
-    elif weld_type == "Flare Bevel Groove":
-        fb1, _ = st.columns(2)
-        with fb1:
-            wf_mm = st.number_input(
-                "wf — groove face width (mm)", min_value=1.0, value=20.0, step=1.0, key="wf"
-            )
-            L_fb = st.number_input(
-                "L — weld length (mm)", min_value=1.0, value=150.0, step=5.0, key="L_fb"
-            )
-
-# ── Right column: diagrams (update with inputs) ───────────────────────────────
-with dia_col:
-    st.markdown("#### Connection Diagram")
-
-    if weld_type == "Fillet Weld":
-        if joint_config == "T-joint (web-to-flange)":
-            _svg_html(svg_tee_joint(D, t_thinner, t_thicker), 300)
-        elif joint_config == "Lap Joint":
-            _svg_html(svg_lap_joint(D, t_thinner, t_thicker, L_lap if L_lap > 0 else 80.0), 280)
-        else:  # Corner
-            _svg_html(svg_corner_joint(D, t_thinner, t_thicker), 280)
-
-        if segments:
-            st.markdown("##### Weld Orientation Plan View")
-            theta2_idx = max(range(len(segments)), key=lambda i: segments[i]["theta"])
-            _svg_html(svg_theta_diagram(segments, theta2_idx), 270)
-
-    elif "CJP" in weld_type:
-        _svg_html(svg_cjp_butt(t_thinner, t_thicker), 300)
-        st.info(
-            "CJP groove welds with matching electrodes restore full base metal strength. "
-            "Am = fusion face area (shear); full Tr from base metal (Cl. 13.13.3.1)."
+elif weld_type == "Flare Bevel Groove":
+    g1, _ = st.columns(2)
+    with g1:
+        wf_mm = st.number_input(
+            "wf — width of flare bevel groove face (mm)", min_value=1.0, value=20.0, step=1.0, key="wf"
+        )
+        L_fb  = st.number_input(
+            "L — weld length (mm)", min_value=1.0, value=150.0, step=5.0, key="L_fb"
         )
 
-    elif "PJP" in weld_type:
-        _svg_html(svg_pjp_butt(t_thinner, t_thicker), 300)
-        st.info(
-            "PJP groove welds do not fully restore strength. "
-            "Effective throat area Aw governs shear. "
-            "Nominal fusion face area An governs tension (Cl. 13.13.3.2)."
-        )
-
-    elif weld_type == "Flare Bevel Groove":
-        _svg_html(svg_flare_bevel_xsec(wf_mm), 280)
-        st.info("Aw = 0.50 x wf x L  (Cl. 13.13.2.3)")
-
-# ── STEP-BY-STEP CALCULATIONS ─────────────────────────────────────────────────
 st.markdown("---")
-st.subheader("Step-by-Step Calculations")
 
-calc_col, summ_col = st.columns([3, 1], gap="large")
+# ── Section 4: Plate detailing geometry ──────────────────────────────────────
 
-with calc_col:
+st.subheader("4. Plate Detailing Geometry")
+det1, det2 = st.columns(2)
+with det1:
+    t_thinner = st.number_input(
+        "t_thinner — thinner part joined (mm)", min_value=1.0, value=10.0, step=1.0, key="t_thin"
+    )
+    t_thicker = st.number_input(
+        "t_thicker — thicker part joined (mm)", min_value=1.0, value=12.0, step=1.0, key="t_thick"
+    )
+with det2:
+    is_lap = st.checkbox("Lap joint?", key="is_lap")
+    L_lap  = 0.0
+    if is_lap:
+        L_lap = st.number_input(
+            "Lap overlap length L (mm)", min_value=0.0, value=80.0, step=5.0, key="L_lap"
+        )
+
+st.markdown("---")
+
+# ── Section 5: Results ────────────────────────────────────────────────────────
+
+st.subheader("5. Results")
+res_col, diag_col = st.columns([3, 2], gap="large")
+
+with res_col:
 
     # ══════════════════════════════════════════════════════════════════════════
     # FILLET WELD
     # ══════════════════════════════════════════════════════════════════════════
-    if weld_type == "Fillet Weld" and segments:
-        throat = effective_throat(D)
+    if weld_type == "Fillet Weld":
 
-        # ── Step 1: Effective Throat & Area ──────────────────────────────────
-        st.markdown("##### Step 1 — Effective Throat & Weld Area  *(Cl. 13.13.2.2)*")
-        st.latex(r"a_w = \frac{D}{\sqrt{2}} \qquad A_{w,i} = a_w \times L_i")
-        lines = [f"  Throat  aw = {D:.1f} / sqrt(2) = {throat:.3f} mm", ""]
+        # ── Step 1: Effective Throat & Weld Area ──────────────────────────────
+        st.markdown("#### Step 1 — Effective Throat & Weld Area  *(Cl. 13.13.2.2)*")
+        st.latex(r"a_w = \frac{D}{\sqrt{2}} \qquad A_w = a_w \times L")
+
+        throat = effective_throat(D)
+        lines  = [f"  Throat  aw = {D:.1f} / sqrt(2) = {throat:.3f} mm", ""]
         for i, s in enumerate(segments):
-            lines.append(f"  Seg {i+1}: Aw = {throat:.3f} x {s['L']:.0f} = {fillet_Aw(D, s['L']):.2f} mm2")
+            Aw_i = fillet_Aw(D, s["L"])
+            lines.append(
+                f"  Seg {i+1}: Aw = {throat:.3f} x {s['L']:.0f} = {Aw_i:.2f} mm2"
+            )
         st.code("\n".join(lines), language="text")
 
-        # ── Step 2: Orientation Factor ────────────────────────────────────────
-        st.markdown("##### Step 2 — Orientation Factor  *(Cl. 13.13.2.2)*")
-        st.latex(r"(1 + 0.50 \sin^{1.5}\!\theta)")
-        st.markdown(
-            "- theta = 0° (longitudinal): factor = **1.00**  \n"
-            "- theta = 90° (transverse): factor = **1.50**"
-        )
-        for i, s in enumerate(segments):
-            of_ = orientation_factor(s["theta"])
-            sin_t = math.sin(math.radians(s["theta"]))
-            st.code(
-                f"  Seg {i+1}:  theta = {s['theta']:.0f} deg\n"
-                f"          sin(theta) = {sin_t:.4f}   sin^1.5 = {sin_t**1.5:.4f}\n"
-                f"          Factor = 1.00 + 0.50 x {sin_t**1.5:.4f} = {of_:.4f}",
-                language="text",
-            )
-
-        # ── Step 3: Multi-Orientation Factor Mw ──────────────────────────────
-        st.markdown("##### Step 3 — Multi-Orientation Factor Mw  *(Cl. 13.13.2.2)*")
+        # ── Step 2: Multi-Orientation Factor Mw ──────────────────────────────
+        st.markdown("#### Step 2 — Multi-Orientation Factor Mw  *(Cl. 13.13.2.2)*")
         st.latex(r"M_w = \frac{0.85 + \theta_1/600}{0.85 + \theta_2/600}")
+        st.markdown(
+            "- **theta_1** = orientation of the weld segment under consideration  \n"
+            "- **theta_2** = orientation of the weld segment in the joint nearest to 90 deg  \n"
+            "- For a **single weld orientation** — Mw = 1.0"
+        )
 
         theta_max = max(s["theta"] for s in segments)
-        theta2_idx = max(range(len(segments)), key=lambda i: segments[i]["theta"])
+        idx_max   = max(range(len(segments)), key=lambda i: segments[i]["theta"])
 
         if len(segments) == 1:
+            st.code(
+                f"  Single weld orientation\n"
+                f"  theta = {segments[0]['theta']:.0f} deg  ->  Mw = 1.0",
+                language="text",
+            )
             mw_values = [1.0]
-            st.code(
-                f"  Single segment: theta_1 = theta_2 = {segments[0]['theta']:.0f} deg\n"
-                f"  => Mw = 1.0 (no multi-orientation reduction)",
-                language="text",
-            )
         else:
-            mw_values = []
             st.code(
-                f"  theta_2 = Seg {theta2_idx+1}  (theta = {theta_max:.0f} deg — nearest to 90 deg)",
+                f"  theta_2 identified as Seg {idx_max+1}  "
+                f"(theta = {theta_max:.0f} deg, nearest to 90 deg)",
                 language="text",
             )
+            mw_values = []
             for i, s in enumerate(segments):
                 Mw_i  = Mw_factor(s["theta"], theta_max)
-                mw_values.append(Mw_i)
                 num   = 0.85 + s["theta"] / 600
                 denom = 0.85 + theta_max  / 600
-                note  = "  [theta_2 segment]" if i == theta2_idx else ""
+                mw_values.append(Mw_i)
                 st.code(
-                    f"  Seg {i+1}:  theta_1 = {s['theta']:.0f} deg   theta_2 = {theta_max:.0f} deg{note}\n"
+                    f"  Seg {i+1}:  theta_1 = {s['theta']:.0f} deg   theta_2 = {theta_max:.0f} deg\n"
                     f"          Mw = (0.85 + {s['theta']:.0f}/600) / (0.85 + {theta_max:.0f}/600)\n"
-                    f"             = {num:.5f} / {denom:.5f} = {Mw_i:.4f}",
+                    f"             = {num:.5f} / {denom:.5f}\n"
+                    f"             = {Mw_i:.4f}",
                     language="text",
                 )
 
-        # ── Step 4: Factored Shear Resistance Vr ─────────────────────────────
-        st.markdown("##### Step 4 — Factored Shear Resistance Vr  *(Cl. 13.13.2.2)*")
-        st.latex(r"V_r = 0.67\,\phi_w\,A_w\,X_u\,(1 + 0.50\sin^{1.5}\!\theta)\,M_w")
+        # ── Step 3: Factored Shear Resistance Vr per segment ──────────────────
+        st.markdown("#### Step 3 — Factored Shear Resistance Vr  *(Cl. 13.13.2.2)*")
+        st.latex(r"V_r = 0.67\,\phi_w\,A_w\,X_u\,(1.00 + 0.50\sin^{1.5}\!\theta)\,M_w")
         st.markdown(
-            f"- phi_w = {PHI_W}  |  Xu = {Xu:.0f} MPa  |  "
-            "Aw = throat x L  |  theta = angle to load  |  Mw = multi-orient. factor"
+            f"- **phi_w** = {PHI_W}  \n"
+            f"- **Xu** = {Xu:.0f} MPa  \n"
+            "- **Aw** = effective throat x length  \n"
+            "- **theta** = angle of weld segment to line of action of applied force  \n"
+            "- **Mw** = multi-orientation reduction factor"
         )
 
         total_Vr_kN = 0.0
+        seg_results: list[dict] = []
+
         for i, s in enumerate(segments):
-            Mw_i = mw_values[i]
-            res  = vr_fillet_N(D, s["L"], s["theta"], Xu, Mw_i)
+            Mw_i      = mw_values[i]
+            res       = vr_fillet_N(D, s["L"], s["theta"], Xu, Mw_i)
+            seg_results.append(res)
             total_Vr_kN += res["Vr_kN"]
+
+            sin_t   = math.sin(math.radians(s["theta"]))
+            sin15_t = sin_t ** 1.5
+            of_val  = 1.00 + 0.50 * sin15_t
+
             st.code(
-                f"  Seg {i+1}: theta={s['theta']:.0f} deg  L={s['L']:.0f}mm  D={D:.0f}mm\n"
+                f"  Seg {i+1}:  theta = {s['theta']:.0f} deg   L = {s['L']:.0f} mm   D = {D:.0f} mm\n"
                 f"\n"
-                f"  Throat: aw  = {D:.1f} / sqrt(2)          = {res['throat_mm']:.3f} mm\n"
-                f"  Area:   Aw  = {res['throat_mm']:.3f} x {s['L']:.0f}    = {res['Aw_mm2']:.2f} mm2\n"
+                f"  Throat:       aw  = {D:.1f} / sqrt(2) = {res['throat_mm']:.3f} mm\n"
+                f"  Weld area:    Aw  = {res['throat_mm']:.3f} x {s['L']:.0f} = {res['Aw_mm2']:.2f} mm2\n"
                 f"\n"
-                f"  Orient. factor = 1.00 + 0.50 x sin^1.5({s['theta']:.0f} deg)\n"
-                f"                 = {res['orient_factor']:.4f}\n"
+                f"  sin(theta)         = sin({s['theta']:.0f} deg) = {sin_t:.4f}\n"
+                f"  sin^1.5(theta)     = ({sin_t:.4f})^1.5 = {sin15_t:.4f}\n"
+                f"  Orient. factor     = 1.00 + 0.50 x {sin15_t:.4f} = {of_val:.4f}\n"
                 f"\n"
-                f"  Mw             = {Mw_i:.4f}\n"
+                f"  Mw                 = {Mw_i:.4f}\n"
                 f"\n"
-                f"  Vr = 0.67 x {PHI_W} x {res['Aw_mm2']:.2f} x {Xu:.0f}"
-                f" x {res['orient_factor']:.4f} x {Mw_i:.4f}\n"
+                f"  Vr = 0.67 x {PHI_W} x {res['Aw_mm2']:.2f} x {Xu:.0f} x {of_val:.4f} x {Mw_i:.4f}\n"
                 f"     = {res['Vr_kN']:.2f} kN",
                 language="text",
             )
 
+        st.markdown("---")
         st.markdown(f"**Total Vr (all segments) = {total_Vr_kN:.2f} kN**")
+        st.markdown("---")
 
-        # ── Step 5: Base metal check ──────────────────────────────────────────
-        gov_Vr = total_Vr_kN
+        # ── Step 4: Base metal check (optional) ──────────────────────────────
         if check_base and Am_mm2 > 0:
-            st.markdown("##### Step 5 — Base Metal Check  *(Cl. 13.13.2.2)*")
-            st.latex(r"V_r^{bm} = 0.67\,\phi_w\,A_m\,F_u")
+            st.markdown("#### Step 4 — Base Metal Check  *(Cl. 13.13.2.2)*")
+            st.latex(r"V_r = 0.67\,\phi_w\,A_m\,F_u")
             Vr_bm = vr_base_metal_N(Am_mm2, Fu) / 1000
             st.code(
-                f"  Vr_bm = 0.67 x {PHI_W} x {Am_mm2:.0f} x {Fu:.0f}\n"
-                f"        = {Vr_bm:.2f} kN",
+                f"  Vr = 0.67 x {PHI_W} x {Am_mm2:.0f} x {Fu:.0f}\n"
+                f"     = {Vr_bm:.2f} kN",
                 language="text",
             )
             gov_Vr = min(total_Vr_kN, Vr_bm)
-            if Vr_bm < total_Vr_kN:
-                st.warning(f"Base metal governs: Vr = {Vr_bm:.2f} kN (weld = {total_Vr_kN:.2f} kN)")
+            st.markdown("---")
+            if gov_Vr == total_Vr_kN:
+                st.success(
+                    f"PASS — Weld metal governs: **Vr = {total_Vr_kN:.2f} kN** "
+                    f"(base metal Vr = {Vr_bm:.2f} kN)"
+                )
             else:
-                st.success(f"Weld governs: Vr = {total_Vr_kN:.2f} kN (base metal = {Vr_bm:.2f} kN)")
+                st.warning(
+                    f"NOTE — Base metal governs: **Vr = {Vr_bm:.2f} kN** "
+                    f"(weld metal Vr = {total_Vr_kN:.2f} kN)"
+                )
+        else:
+            gov_Vr = total_Vr_kN
+            st.success(f"**Governing Vr = {gov_Vr:.2f} kN**")
 
-        # ── Step 6: Detailing ─────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown("##### Step 6 — Detailing Checks  *(Cl. 6.2.3)*")
-        st.latex(
-            r"D \geq D_{min}\ \text{(Table)} \qquad "
-            r"D \leq D_{max} = t_{thin}-2 \qquad "
-            r"L_{eff} \geq \max(38,\,4D)"
+        st.info(
+            "Weld returns not accounted for in the joint capacity "
+            "need not be considered a weld segment for the purpose of Cl. 13.13.2.2."
         )
-        D_min = float(min_fillet_size(t_thicker))
-        D_max = max_fillet_size(t_thinner)
-        L_det = segments[0]["L"]
-        L_min = min_eff_length(D)
-
-        st.code(
-            f"  t_thicker = {t_thicker:.0f} mm  =>  D_min (Table) = {D_min:.0f} mm\n"
-            f"  t_thinner = {t_thinner:.0f} mm  =>  D_max = {t_thinner:.0f} - 2 = {D_max:.0f} mm\n"
-            f"\n"
-            f"  Weld D = {D:.0f} mm:\n"
-            f"    D >= D_min:  {D:.0f} >= {D_min:.0f}  =>  {'PASS' if D >= D_min else 'FAIL'}\n"
-            f"    D <= D_max:  {D:.0f} <= {D_max:.0f}  =>  {'PASS' if D <= D_max else 'FAIL'}\n"
-            f"\n"
-            f"  L_eff_min = max(38, 4 x {D:.0f}) = {L_min:.0f} mm\n"
-            f"  L (Seg 1) = {L_det:.0f} mm  =>  {'PASS' if L_det >= L_min else 'FAIL'}",
-            language="text",
-        )
-
-        if is_lap and L_lap > 0:
-            L_lap_min = lap_min_overlap(t_thinner, t_thicker)
-            st.code(
-                f"  Lap overlap min = max(5 x {min(t_thinner,t_thicker):.0f}, 25) = {L_lap_min:.0f} mm\n"
-                f"  L_lap = {L_lap:.0f} mm  =>  {'PASS' if L_lap >= L_lap_min else 'FAIL'}",
-                language="text",
-            )
-        _svg_html(svg_detailing(D, D_min, D_max, L_det, L_min, t_thinner, t_thicker), 210)
 
     # ══════════════════════════════════════════════════════════════════════════
     # CJP / PJP GROOVE
@@ -1111,41 +630,43 @@ with calc_col:
     elif weld_type in ("Complete Joint Penetration (CJP) Groove",
                        "Partial Joint Penetration (PJP) Groove"):
 
-        # Step 1: Groove weld shear
-        st.markdown("##### Step 1 — Groove Weld Shear Resistance  *(Cl. 13.13.2.1)*")
+        st.markdown("#### Step 1 — Groove Weld Shear Resistance  *(Cl. 13.13.2.1)*")
         st.latex(
-            r"V_r = \min\!\begin{cases}"
-            r"0.67\,\phi_w\,A_m\,F_u & \text{base metal}\\"
-            r"0.67\,\phi_w\,A_w\,X_u & \text{weld metal}"
+            r"V_r = \min\begin{cases}"
+            r"0.67\,\phi_w\,A_m\,F_u & \text{(base metal)}\\"
+            r"0.67\,\phi_w\,A_w\,X_u & \text{(weld metal)}"
             r"\end{cases}"
         )
         res_g = vr_groove_N(Am_mm2_groove, Aw_mm2, Fu, Xu)
         st.code(
-            f"  (a) Base metal:  0.67 x {PHI_W} x {Am_mm2_groove:.0f} x {Fu:.0f}"
+            f"  Case (a) base metal: 0.67 x {PHI_W} x {Am_mm2_groove:.0f} x {Fu:.0f}"
             f" = {res_g['Vr_base_kN']:.2f} kN\n"
-            f"  (b) Weld metal:  0.67 x {PHI_W} x {Aw_mm2:.0f} x {Xu:.0f}"
+            f"  Case (b) weld metal: 0.67 x {PHI_W} x {Aw_mm2:.0f} x {Xu:.0f}"
             f"       = {res_g['Vr_weld_kN']:.2f} kN\n"
-            f"  ─────────────────────────────────────────────\n"
+            f"  ──────────────────────────────────────────────────────\n"
             f"  Governing ({res_g['governs']}): Vr = {res_g['Vr_kN']:.2f} kN",
             language="text",
         )
-        st.success(f"Vr = {res_g['Vr_kN']:.2f} kN — governed by {res_g['governs']}")
+        st.success(
+            f"**Vr = {res_g['Vr_kN']:.2f} kN** — governed by {res_g['governs']}"
+        )
         st.markdown("---")
 
         if weld_type == "Complete Joint Penetration (CJP) Groove":
-            # Step 2: Tension
-            st.markdown("##### Step 2 — Tension Resistance  *(Cl. 13.13.3.1)*")
-            st.latex(r"T_r = \phi\,A_g\,F_y \quad \text{(CJP with matching electrode: full restoration)}")
+            st.markdown("#### Step 2 — Tension Resistance  *(Cl. 13.13.3.1)*")
             st.info(
-                "For a CJP groove weld made with matching electrode (or over-matching), "
-                "the weld restores the full base metal tension capacity. "
-                "Tr is governed by the base metal cross-section."
+                "CJP groove weld with matching electrodes: "
+                "**Tr = base metal capacity** (full strength restoration)."
             )
-        else:
-            # Step 2: Tension (PJP)
-            st.markdown("##### Step 2 — Tension Resistance  *(Cl. 13.13.3.2 / 13.13.3.3)*")
+            st.latex(
+                r"T_r = \phi \cdot A_g \cdot F_y \quad "
+                r"\text{(base metal governs — full restoration)}"
+            )
+
+        else:   # PJP
+            st.markdown("#### Step 2 — Tension Resistance  *(Cl. 13.13.3.2 / 13.13.3.3)*")
             if not has_fillet:
-                st.latex(r"T_r = \min(\phi_w A_n F_u,\ \phi A_g F_y)")
+                st.latex(r"T_r = \phi_w\,A_n\,F_u \leq \phi\,A_g\,F_y")
                 res_t = tr_pjp_N(An_mm2, Fu, Ag_mm2, Fy)
                 st.code(
                     f"  Tr_weld = {PHI_W} x {An_mm2:.0f} x {Fu:.0f} = {res_t['Tr_weld_kN']:.2f} kN\n"
@@ -1153,16 +674,15 @@ with calc_col:
                     f"  Governing ({res_t['governs']}): Tr = {res_t['Tr_kN']:.2f} kN",
                     language="text",
                 )
-                st.success(f"Tr = {res_t['Tr_kN']:.2f} kN")
+                st.success(f"**Tr = {res_t['Tr_kN']:.2f} kN**")
             else:
-                st.markdown("**Combined PJP + fillet (Cl. 13.13.3.3)**")
                 st.latex(
-                    r"T_r = \min\!\left(\phi_w\sqrt{(A_n F_u)^2+(A_w X_u)^2},\ \phi A_g F_y\right)"
+                    r"T_r = \phi_w\sqrt{(A_n F_u)^2 + (A_w X_u)^2} \leq \phi\,A_g\,F_y"
                 )
                 res_tc = tr_pjp_combined_N(An_mm2, Aw_fillet_mm2, Fu, Xu, Ag_mm2, Fy)
                 st.code(
-                    f"  An x Fu      = {An_mm2:.0f} x {Fu:.0f} = {An_mm2*Fu:.0f} N\n"
-                    f"  Aw x Xu      = {Aw_fillet_mm2:.0f} x {Xu:.0f} = {Aw_fillet_mm2*Xu:.0f} N\n"
+                    f"  An x Fu       = {An_mm2:.0f} x {Fu:.0f}  = {An_mm2*Fu:.0f} N\n"
+                    f"  Aw x Xu       = {Aw_fillet_mm2:.0f} x {Xu:.0f}  = {Aw_fillet_mm2*Xu:.0f} N\n"
                     f"\n"
                     f"  Tr_weld = {PHI_W} x sqrt({An_mm2*Fu:.0f}^2 + {Aw_fillet_mm2*Xu:.0f}^2)\n"
                     f"          = {res_tc['Tr_weld_kN']:.2f} kN\n"
@@ -1170,13 +690,13 @@ with calc_col:
                     f"  Governing ({res_tc['governs']}): Tr = {res_tc['Tr_kN']:.2f} kN",
                     language="text",
                 )
-                st.success(f"Tr = {res_tc['Tr_kN']:.2f} kN")
+                st.success(f"**Tr = {res_tc['Tr_kN']:.2f} kN**")
 
     # ══════════════════════════════════════════════════════════════════════════
     # FLARE BEVEL GROOVE
     # ══════════════════════════════════════════════════════════════════════════
     elif weld_type == "Flare Bevel Groove":
-        st.markdown("##### Step 1 — Shear Resistance  *(Cl. 13.13.2.3)*")
+        st.markdown("#### Step 1 — Flare Bevel Shear Resistance  *(Cl. 13.13.2.3)*")
         st.latex(r"V_r = 0.67\,\phi_w\,A_w\,F_u \qquad A_w = 0.50\,w_f\,L")
         res_fb = vr_flare_bevel_N(wf_mm, L_fb, Fu)
         st.code(
@@ -1185,63 +705,80 @@ with calc_col:
             f"     = {res_fb['Vr_kN']:.2f} kN",
             language="text",
         )
-        st.success(f"Vr = {res_fb['Vr_kN']:.2f} kN")
+        st.success(f"**Vr = {res_fb['Vr_kN']:.2f} kN**")
 
-# ── Summary metrics ───────────────────────────────────────────────────────────
-with summ_col:
-    st.markdown("#### Summary")
+    # ══════════════════════════════════════════════════════════════════════════
+    # DETAILING CHECKS (all weld types)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("#### Detailing Checks  *(Cl. 6.2.3)*")
+
+    if weld_type == "Fillet Weld":
+        D_min = min_fillet_size(t_thicker)
+        D_max = max_fillet_size(t_thinner)
+        L_det = segments[0]["L"] if segments else 100.0
+        L_min = min_eff_length(D)
+
+        st.latex(
+            r"D_{min}\ \text{(Table)} \qquad "
+            r"D_{max} = t_{thinner} - 2\ (t \geq 6\,\text{mm}) \qquad "
+            r"L_{eff} \geq \max(38,\,4D)"
+        )
+
+        d_min_ok  = D >= D_min
+        d_max_ok  = D <= D_max
+        l_eff_ok  = L_det >= L_min
+
+        st.code(
+            f"  D_min (Table, t_thicker = {t_thicker:.0f} mm) = {D_min} mm  ->  "
+            f"D = {D:.0f} mm  {'PASS' if d_min_ok else 'FAIL'}\n"
+            f"  D_max (t_thinner = {t_thinner:.0f} mm)        = {D_max:.0f} mm  ->  "
+            f"D = {D:.0f} mm  {'PASS' if d_max_ok else 'FAIL'}\n"
+            f"  L_eff_min = max(38, 4x{D:.0f})              = {L_min:.0f} mm  ->  "
+            f"L = {L_det:.0f} mm  {'PASS' if l_eff_ok else 'FAIL'}",
+            language="text",
+        )
+
+        if is_lap and L_lap > 0:
+            L_lap_min = lap_min_overlap(t_thinner, t_thicker)
+            lap_ok    = L_lap >= L_lap_min
+            st.code(
+                f"  Lap min overlap = max(5x{min(t_thinner,t_thicker):.0f}, 25)"
+                f" = {L_lap_min:.0f} mm  ->  L = {L_lap:.0f} mm  "
+                f"{'PASS' if lap_ok else 'FAIL'}",
+                language="text",
+            )
+    else:
+        st.info(
+            "Detailing checks shown for fillet welds only. "
+            "For groove / flare welds, refer to Cl. 6.2.3 partial penetration groove depth table."
+        )
+
+# ── Diagrams column ───────────────────────────────────────────────────────────
+
+with diag_col:
+    st.markdown("#### Diagrams")
 
     if weld_type == "Fillet Weld" and segments:
-        throat = effective_throat(D)
-        total_Aw = sum(fillet_Aw(D, s["L"]) for s in segments)
-        total_L  = sum(s["L"] for s in segments)
-        theta_max = max(s["theta"] for s in segments)
-        theta2_idx = max(range(len(segments)), key=lambda i: segments[i]["theta"])
-        mw_vals = []
-        for i, s in enumerate(segments):
-            mw_vals.append(1.0 if len(segments) == 1 else Mw_factor(s["theta"], theta_max))
-        total_Vr_kN = sum(vr_fillet_N(D, s["L"], s["theta"], Xu, mw_vals[i])["Vr_kN"]
-                         for i, s in enumerate(segments))
-        D_min2 = float(min_fillet_size(t_thicker))
-        D_max2 = max_fillet_size(t_thinner)
-        detail_ok = D >= D_min2 and D <= D_max2
+        st.markdown("**Fillet Weld Cross-Section**")
+        _svg_html(svg_fillet_cross_section(D, segments[0]["theta"]), height=280)
 
-        st.metric("Throat (mm)", f"{throat:.2f}")
-        st.metric("Total Aw (mm2)", f"{total_Aw:.0f}")
-        st.metric("Total Vr (kN)", f"{total_Vr_kN:.2f}")
-        st.metric("theta_2 (deg)", f"{theta_max:.0f}  [Seg {theta2_idx+1}]")
-        st.metric("Detailing", "PASS" if detail_ok else "FAIL")
+        st.markdown("")
+        st.markdown("**Weld Group**")
+        _svg_html(svg_weld_group(segments), height=320)
 
-        # Optional demand check
-        st.markdown("---")
-        st.markdown("**Demand Check**")
-        Vf = st.number_input(
-            "Vf (kN)", min_value=0.0, value=0.0, step=5.0, key="Vf_demand"
+        st.markdown("")
+        st.markdown("**Detailing Checks**")
+        D_min_d = float(min_fillet_size(t_thicker))
+        D_max_d = max_fillet_size(t_thinner)
+        L_min_d = min_eff_length(D)
+        L_det_d = segments[0]["L"] if segments else 100.0
+        _svg_html(
+            svg_detailing(D, D_min_d, D_max_d, L_det_d, L_min_d, t_thinner, t_thicker),
+            height=260,
         )
-        if Vf > 0:
-            dc = Vf / total_Vr_kN if total_Vr_kN > 0 else float("inf")
-            ok = dc <= 1.0
-            st.metric("Vf / Vr", f"{dc:.3f}", delta=f"{'PASS' if ok else 'FAIL'}")
-            if ok:
-                st.success("PASS")
-            else:
-                st.error("FAIL — Vf exceeds Vr")
-
-    elif "CJP" in weld_type:
-        res_g2 = vr_groove_N(Am_mm2_groove, Aw_mm2, Fu, Xu)
-        st.metric("Vr (kN)", f"{res_g2['Vr_kN']:.2f}")
-        st.metric("Governs", res_g2["governs"])
-        st.success("Full strength restored (CJP)")
-
-    elif "PJP" in weld_type:
-        res_g2 = vr_groove_N(Am_mm2_groove, Aw_mm2, Fu, Xu)
-        st.metric("Vr shear (kN)", f"{res_g2['Vr_kN']:.2f}")
-        st.metric("Governs shear", res_g2["governs"])
-        if not has_fillet:
-            res_t2 = tr_pjp_N(An_mm2, Fu, Ag_mm2, Fy)
-            st.metric("Tr tension (kN)", f"{res_t2['Tr_kN']:.2f}")
-
-    elif weld_type == "Flare Bevel Groove":
-        res_fb2 = vr_flare_bevel_N(wf_mm, L_fb, Fu)
-        st.metric("Aw (mm2)", f"{res_fb2['Aw_mm2']:.0f}")
-        st.metric("Vr (kN)", f"{res_fb2['Vr_kN']:.2f}")
+    else:
+        st.info(
+            "Diagrams shown for fillet weld type. "
+            "Select Fillet Weld to see cross-section and detailing visuals."
+        )

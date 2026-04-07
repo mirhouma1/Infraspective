@@ -319,9 +319,13 @@ def svg_detailing(D: float, D_min: float, D_max: float,
 # ============================================================
 
 apply_theme()
-gate_disclaimer()
 render_sidebar_logo()
 render_footer()
+if not st.session_state.get("accepted_disclaimer", False):
+    st.warning("Please accept the User Access Agreement on the Home page before using the calculator.")
+    if st.button("Go to Home Page"):
+        st.switch_page("app.py")
+    st.stop()
 
 st.title("CSA S16 — Welded Connection Solver")
 st.caption(

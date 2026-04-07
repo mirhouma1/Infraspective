@@ -382,9 +382,13 @@ def Ce_euler(E_MPa: float, I_mm4: float, L_mm: float) -> float:
 # STREAMLIT UI
 # ============================================================
 apply_theme()
-gate_disclaimer()
 render_sidebar_logo()
 render_footer()
+if not st.session_state.get("accepted_disclaimer", False):
+    st.warning("Please accept the User Access Agreement on the Home page before using the calculator.")
+    if st.button("Go to Home Page"):
+        st.switch_page("app.py")
+    st.stop()
 st.title(APP_TITLE)
 st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads in kN / kN·m, geometry in mm")
 

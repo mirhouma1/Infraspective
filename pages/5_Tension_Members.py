@@ -143,7 +143,7 @@ def _parse_multi_table_csv(text: str, area_col: str = "Area_mm2") -> pd.DataFram
 
 @st.cache_data
 def load_double_angle_table() -> pd.DataFrame:
-    path = DATA_DIR / "Double_Angle_Properties.csv"
+    path = DATA_DIR / "Double Angle Properties.csv"
     if not path.exists():
         return pd.DataFrame()
     df = _parse_multi_table_csv(path.read_text())
@@ -169,10 +169,11 @@ def load_double_angle_table() -> pd.DataFrame:
 
 @st.cache_data
 def load_wt_table() -> pd.DataFrame:
-    path = DATA_DIR / "Structural_Tees_WT_Properties.csv"
+    path = DATA_DIR / "Structural Tees WT Properties.csv"
     if not path.exists():
         return pd.DataFrame()
-    lines = [l for l in path.read_text().splitlines() if not l.startswith("#")]
+    lines = [l for l in path.read_text().splitlines()
+             if not l.strip().lstrip('"').startswith("#")]
     df = pd.read_csv(io.StringIO("\n".join(lines)))
     df.columns = [c.strip() for c in df.columns]
     df = df.rename(columns={"Designation": "designation"})
@@ -187,7 +188,7 @@ def load_wt_table() -> pd.DataFrame:
 
 @st.cache_data
 def load_channel_table() -> pd.DataFrame:
-    path = DATA_DIR / "Channel_Sections_Properties.csv"
+    path = DATA_DIR / "Channel Sections Properties.csv"
     if not path.exists():
         return pd.DataFrame()
     frames: List[pd.DataFrame] = []

@@ -419,15 +419,29 @@ def render_page_banner(title: str, subtitle: str = "") -> None:
 def disclaimer_page() -> None:
     """
     Render the full disclaimer gate UI (branding + scrollable agreement + accept button).
-    Calls st.stop() if the user has not yet accepted.
+    Hides the sidebar page-navigation so users cannot bypass the gate.
+    Auto-scrolls the browser to the accept button on load.
     """
+    import re
+    import streamlit.components.v1 as _comp
+
     apply_theme()
+
+    # ── Hide sidebar page-nav links so users cannot bypass the gate ──────────
+    st.markdown(
+        "<style>"
+        "[data-testid='stSidebarNav'] { display: none !important; }"
+        "[data-testid='stSidebarNavItems'] { display: none !important; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
 
     b64 = _logo_b64()
     logo_img = (
         f'<img src="data:image/png;base64,{b64}" alt="Infraspective Solutions"/>'
         if b64 else
-        '<div style="font-size:1.8rem;font-weight:900;color:#0F172A;letter-spacing:0.06em">INFRASPECTIVE<br><span style="color:#2563EB">SOLUTIONS</span></div>'
+        '<div style="font-size:1.8rem;font-weight:900;color:#0F172A;letter-spacing:0.06em">'
+        'INFRASPECTIVE<br><span style="color:#2563EB">SOLUTIONS</span></div>'
     )
 
     st.markdown(
@@ -448,7 +462,6 @@ def disclaimer_page() -> None:
     )
 
     # Agreement box (scrollable HTML)
-    import re
     md = _DISCLAIMER_TEXT()
     html = re.sub(r"^# (.+)$", r"<h1>\1</h1>", md, flags=re.MULTILINE)
     html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
@@ -465,11 +478,50 @@ def disclaimer_page() -> None:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         if st.button("Enter Application", type="primary",
-                     disabled=not accept, use_container_width=True):
+                     disabled=not accept, use_container_width=True,
+                     key="_dis_enter"):
             st.session_state["accepted_disclaimer"] = True
             st.rerun()
     if not accept:
         st.caption("You must read and accept the agreement to continue.")
+
+    # ── Auto-scroll to the accept area on every load ─────────────────────────
+    _comp.html(
+        """
+        <script>
+        (function() {
+            function scrollToAccept() {
+                try {
+                    var doc = window.parent.document;
+                    // Find the Enter Application button or the checkbox
+                    var btn = doc.querySelector('[data-testid="stButton"] button');
+                    if (!btn) {
+                        var allBtns = doc.querySelectorAll('button');
+                        for (var i = 0; i < allBtns.length; i++) {
+                            if (allBtns[i].innerText.includes('Enter')) {
+                                btn = allBtns[i]; break;
+                            }
+                        }
+                    }
+                    if (btn) {
+                        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        // fallback: scroll to bottom of main content
+                        var main = doc.querySelector('[data-testid="stAppViewContainer"]')
+                                || doc.querySelector('.main')
+                                || doc.body;
+                        main.scrollTop = main.scrollHeight;
+                    }
+                } catch(e) {}
+            }
+            // Try immediately then retry to account for render delay
+            setTimeout(scrollToAccept, 300);
+            setTimeout(scrollToAccept, 800);
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def gate_disclaimer() -> None:

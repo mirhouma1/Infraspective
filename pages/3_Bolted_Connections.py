@@ -461,9 +461,7 @@ apply_theme()
 render_sidebar_logo()
 render_footer()
 if not st.session_state.get("accepted_disclaimer", False):
-    st.warning("Please accept the User Access Agreement on the Home page before using the calculator.")
-    if st.button("Go to Home Page"):
-        st.switch_page("app.py")
+    st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
     st.stop()
 st.title("CSA S16 — Bolted Connection Solver")
 st.caption("Chapter 6 Part 1 · Failure modes: Vr, Br, Tr(bolt), Tr(gross), Tr(net), Vr(block shear), Vs · Prying integrated · 4 diagrams")

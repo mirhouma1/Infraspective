@@ -8,23 +8,25 @@ from pathlib import Path
 import streamlit as st
 
 # ── Logo helpers ─────────────────────────────────────────────────────────────
-_LOGO_PATH       = Path(__file__).parent / "static" / "logo.png"
-_BRAND_LOGO_PATH = Path(__file__).parent / "static" / "logo_brand.jpg"
+# Primary logo — new clean brand mark (JPEG, white background)
+_LOGO_PATH       = Path(__file__).parent / "static" / "logo.jpg"
+_BRAND_LOGO_PATH = _LOGO_PATH          # same file; kept for compatibility
 
 
 def _logo_b64() -> str:
-    if _LOGO_PATH.exists():
-        with open(_LOGO_PATH, "rb") as f:
-            return base64.b64encode(f.read()).decode()
+    for p in (
+        Path(__file__).parent / "static" / "logo.jpg",
+        Path(__file__).parent / "static" / "logo_brand.jpg",
+        Path(__file__).parent / "static" / "logo.png",
+    ):
+        if p.exists():
+            with open(p, "rb") as f:
+                return base64.b64encode(f.read()).decode()
     return ""
 
 
 def _brand_b64() -> str:
-    path = _BRAND_LOGO_PATH if _BRAND_LOGO_PATH.exists() else _LOGO_PATH
-    if path.exists():
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    return ""
+    return _logo_b64()
 
 
 # ── Palette ─────────────────────────────────────────────────────────────────
@@ -393,8 +395,23 @@ input:focus {
 
 
 def apply_theme() -> None:
-    """Inject global CSS. Call once per page before any UI."""
+    """Inject global CSS and brand header logo. Call once per page before any UI."""
     st.markdown(_CSS, unsafe_allow_html=True)
+    b64 = _logo_b64()
+    if b64:
+        st.markdown(
+            f"""<div style="position:fixed;top:0;left:0;right:0;height:48px;
+                  z-index:999998;display:flex;align-items:center;
+                  justify-content:center;pointer-events:none;">
+              <div style="background:#FFFFFF;border-radius:5px;padding:2px 12px;
+                          height:38px;display:flex;align-items:center;">
+                <img src="data:image/jpeg;base64,{b64}"
+                     style="height:30px;width:auto;display:block;"
+                     alt="Infraspective Solutions"/>
+              </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
 
 
 def render_sidebar_logo() -> None:
@@ -434,7 +451,7 @@ def render_footer() -> None:
 def render_page_header(title: str, subtitle: str = "") -> None:
     """Full-width branded header card with company logo and page title."""
     b64  = _brand_b64()
-    mime = "jpeg" if _BRAND_LOGO_PATH.exists() else "png"
+    mime = "jpeg"
     img_tag = (
         f'<img src="data:image/{mime};base64,{b64}" '
         f'style="height:54px;width:auto;display:block;" alt="Infraspective Solutions"/>'

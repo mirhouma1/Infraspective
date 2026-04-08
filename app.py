@@ -136,7 +136,7 @@ except Exception:
 # DISCLAIMER GATE
 # ----------------------------
 def require_disclaimer_acceptance() -> None:
-    st.set_page_config(page_title=APP_TITLE, page_icon=":wrench:", layout="wide")
+    st.set_page_config(page_title="Beam Flexure — CSA S16", page_icon=":wrench:", layout="wide")
 
     if st.session_state.get("disclaimer_version") != DISCLAIMER_VERSION:
         st.session_state["accepted_disclaimer"] = False
@@ -275,6 +275,11 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
         return [int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", s)]
 
     order_unique.sort(key=_nat)
+    # Beam Flexure page uses W-sections only — filter out HSS and other types
+    order_unique = [
+        k for k in order_unique
+        if k.upper().startswith("W") and len(k) > 1 and k[1].isdigit()
+    ]
     return merged, order_unique
 
 

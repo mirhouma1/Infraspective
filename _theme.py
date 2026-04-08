@@ -274,6 +274,10 @@ input:focus {
     font-variant-numeric: tabular-nums !important;
 }
 
+/* ═══ SIDEBAR NAV — hidden; replaced by custom st.page_link nav ════ */
+[data-testid="stSidebarNav"],
+[data-testid="stSidebarNavItems"] { display: none !important; }
+
 /* ═══ SCROLLBAR ══════════════════════════════════════════════════════ */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: #F1F5F9; border-radius: 3px; }
@@ -385,13 +389,24 @@ def apply_theme() -> None:
 
 
 def render_sidebar_logo() -> None:
-    """Display logo at the top of the sidebar."""
+    """Display logo and custom page navigation at the top of the sidebar."""
     if _LOGO_PATH.exists():
         st.sidebar.image(str(_LOGO_PATH), use_container_width=True)
         st.sidebar.markdown(
             "<div style='border-bottom:1px solid rgba(147,197,253,0.2);margin:4px 0 10px'></div>",
             unsafe_allow_html=True,
         )
+    # Custom nav — replaces the auto-generated nav (which is hidden via CSS)
+    _NAV = [
+        ("app.py",                           "Beam Flexure"),
+        ("pages/2_Compression.py",           "Compression"),
+        ("pages/3_Bolted_Connections.py",    "Bolted Connections"),
+        ("pages/4_Beam_Column_Members.py",   "Beam-Column Members"),
+        ("pages/5_Tension_Members.py",       "Tension Members"),
+        ("pages/6_Welded_Connections.py",    "Welded Connections"),
+    ]
+    for path, label in _NAV:
+        st.sidebar.page_link(path, label=label)
 
 
 def render_footer() -> None:
@@ -426,15 +441,6 @@ def disclaimer_page() -> None:
     import streamlit.components.v1 as _comp
 
     apply_theme()
-
-    # ── Hide sidebar page-nav links so users cannot bypass the gate ──────────
-    st.markdown(
-        "<style>"
-        "[data-testid='stSidebarNav'] { display: none !important; }"
-        "[data-testid='stSidebarNavItems'] { display: none !important; }"
-        "</style>",
-        unsafe_allow_html=True,
-    )
 
     b64 = _logo_b64()
     logo_img = (

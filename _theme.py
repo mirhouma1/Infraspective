@@ -401,8 +401,8 @@ def apply_theme() -> None:
     if b64:
         st.markdown(
             f"""<div style="position:fixed;top:0;left:0;right:0;height:48px;
-                  z-index:999998;display:flex;align-items:center;
-                  justify-content:center;pointer-events:none;">
+      z-index:999998;display:flex;align-items:center;
+      justify-content:flex-start;padding-left:20px;pointer-events:none;">
               <div style="background:#FFFFFF;border-radius:5px;padding:2px 12px;
                           height:38px;display:flex;align-items:center;">
                 <img src="data:image/jpeg;base64,{b64}"

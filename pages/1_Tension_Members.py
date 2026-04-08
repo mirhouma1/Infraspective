@@ -594,6 +594,19 @@ def panel_plate(mat: Material, Tf: float) -> None:
 
     _show_results(calcs, Tf, "Plate")
 
+    if HAS_SVG:
+        st.subheader("Connection Diagram")
+        svg = generate_connection_svg(
+            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans, leg_width=width, thickness=thick,
+            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
+            section_label=f"Plate {width:.0f}\u00d7{thick:.0f} mm",
+            governing_path_n_holes=gov_path["n_holes"],
+            zig_zag="zig" in gov_path["description"].lower(),
+        )
+        components.html(svg, height=340)
+
 
 def panel_single_angle(mat: Material, Tf: float) -> None:
     st.subheader("Section — Single Angle")
@@ -683,8 +696,11 @@ def panel_single_angle(mat: Material, Tf: float) -> None:
             pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
             edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t,
             hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
+            section_label=chosen,
+            governing_path_n_holes=gov_path["n_holes"],
+            zig_zag="zig" in gov_path["description"].lower(),
         )
-        components.html(svg, height=310)
+        components.html(svg, height=340)
 
 
 def panel_double_angle(mat: Material, Tf: float) -> None:
@@ -774,6 +790,19 @@ def panel_double_angle(mat: Material, Tf: float) -> None:
 
     _show_results(calcs, Tf, "Double Angle")
 
+    if HAS_SVG:
+        st.subheader("Connection Diagram")
+        svg = generate_connection_svg(
+            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t,
+            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
+            section_label=chosen,
+            governing_path_n_holes=gov_path["n_holes"],
+            zig_zag="zig" in gov_path["description"].lower(),
+        )
+        components.html(svg, height=340)
+
 
 def panel_wt(mat: Material, Tf: float) -> None:
     st.subheader("Section — WT (Structural Tee)")
@@ -862,6 +891,19 @@ def panel_wt(mat: Material, Tf: float) -> None:
 
     _show_results(calcs, Tf, "WT Section")
 
+    if HAS_SVG:
+        st.subheader("Connection Diagram")
+        svg = generate_connection_svg(
+            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t_conn,
+            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
+            section_label=f"{chosen} ({conn_el})",
+            governing_path_n_holes=gov_path["n_holes"],
+            zig_zag="zig" in gov_path["description"].lower(),
+        )
+        components.html(svg, height=340)
+
 
 def panel_channel(mat: Material, Tf: float) -> None:
     st.subheader("Section — Channel (C / MC Shape)")
@@ -945,6 +987,19 @@ def panel_channel(mat: Material, Tf: float) -> None:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
     _show_results(calcs, Tf, "Channel (C / MC)")
+
+    if HAS_SVG:
+        st.subheader("Connection Diagram")
+        svg = generate_connection_svg(
+            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t_conn,
+            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
+            section_label=chosen,
+            governing_path_n_holes=gov_path["n_holes"],
+            zig_zag="zig" in gov_path["description"].lower(),
+        )
+        components.html(svg, height=340)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

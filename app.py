@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 import streamlit as st
 
-from _theme import apply_theme, render_sidebar_logo, render_footer, disclaimer_page, render_page_header
+from _theme import apply_theme, render_sidebar_logo, render_footer, disclaimer_page
 
 # ----------------------------
 # CONFIG
@@ -839,7 +839,7 @@ apply_theme()
 render_sidebar_logo()
 render_footer()
 
-render_page_header("Beam Flexure", "Laterally Supported W-Section · Bending Resistance per CSA S16")
+st.title(APP_TITLE)
 
 shapes, designations = load_shapes()
 if not shapes:

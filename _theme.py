@@ -408,10 +408,10 @@ def render_sidebar_logo() -> None:
     # Custom nav — replaces the auto-generated nav (which is hidden via CSS)
     _NAV = [
         ("app.py",                           "Beam Flexure"),
+        ("pages/1_Tension_Members.py",       "Tension Members"),
         ("pages/2_Compression.py",           "Compression"),
-        ("pages/3_Bolted_Connections.py",    "Bolted Connections"),
         ("pages/4_Beam_Column_Members.py",   "Beam-Column Members"),
-        ("pages/5_Tension_Members.py",       "Tension Members"),
+        ("pages/5_Bolted_Connections.py",    "Bolted Connections"),
         ("pages/6_Welded_Connections.py",    "Welded Connections"),
     ]
     for path, label in _NAV:

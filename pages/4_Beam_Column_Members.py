@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer, render_page_header
 
 # ============================================================
 # CONFIG
@@ -387,7 +387,7 @@ render_footer()
 if not st.session_state.get("accepted_disclaimer", False):
     st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
     st.stop()
-st.title(APP_TITLE)
+render_page_header("Beam-Column Members", "Interaction Check per CSA S16 Cl. 13.8 / 13.9")
 st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads in kN / kN·m, geometry in mm")
 
 shapes, order = load_all_shapes()

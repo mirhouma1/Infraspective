@@ -24,10 +24,15 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 └── .streamlit/config.toml
 ```
 
+## Logo Assets
+- `static/logo.png` — sidebar logo (original)
+- `static/logo_brand.jpg` — high-res brand logo (JPEG, white background) used in page headers
+
 ## Branding & Theme (_theme.py)
 - `apply_theme()` — injects global CSS; call once per page before any UI
 - `render_sidebar_logo()` — displays logo at sidebar top via `st.sidebar.image()`
 - `render_footer()` — sticky dark footer bar with "INFRASPECTIVE SOLUTIONS" text
+- `render_page_header(title, subtitle)` — full-width branded card at top of each page: logo (white bg panel) + blue divider + title/subtitle text; replaces `st.title()` on all pages
 - `render_page_banner(title, subtitle)` — dark blue banner below page title
 - `disclaimer_page()` — full styled disclaimer gate (logo + scrollable agreement + checkbox/button)
 - Logo loaded from `static/logo.png`, base64-encoded at runtime for HTML embeds

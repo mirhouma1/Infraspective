@@ -14,12 +14,13 @@ import streamlit.components.v1 as components
 import re as _re
 
 try:
-    from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+    from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer, render_page_header
 except ImportError:
     def apply_theme(): pass
     def render_sidebar_logo(): pass
     def render_footer(): pass
     def gate_disclaimer(): pass
+    def render_page_header(title, subtitle=""): pass
 
 
 def _nat_key(s):
@@ -955,7 +956,7 @@ def main() -> None:
         st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
         st.stop()
 
-    st.title("CSA S16 — Tension Member Design")
+    render_page_header("Tension Members", "Net Section, Block Shear &amp; Gross Yielding per CSA S16")
     st.caption(
         "Gross yielding (Cl. 13.2a-i)  |  Net fracture with shear lag (Cl. 12.3.3)  |  "
         "Block shear (Cl. 13.11)  |  Slenderness (Cl. 10.4.2)  |  All dimensions mm, forces kN"

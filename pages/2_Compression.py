@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer, render_page_header
 
 # ─────────────────────────────────────────────────────────────
 # DATA DIR  (pages/ is one level below root where data/ lives)
@@ -729,7 +729,7 @@ render_footer()
 if not st.session_state.get("accepted_disclaimer", False):
     st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
     st.stop()
-st.title("CSA S16 — Compression Member Design Check")
+render_page_header("Compression Members", "Column Curve &amp; Slenderness Check per CSA S16 Cl. 13.3")
 st.markdown("*Structural steel column capacity per CSA S16:19 — Clauses 11, 13.3.1, 13.3.2, 13.3.3*")
 
 shapes, designations = load_shapes()

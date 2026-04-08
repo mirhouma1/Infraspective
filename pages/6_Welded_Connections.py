@@ -3,7 +3,7 @@ import math
 import streamlit as st
 import streamlit.components.v1 as st_html
 
-from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer, render_page_header
 
 # ============================================================
 # CONFIG
@@ -325,7 +325,7 @@ if not st.session_state.get("accepted_disclaimer", False):
     st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
     st.stop()
 
-st.title("CSA S16 — Welded Connection Solver")
+render_page_header("Welded Connections", "Fillet &amp; Groove Weld Capacity per CSA S16 Cl. 13.13")
 st.caption(
     "Cl. 13.13  |  Fillet, CJP/PJP Groove, Flare Bevel  |  "
     "phi_w = 0.67  |  Detailing per Cl. 6.2.3"

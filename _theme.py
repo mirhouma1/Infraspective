@@ -7,13 +7,22 @@ import base64
 from pathlib import Path
 import streamlit as st
 
-# ── Logo helper ─────────────────────────────────────────────────────────────
-_LOGO_PATH = Path(__file__).parent / "static" / "logo.png"
+# ── Logo helpers ─────────────────────────────────────────────────────────────
+_LOGO_PATH       = Path(__file__).parent / "static" / "logo.png"
+_BRAND_LOGO_PATH = Path(__file__).parent / "static" / "logo_brand.jpg"
 
 
 def _logo_b64() -> str:
     if _LOGO_PATH.exists():
         with open(_LOGO_PATH, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return ""
+
+
+def _brand_b64() -> str:
+    path = _BRAND_LOGO_PATH if _BRAND_LOGO_PATH.exists() else _LOGO_PATH
+    if path.exists():
+        with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     return ""
 
@@ -418,6 +427,45 @@ def render_footer() -> None:
         'Beta Software &mdash; All outputs must be independently verified by a licensed P.Eng. '
         'Not for direct project use without professional review.'
         '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_page_header(title: str, subtitle: str = "") -> None:
+    """Full-width branded header card with company logo and page title."""
+    b64  = _brand_b64()
+    mime = "jpeg" if _BRAND_LOGO_PATH.exists() else "png"
+    img_tag = (
+        f'<img src="data:image/{mime};base64,{b64}" '
+        f'style="height:54px;width:auto;display:block;" alt="Infraspective Solutions"/>'
+        if b64 else
+        '<span style="font-size:1rem;font-weight:900;color:#0F172A;">INFRASPECTIVE</span>'
+    )
+    sub_html = (
+        f'<div style="font-size:0.78rem;color:#475569;margin-top:4px;">{subtitle}</div>'
+        if subtitle else ""
+    )
+    st.markdown(
+        f"""<div style="display:flex;align-items:center;background:#FFFFFF;
+              border-radius:10px;box-shadow:0 2px 16px rgba(15,23,42,0.09);
+              border:1px solid #E2E8F0;overflow:hidden;margin-bottom:1.5rem;">
+          <div style="background:#F1F5F9;padding:14px 22px;
+                      border-right:4px solid #2563EB;
+                      display:flex;align-items:center;flex-shrink:0;">
+            {img_tag}
+          </div>
+          <div style="padding:12px 22px;flex:1;">
+            <div style="font-size:0.60rem;font-weight:700;letter-spacing:0.13em;
+                        color:#2563EB;text-transform:uppercase;margin-bottom:3px;">
+              CSA S16 &nbsp;·&nbsp; Infraspective Solutions
+            </div>
+            <div style="font-size:1.25rem;font-weight:800;color:#0F172A;
+                        line-height:1.1;letter-spacing:-0.02em;">
+              {title}
+            </div>
+            {sub_html}
+          </div>
+        </div>""",
         unsafe_allow_html=True,
     )
 

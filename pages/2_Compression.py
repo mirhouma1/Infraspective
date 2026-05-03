@@ -311,24 +311,25 @@ def check_local_buckling_W(sec: SectionProps, Fy_MPa: float) -> LocalBucklingRes
         else:
             res.flange_note = f"OK — b_el/t = {flange_ratio:.2f} \u2264 {flange_limit:.2f}"
 
-    if sec.h_w is not None:
-        web_ratio = float(sec.h_w)
-    elif sec.h_mm is not None and sec.w_mm is not None and sec.w_mm > 0:
-        web_ratio = sec.h_mm / sec.w_mm
-    else:
-        web_ratio = None
+            
+            if sec.ba_t is not None:
+                flange_ratio = float(sec.ba_t)
+            elif sec.b_mm is not None and sec.t_mm is not None and sec.t_mm > 0:
+                flange_ratio = (sec.b_mm / 2.0) / sec.t_mm
+            else:
+                flange_ratio = None
 
-    web_limit = 670.0 / sqrt_Fy
-    res.web_ratio = web_ratio
-    res.web_limit = web_limit
+            flange_limit = 670.0 / sqrt_Fy
+            res.flange_ratio = flange_ratio
+            res.flange_limit = flange_limit
 
-    if web_ratio is not None:
-        res.web_ok = web_ratio <= web_limit
-        if not res.web_ok:
-            is_class4 = True
-            res.web_note = f"FAIL — h/w = {web_ratio:.2f} > {web_limit:.2f} (Class 4 web)"
-        else:
-            res.web_note = f"OK — h/w = {web_ratio:.2f} \u2264 {web_limit:.2f}"
+            if flange_ratio is not None:
+                res.flange_ok = flange_ratio <= flange_limit
+                if not res.flange_ok:
+                    is_class4 = True
+                    res.flange_note = f"FAIL — b_el/t = {flange_ratio:.2f} > {flange_limit:.2f} (Class 4 flange)"
+                else:
+                    res.flange_note = f"OK — b_el/t = {flange_ratio:.2f} \u2264 {flange_limit:.2f}"
 
     if sec.section_class is not None and sec.section_class >= 4:
         is_class4 = True
@@ -619,10 +620,10 @@ def render_report(
             st.info("Flange ratio not available in CSV.")
 
         st.write("**Web check** (both edges supported, web of I-sections):")
-        st.latex(r"\frac{h}{w} \leq \frac{670}{\sqrt{F_y}}")
-        if lb.web_ratio is not None:
-            icon = "\u2705 PASS" if lb.web_ok else "\u274c FAIL"
-            st.write(f"{icon} | h/w = {_fmt(lb.web_ratio, 2)} | limit = {_fmt(lb.web_limit, 2)}")
+        st.latex(r"\frac{b_{el}}{t} \leq \frac{670}{\sqrt{F_y}}")
+        if lb.flange_ratio is not None:
+            icon = "\u2705 PASS" if lb.flange_ok else "\u274c FAIL"
+            st.write(f"{icon} | b_el/t = {_fmt(lb.flange_ratio, 2)} | limit = {_fmt(lb.flange_limit, 2)}")
         else:
             st.info("Web ratio not available in CSV.")
 

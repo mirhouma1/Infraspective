@@ -1,0 +1,189 @@
+import math
+
+def classify_section_table2(element_type, b_el, t, Fy, h=None, w=None, D=None,
+                              Cf=0.0, phi=0.9, Cy=None):
+    """
+    CSA S16-14 Table 2 - Section classification for elements in flexural compression.
+    Returns dict with limits for Class 1, 2, 3 and the governing class (1, 2, 3, or 4).
+
+    Parameters
+    ----------
+    element_type : str
+        One of:
+          'flange_I_T_major'       - Flange of I/T-section, bending about major axis
+          'plate_projecting'       - Plate projecting from compression element
+          'outstanding_leg_angles' - Outstanding legs of pairs of angles (continuous contact)
+          'stem_T'                 - Stem of T-section
+          'flange_I_minor'         - Flange of I-section, flexure about minor axis
+          'flange_RHS'             - Flange of rectangular hollow section
+          'flange_box'             - Flange of box section
+          'web_I_minor'            - Web of I-section, bending about minor axis
+          'cover_diaphragm_plate'  - Flange cover plates / diaphragm plates between fasteners/welds
+          'web_I_major_axial'      - Web of I-section, combined flexure (major axis) + axial
+          'CHS'                    - Circular hollow section
+
+    b_el : float
+        Effective width of element (mm) - use for all except web_I_major_axial and CHS
+    t : float
+        Thickness of element (mm) - use for all except web_I_major_axial
+    Fy : float
+        Yield strength (MPa)
+    h : float, optional
+        Clear depth of web between flanges (mm) - required for web_I_major_axial
+    w : float, optional
+        Web thickness (mm) - required for web_I_major_axial
+    D : float, optional
+        Outside diameter of CHS (mm) - required for CHS
+    Cf : float, optional
+        Factored axial compressive force (kN) - required for web_I_major_axial
+    phi : float, optional
+        Resistance factor (default 0.9)
+    Cy : float, optional
+        phi * A * Fy (kN) - required for web_I_major_axial
+    """
+
+    sqrt_Fy = math.sqrt(Fy)
+    result = {}
+
+    # ------------------------------------------------------------------
+    # GROUP 1: Element supported along ONE edge, fully in compression
+    # Flanges of I/T (major axis), projecting plates, outstanding angle legs
+    # ------------------------------------------------------------------
+    if element_type in ('flange_I_T_major', 'plate_projecting', 'outstanding_leg_angles'):
+        lim1 = 145.0 / sqrt_Fy
+        lim2 = 170.0 / sqrt_Fy
+        lim3 = 200.0 / sqrt_Fy
+        ratio = b_el / t
+        result['ratio'] = ratio
+        result['limit_class1'] = lim1
+        result['limit_class2'] = lim2
+        result['limit_class3'] = lim3
+        result['element_type'] = element_type
+        result['class'] = _classify_ratio(ratio, lim1, lim2, lim3)
+        return result
+
+    # ------------------------------------------------------------------
+    # GROUP 2: Element supported along ONE edge, part in traction
+    # Stems of T-sections, Flange of I under minor axis flexure
+    # ------------------------------------------------------------------
+    if element_type in ('stem_T', 'flange_I_minor'):
+        lim1 = 145.0 / sqrt_Fy
+        lim2 = 170.0 / sqrt_Fy
+        lim3 = 340.0 / sqrt_Fy
+        ratio = b_el / t
+        result['ratio'] = ratio
+        result['limit_class1'] = lim1
+        result['limit_class2'] = lim2
+        result['limit_class3'] = lim3
+        result['element_type'] = element_type
+        result['class'] = _classify_ratio(ratio, lim1, lim2, lim3)
+        return result
+
+    # ------------------------------------------------------------------
+    # GROUP 3: Element supported along TWO edges, mainly compressive
+    # Flanges of rectangular hollow sections (RHS)
+    # ------------------------------------------------------------------
+    if element_type == 'flange_RHS':
+        lim1 = 420.0 / sqrt_Fy
+        lim2 = 525.0 / sqrt_Fy
+        lim3 = 670.0 / sqrt_Fy
+        ratio = b_el / t
+        result['ratio'] = ratio
+        result['limit_class1'] = lim1
+        result['limit_class2'] = lim2
+        result['limit_class3'] = lim3
+        result['element_type'] = element_type
+        result['class'] = _classify_ratio(ratio, lim1, lim2, lim3)
+        return result
+
+    # ------------------------------------------------------------------
+    # GROUP 4: Element supported along TWO edges, mainly compressive
+    # Flanges of box sections, web of I under minor axis bending,
+    # flange cover plates and diaphragm plates between fasteners/welds
+    # ------------------------------------------------------------------
+    if element_type in ('flange_box', 'web_I_minor', 'cover_diaphragm_plate'):
+        lim1 = 525.0 / sqrt_Fy
+        lim2 = 525.0 / sqrt_Fy
+        lim3 = 670.0 / sqrt_Fy
+        ratio = b_el / t
+        result['ratio'] = ratio
+        result['limit_class1'] = lim1
+        result['limit_class2'] = lim2
+        result['limit_class3'] = lim3
+        result['element_type'] = element_type
+        result['class'] = _classify_ratio(ratio, lim1, lim2, lim3)
+        return result
+
+    # ------------------------------------------------------------------
+    # GROUP 5: Web of I-section under combined flexure (major axis) + axial
+    # Uses Cf / (phi * Cy) interaction factor
+    # ------------------------------------------------------------------
+    if element_type == 'web_I_major_axial':
+        if h is None or w is None:
+            raise ValueError("h and w (web depth and thickness) are required for web_I_major_axial")
+        if Cy is None or Cy == 0:
+            raise ValueError("Cy = phi*A*Fy (kN) is required and must be nonzero for web_I_major_axial")
+
+        ratio_hw = h / w
+        cf_ratio = Cf / (phi * Cy)  # Cf/(phi*Cy) dimensionless
+
+        lim1 = (1100.0 / sqrt_Fy) * (1.0 - 0.39 * cf_ratio)
+        lim2 = (1700.0 / sqrt_Fy) * (1.0 - 0.61 * cf_ratio)
+        lim3 = (1900.0 / sqrt_Fy) * (1.0 - 0.65 * cf_ratio)
+
+        result['ratio'] = ratio_hw
+        result['cf_ratio'] = cf_ratio
+        result['limit_class1'] = lim1
+        result['limit_class2'] = lim2
+        result['limit_class3'] = lim3
+        result['element_type'] = element_type
+        result['class'] = _classify_ratio(ratio_hw, lim1, lim2, lim3)
+        return result
+
+    # ------------------------------------------------------------------
+    # GROUP 6: Circular hollow sections (CHS)
+    # ------------------------------------------------------------------
+    if element_type == 'CHS':
+        if D is None:
+            raise ValueError("D (outside diameter) is required for CHS")
+        ratio = D / t
+        lim1 = 13000.0 / Fy
+        lim2 = 18000.0 / Fy
+        lim3 = 66000.0 / Fy
+        result['ratio'] = ratio
+        result['limit_class1'] = lim1
+        result['limit_class2'] = lim2
+        result['limit_class3'] = lim3
+        result['element_type'] = element_type
+        result['class'] = _classify_ratio(ratio, lim1, lim2, lim3)
+        return result
+
+    raise ValueError(f"Unknown element_type: '{element_type}'")
+
+
+def _classify_ratio(ratio, lim1, lim2, lim3):
+    """Return class integer (1, 2, 3, or 4) given actual ratio and limits."""
+    if ratio <= lim1:
+        return 1
+    elif ratio <= lim2:
+        return 2
+    elif ratio <= lim3:
+        return 3
+    else:
+        return 4
+
+
+def table2_summary(element_type, ratio, lim1, lim2, lim3, cls):
+    """Print a formatted summary of Table 2 classification result."""
+    print("=" * 55)
+    print("CSA S16-14  Table 2 - Flexural Compression Classification")
+    print("=" * 55)
+    print(f"  Element type  : {element_type}")
+    print(f"  Actual ratio  : {ratio:.2f}")
+    print(f"  Class 1 limit : {lim1:.2f}")
+    print(f"  Class 2 limit : {lim2:.2f}")
+    print(f"  Class 3 limit : {lim3:.2f}")
+    print(f"  => Section CLASS: {cls}")
+    if cls == 4:
+        print("  *** Class 4 - Slender section. Further checks required.")
+    print("=" * 55)

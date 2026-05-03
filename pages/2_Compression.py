@@ -368,6 +368,98 @@ def check_local_buckling_HSS(
     return sec.A_mm2, "HSS (unknown kind)", None, None
 
 # ─────────────────────────────────────────────────────────────
+# CSA S16-14 TABLE 2 — FLEXURAL COMPRESSION CLASSIFICATION
+# ─────────────────────────────────────────────────────────────
+
+def _classify_ratio_t2(ratio: float, lim1: float, lim2: float, lim3: float) -> int:
+    if ratio <= lim1:
+        return 1
+    elif ratio <= lim2:
+        return 2
+    elif ratio <= lim3:
+        return 3
+    else:
+        return 4
+
+
+def classify_section_table2(element_type, b_el, t, Fy, h=None, w=None, D=None,
+                            Cf=0.0, phi=0.9, Cy=None):
+    """CSA S16-14 Table 2 — section classification for elements in flexural compression."""
+    sqrt_Fy = math.sqrt(float(Fy))
+    result: Dict[str, Any] = {}
+
+    if element_type in ('flange_I_T_major', 'plate_projecting', 'outstanding_leg_angles'):
+        lim1 = 145.0 / sqrt_Fy
+        lim2 = 170.0 / sqrt_Fy
+        lim3 = 200.0 / sqrt_Fy
+        ratio = b_el / t
+        result.update(ratio=ratio, limit_class1=lim1, limit_class2=lim2, limit_class3=lim3,
+                      element_type=element_type)
+        result['class'] = _classify_ratio_t2(ratio, lim1, lim2, lim3)
+        return result
+
+    if element_type in ('stem_T', 'flange_I_minor'):
+        lim1 = 145.0 / sqrt_Fy
+        lim2 = 170.0 / sqrt_Fy
+        lim3 = 340.0 / sqrt_Fy
+        ratio = b_el / t
+        result.update(ratio=ratio, limit_class1=lim1, limit_class2=lim2, limit_class3=lim3,
+                      element_type=element_type)
+        result['class'] = _classify_ratio_t2(ratio, lim1, lim2, lim3)
+        return result
+
+    if element_type == 'flange_RHS':
+        lim1 = 420.0 / sqrt_Fy
+        lim2 = 525.0 / sqrt_Fy
+        lim3 = 670.0 / sqrt_Fy
+        ratio = b_el / t
+        result.update(ratio=ratio, limit_class1=lim1, limit_class2=lim2, limit_class3=lim3,
+                      element_type=element_type)
+        result['class'] = _classify_ratio_t2(ratio, lim1, lim2, lim3)
+        return result
+
+    if element_type in ('flange_box', 'web_I_minor', 'cover_diaphragm_plate'):
+        lim1 = 525.0 / sqrt_Fy
+        lim2 = 525.0 / sqrt_Fy
+        lim3 = 670.0 / sqrt_Fy
+        ratio = b_el / t
+        result.update(ratio=ratio, limit_class1=lim1, limit_class2=lim2, limit_class3=lim3,
+                      element_type=element_type)
+        result['class'] = _classify_ratio_t2(ratio, lim1, lim2, lim3)
+        return result
+
+    if element_type == 'web_I_major_axial':
+        if h is None or w is None:
+            raise ValueError("h and w (web depth and thickness) required for web_I_major_axial")
+        if Cy is None or Cy == 0:
+            raise ValueError("Cy = phi*A*Fy (kN) required and must be nonzero for web_I_major_axial")
+        ratio_hw = h / w
+        cf_ratio = Cf / (phi * Cy)
+        lim1 = (1100.0 / sqrt_Fy) * (1.0 - 0.39 * cf_ratio)
+        lim2 = (1700.0 / sqrt_Fy) * (1.0 - 0.61 * cf_ratio)
+        lim3 = (1900.0 / sqrt_Fy) * (1.0 - 0.65 * cf_ratio)
+        result.update(ratio=ratio_hw, cf_ratio=cf_ratio,
+                      limit_class1=lim1, limit_class2=lim2, limit_class3=lim3,
+                      element_type=element_type)
+        result['class'] = _classify_ratio_t2(ratio_hw, lim1, lim2, lim3)
+        return result
+
+    if element_type == 'CHS':
+        if D is None:
+            raise ValueError("D (outside diameter) required for CHS")
+        ratio = D / t
+        lim1 = 13000.0 / Fy
+        lim2 = 18000.0 / Fy
+        lim3 = 66000.0 / Fy
+        result.update(ratio=ratio, limit_class1=lim1, limit_class2=lim2, limit_class3=lim3,
+                      element_type=element_type)
+        result['class'] = _classify_ratio_t2(ratio, lim1, lim2, lim3)
+        return result
+
+    raise ValueError(f"Unknown element_type: '{element_type}'")
+
+
+# ─────────────────────────────────────────────────────────────
 # EULER AND CSA COLUMN CURVE
 # ─────────────────────────────────────────────────────────────
 
@@ -648,6 +740,73 @@ def render_report(
             st.write(R.local_label)
     else:
         st.write("Local buckling check not applicable for this section type.")
+
+    # Step 1B — CSA S16 Table 2 (Flexural Compression Classification)
+    st.subheader("Step 1B \u2014 Section Classification (Table 2, CSA S16)")
+    st.caption("Class limits for elements in flexural compression per CSA S16-14 Table 2.")
+    try:
+        t2_rows: List[Tuple[str, Dict[str, Any]]] = []
+
+        if sec.family in ("W", "WWF"):
+            if sec.b_mm and sec.t_mm:
+                b_el_fl = sec.b_mm / 2.0
+                t2_rows.append(("Flange (I-section, major axis)",
+                                classify_section_table2('flange_I_T_major',
+                                                        b_el=b_el_fl, t=sec.t_mm, Fy=Fy)))
+            if sec.h_mm and sec.w_mm:
+                Cy_kN = phi_c * sec.A_mm2 * Fy / 1000.0
+                t2_rows.append(("Web (I-section, major axis + axial)",
+                                classify_section_table2('web_I_major_axial',
+                                                        b_el=0, t=0, Fy=Fy,
+                                                        h=sec.h_mm, w=sec.w_mm,
+                                                        Cf=0.0, phi=phi_c, Cy=Cy_kN)))
+        elif sec.family == "HSS":
+            if sec.hss_kind == "CHS":
+                if sec.d_mm and sec.t_mm:
+                    t2_rows.append(("CHS (D/t)",
+                                    classify_section_table2('CHS', b_el=0, t=sec.t_mm,
+                                                            Fy=Fy, D=sec.d_mm)))
+            else:
+                if sec.b_mm and sec.t_mm:
+                    bflat = sec.b_mm - 3.0 * sec.t_mm
+                    t2_rows.append(("RHS/SHS flange (b_flat/t)",
+                                    classify_section_table2('flange_RHS',
+                                                            b_el=bflat, t=sec.t_mm, Fy=Fy)))
+                if sec.d_mm and sec.t_mm:
+                    hflat = sec.d_mm - 3.0 * sec.t_mm
+                    t2_rows.append(("RHS/SHS web (h_flat/t)",
+                                    classify_section_table2('flange_RHS',
+                                                            b_el=hflat, t=sec.t_mm, Fy=Fy)))
+        elif sec.family in ("ANGLE", "DOUBLE_ANGLE"):
+            if sec.b_mm and sec.t_mm:
+                t2_rows.append(("Outstanding leg (angle)",
+                                classify_section_table2('outstanding_leg_angles',
+                                                        b_el=sec.b_mm, t=sec.t_mm, Fy=Fy)))
+
+        if not t2_rows:
+            st.info("Table 2 classification not available — section dimensions missing in CSV.")
+        else:
+            for label, r in t2_rows:
+                cls = r['class']
+                icon = {1: "\U0001F7E2", 2: "\U0001F7E2", 3: "\U0001F7E1", 4: "\U0001F534"}.get(cls, "")
+                st.write(
+                    f"**{label}** — element type `{r['element_type']}`  \n"
+                    f"ratio = `{r['ratio']:.2f}` | "
+                    f"Class 1 \u2264 `{r['limit_class1']:.2f}` | "
+                    f"Class 2 \u2264 `{r['limit_class2']:.2f}` | "
+                    f"Class 3 \u2264 `{r['limit_class3']:.2f}`  \n"
+                    f"{icon} **Class {cls}**"
+                )
+            gov_class = max(r['class'] for _, r in t2_rows)
+            if gov_class == 4:
+                st.warning(f"Governing Table 2 class: **{gov_class}** \u2014 Class 4 element. "
+                           f"Further checks required (reduce effective area / use Cl 13.5).")
+            elif gov_class == 3:
+                st.info(f"Governing Table 2 class: **{gov_class}** \u2014 elastic moment capacity only.")
+            else:
+                st.success(f"Governing Table 2 class: **{gov_class}** \u2014 plastic/compact section.")
+    except Exception as e:
+        st.info(f"Table 2 classification skipped: {e}")
 
     # Step 2
     st.subheader("Step 2 \u2014 Global Slenderness Ratio")

@@ -743,70 +743,117 @@ def render_report(
 
     # Step 1B — CSA S16 Table 2 (Flexural Compression Classification)
     st.subheader("Step 1B \u2014 Section Classification (Table 2, CSA S16)")
-    st.caption("Class limits for elements in flexural compression per CSA S16-14 Table 2.")
-    try:
-        t2_rows: List[Tuple[str, Dict[str, Any]]] = []
 
+    # Build the row set (label, ratio_symbol, latex template per class, result dict)
+    t2_entries: List[Tuple[str, str, List[str], Dict[str, Any]]] = []
+    try:
         if sec.family in ("W", "WWF"):
             if sec.b_mm and sec.t_mm:
-                b_el_fl = sec.b_mm / 2.0
-                t2_rows.append(("Flange (I-section, major axis)",
-                                classify_section_table2('flange_I_T_major',
-                                                        b_el=b_el_fl, t=sec.t_mm, Fy=Fy)))
+                r = classify_section_table2('flange_I_T_major',
+                                            b_el=sec.b_mm / 2.0, t=sec.t_mm, Fy=Fy)
+                t2_entries.append((
+                    "Flange check (one edge supported, flanges of I-sections under bending about major axis)",
+                    "b_{el}/t",
+                    [r"\frac{b_{el}}{t} \leq \frac{145}{\sqrt{F_y}}",
+                     r"\frac{b_{el}}{t} \leq \frac{170}{\sqrt{F_y}}",
+                     r"\frac{b_{el}}{t} \leq \frac{200}{\sqrt{F_y}}"],
+                    r))
             if sec.h_mm and sec.w_mm:
                 Cy_kN = phi_c * sec.A_mm2 * Fy / 1000.0
-                t2_rows.append(("Web (I-section, major axis + axial)",
-                                classify_section_table2('web_I_major_axial',
-                                                        b_el=0, t=0, Fy=Fy,
-                                                        h=sec.h_mm, w=sec.w_mm,
-                                                        Cf=0.0, phi=phi_c, Cy=Cy_kN)))
+                r = classify_section_table2('web_I_major_axial',
+                                            b_el=0, t=0, Fy=Fy,
+                                            h=sec.h_mm, w=sec.w_mm,
+                                            Cf=0.0, phi=phi_c, Cy=Cy_kN)
+                t2_entries.append((
+                    "Web check (two edges supported, web of I-section under combined major-axis flexure + axial)",
+                    "h/w",
+                    [r"\frac{h}{w} \leq \frac{1100}{\sqrt{F_y}}\left(1 - 0.39\,\frac{C_f}{\phi C_y}\right)",
+                     r"\frac{h}{w} \leq \frac{1700}{\sqrt{F_y}}\left(1 - 0.61\,\frac{C_f}{\phi C_y}\right)",
+                     r"\frac{h}{w} \leq \frac{1900}{\sqrt{F_y}}\left(1 - 0.65\,\frac{C_f}{\phi C_y}\right)"],
+                    r))
+
         elif sec.family == "HSS":
             if sec.hss_kind == "CHS":
                 if sec.d_mm and sec.t_mm:
-                    t2_rows.append(("CHS (D/t)",
-                                    classify_section_table2('CHS', b_el=0, t=sec.t_mm,
-                                                            Fy=Fy, D=sec.d_mm)))
+                    r = classify_section_table2('CHS', b_el=0, t=sec.t_mm,
+                                                Fy=Fy, D=sec.d_mm)
+                    t2_entries.append((
+                        "CHS check (circular hollow section)",
+                        "D/t",
+                        [r"\frac{D}{t} \leq \frac{13\,000}{F_y}",
+                         r"\frac{D}{t} \leq \frac{18\,000}{F_y}",
+                         r"\frac{D}{t} \leq \frac{66\,000}{F_y}"],
+                        r))
             else:
                 if sec.b_mm and sec.t_mm:
                     bflat = sec.b_mm - 3.0 * sec.t_mm
-                    t2_rows.append(("RHS/SHS flange (b_flat/t)",
-                                    classify_section_table2('flange_RHS',
-                                                            b_el=bflat, t=sec.t_mm, Fy=Fy)))
+                    r = classify_section_table2('flange_RHS',
+                                                b_el=bflat, t=sec.t_mm, Fy=Fy)
+                    t2_entries.append((
+                        "Flange check (two edges supported, flanges of rectangular hollow sections)",
+                        "b_{el}/t",
+                        [r"\frac{b_{el}}{t} \leq \frac{420}{\sqrt{F_y}}",
+                         r"\frac{b_{el}}{t} \leq \frac{525}{\sqrt{F_y}}",
+                         r"\frac{b_{el}}{t} \leq \frac{670}{\sqrt{F_y}}"],
+                        r))
                 if sec.d_mm and sec.t_mm:
                     hflat = sec.d_mm - 3.0 * sec.t_mm
-                    t2_rows.append(("RHS/SHS web (h_flat/t)",
-                                    classify_section_table2('flange_RHS',
-                                                            b_el=hflat, t=sec.t_mm, Fy=Fy)))
+                    r = classify_section_table2('flange_RHS',
+                                                b_el=hflat, t=sec.t_mm, Fy=Fy)
+                    t2_entries.append((
+                        "Web check (two edges supported, webs of rectangular hollow sections)",
+                        "h_{el}/t",
+                        [r"\frac{h_{el}}{t} \leq \frac{420}{\sqrt{F_y}}",
+                         r"\frac{h_{el}}{t} \leq \frac{525}{\sqrt{F_y}}",
+                         r"\frac{h_{el}}{t} \leq \frac{670}{\sqrt{F_y}}"],
+                        r))
+
         elif sec.family in ("ANGLE", "DOUBLE_ANGLE"):
             if sec.b_mm and sec.t_mm:
-                t2_rows.append(("Outstanding leg (angle)",
-                                classify_section_table2('outstanding_leg_angles',
-                                                        b_el=sec.b_mm, t=sec.t_mm, Fy=Fy)))
-
-        if not t2_rows:
-            st.info("Table 2 classification not available — section dimensions missing in CSV.")
-        else:
-            for label, r in t2_rows:
-                cls = r['class']
-                icon = {1: "\U0001F7E2", 2: "\U0001F7E2", 3: "\U0001F7E1", 4: "\U0001F534"}.get(cls, "")
-                st.write(
-                    f"**{label}** — element type `{r['element_type']}`  \n"
-                    f"ratio = `{r['ratio']:.2f}` | "
-                    f"Class 1 \u2264 `{r['limit_class1']:.2f}` | "
-                    f"Class 2 \u2264 `{r['limit_class2']:.2f}` | "
-                    f"Class 3 \u2264 `{r['limit_class3']:.2f}`  \n"
-                    f"{icon} **Class {cls}**"
-                )
-            gov_class = max(r['class'] for _, r in t2_rows)
-            if gov_class == 4:
-                st.warning(f"Governing Table 2 class: **{gov_class}** \u2014 Class 4 element. "
-                           f"Further checks required (reduce effective area / use Cl 13.5).")
-            elif gov_class == 3:
-                st.info(f"Governing Table 2 class: **{gov_class}** \u2014 elastic moment capacity only.")
-            else:
-                st.success(f"Governing Table 2 class: **{gov_class}** \u2014 plastic/compact section.")
+                r = classify_section_table2('outstanding_leg_angles',
+                                            b_el=sec.b_mm, t=sec.t_mm, Fy=Fy)
+                t2_entries.append((
+                    "Leg check (one edge supported, outstanding legs of pairs of angles in continuous contact)",
+                    "b_{el}/t",
+                    [r"\frac{b_{el}}{t} \leq \frac{145}{\sqrt{F_y}}",
+                     r"\frac{b_{el}}{t} \leq \frac{170}{\sqrt{F_y}}",
+                     r"\frac{b_{el}}{t} \leq \frac{200}{\sqrt{F_y}}"],
+                    r))
     except Exception as e:
         st.info(f"Table 2 classification skipped: {e}")
+        t2_entries = []
+
+    if not t2_entries:
+        st.write("Table 2 classification not applicable for this section type "
+                 "(or required dimensions missing).")
+    else:
+        for label, sym, latex_lines, r in t2_entries:
+            st.write(f"**{label}:**")
+            st.write("Class 1 limit:")
+            st.latex(latex_lines[0])
+            st.write("Class 2 limit:")
+            st.latex(latex_lines[1])
+            st.write("Class 3 limit:")
+            st.latex(latex_lines[2])
+            cls = r['class']
+            icon = "\u2705 PASS" if cls <= 3 else "\u274c FAIL"
+            st.write(
+                f"{icon} | {sym} = {_fmt(r['ratio'], 2)} | "
+                f"Class 1 limit = {_fmt(r['limit_class1'], 2)} | "
+                f"Class 2 limit = {_fmt(r['limit_class2'], 2)} | "
+                f"Class 3 limit = {_fmt(r['limit_class3'], 2)} | "
+                f"\u2192 **Class {cls}**"
+            )
+            st.write("")
+
+        gov_class = max(r['class'] for _, _, _, r in t2_entries)
+        if gov_class == 4:
+            st.warning(f"Governing Table 2 class: Class {gov_class} \u2014 slender element. "
+                       f"Further checks required (reduce effective area / use Cl 13.5).")
+        elif gov_class == 3:
+            st.info(f"Governing Table 2 class: Class {gov_class} \u2014 elastic moment capacity only.")
+        else:
+            st.success(f"Governing Table 2 class: Class {gov_class} \u2014 plastic/compact section.")
 
     # Step 2
     st.subheader("Step 2 \u2014 Global Slenderness Ratio")

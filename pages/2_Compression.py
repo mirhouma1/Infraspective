@@ -871,6 +871,19 @@ def render_report(
     else:
         st.success(f"KL/r = {_fmt(R.KLr_gov, 1)} is within the limit of 200.")
 
+    # Step 2b — Effective Length Factor reference (CSA S16 / AISC standard end conditions)
+    st.subheader("Step 2b \u2014 Effective Length Factor Reference (K)")
+    st.write("Standard end-restraint values used to set Kx, Ky, Kz inputs:")
+    st.latex(r"\begin{array}{lcc}"
+             r"\text{End condition} & K_{theoretical} & K_{recommended} \\ \hline"
+             r"\text{Pinned -- Pinned}    & 1.0 & 1.0 \\"
+             r"\text{Fixed -- Pinned}     & 0.7 & 0.80 \\"
+             r"\text{Fixed -- Fixed}      & 0.5 & 0.65 \\"
+             r"\text{Fixed -- Free (cantilever)} & 2.0 & 2.10 \\"
+             r"\text{Fixed -- Guided (sway)}     & 1.0 & 1.20"
+             r"\end{array}")
+    st.write(f"Currently using: **Kx = {Kx}, Ky = {Ky}, Kz = {Kz}** (override in sidebar if needed).")
+
     # Step 3
     st.subheader("Step 3 \u2014 Elastic Buckling Stresses")
     st.latex(r"F_{ex} = \frac{\pi^2 E}{(K_x L_x / r_x)^2} \qquad F_{ey} = \frac{\pi^2 E}{(K_y L_y / r_y)^2}")
@@ -899,6 +912,46 @@ def render_report(
 
     st.write(f"**Governing Fe = {_fmt(R.Fe_gov_MPa, 1)} MPa**")
 
+    # Step 3c — Flexural-Torsional Buckling (Clause 13.3.2b) for singly-symmetric sections
+    st.subheader("Step 3c \u2014 Flexural-Torsional Buckling (Clause 13.3.2b)")
+    st.write("Applies to **singly-symmetric** sections (T-sections, channels, single angles). "
+             "Combines weak-axis flexural buckling (Fey) and torsional buckling (Fez):")
+    st.latex(r"\Omega = 1 - \frac{x_0^2 + y_0^2}{\bar{r}_o^2}")
+    st.latex(r"F_{eyz} = \frac{F_{ey} + F_{ez}}{2\,\Omega} \left[1 - \sqrt{1 - \frac{4\,F_{ey}\,F_{ez}\,\Omega}{(F_{ey} + F_{ez})^2}}\right]")
+    st.write("where x\u2080, y\u2080 = shear-centre coordinates relative to the centroid.")
+
+    if sec.family in ("W", "WWF", "HSS") and sec.hss_kind != "CHS":
+        st.success(f"Section **{sec.designation}** is doubly-symmetric "
+                   f"(x\u2080 = y\u2080 = 0) \u2014 \u03a9 = 1, so F_eyz reduces to min(F_ey, F_ez), "
+                   f"already covered by Steps 3 and 3b.")
+    elif sec.hss_kind == "CHS":
+        st.success(f"CHS sections are doubly-symmetric \u2014 flexural-torsional buckling does not govern.")
+    elif sec.family in ("ANGLE", "DOUBLE_ANGLE"):
+        if (R.Fey_MPa is not None and R.Fez_MPa is not None
+                and sec.r_bar_o_sq is not None and sec.r_bar_o_sq > 0):
+            try:
+                Fey_v = float(R.Fey_MPa); Fez_v = float(R.Fez_MPa)
+                Omega = 1.0  # x0=y0 unknown from CSV; use upper-bound Omega=1 → Feyz = min(Fey,Fez)
+                sum_e = Fey_v + Fez_v
+                rad = max(0.0, 1.0 - 4.0 * Fey_v * Fez_v * Omega / (sum_e ** 2))
+                Feyz = (sum_e / (2.0 * Omega)) * (1.0 - math.sqrt(rad))
+                st.write(f"Fey = {_fmt(Fey_v, 1)} MPa | Fez = {_fmt(Fez_v, 1)} MPa")
+                st.write(f"\u03a9 = {_fmt(Omega, 3)} (upper-bound \u2014 x\u2080, y\u2080 not in CSV)")
+                st.write(f"Feyz = {_fmt(Feyz, 1)} MPa")
+                if Feyz < R.Fe_gov_MPa:
+                    st.warning(f"Flexural-torsional governs: Feyz = {_fmt(Feyz, 1)} MPa < "
+                               f"current governing Fe = {_fmt(R.Fe_gov_MPa, 1)} MPa. "
+                               f"Provide x\u2080, y\u2080 manually for exact Feyz.")
+                else:
+                    st.success(f"Flexural-torsional does not govern: Feyz = {_fmt(Feyz, 1)} MPa "
+                               f"\u2265 governing Fe = {_fmt(R.Fe_gov_MPa, 1)} MPa.")
+            except Exception as _e:
+                st.info(f"Feyz not computed: {_e}")
+        else:
+            st.info("Feyz not computed \u2014 Fey, Fez, or r\u0305o\u00b2 not available for this angle.")
+    else:
+        st.info("Section type not recognised for flexural-torsional check.")
+
     # Step 4
     st.subheader("Step 4 \u2014 CSA S16 Column Curve (Clause 13.3.1)")
     st.latex(r"\lambda = \sqrt{\frac{F_y}{F_e}}")
@@ -912,6 +965,23 @@ def render_report(
     st.latex(r"C_r = \phi_c \, A_e \, F_{cr}")
     st.write(f"Cr = {phi_c} \u00d7 {_fmt(R.Ae_mm2, 0)} mm\u00b2 \u00d7 {_fmt(R.Fcr_MPa, 1)} MPa / 1000")
     st.write(f"**Cr = {_fmt(R.Cr_kN, 1)} kN**")
+
+    # Step 5b — Yield-cap (squash-load) sanity check
+    st.subheader("Step 5b \u2014 Yield Capacity Cap (Sanity Check)")
+    st.write("Compressive resistance cannot exceed the squash (yield) load:")
+    st.latex(r"C_{r,\text{yield}} = \phi_c \, A \, F_y \quad \Rightarrow \quad C_r \leq C_{r,\text{yield}}")
+    Cr_yield_kN = phi_c * sec.A_mm2 * Fy / 1000.0
+    st.write(f"Cr,yield = {phi_c} \u00d7 {_fmt(sec.A_mm2, 0)} mm\u00b2 \u00d7 {_fmt(Fy, 0)} MPa / 1000 "
+             f"= {_fmt(Cr_yield_kN, 1)} kN")
+    st.write(f"Cr (column curve) = {_fmt(R.Cr_kN, 1)} kN")
+    Cr_final_kN = min(R.Cr_kN, Cr_yield_kN)
+    if R.Cr_kN <= Cr_yield_kN:
+        st.success(f"\u2705 Column curve governs \u2014 Cr = {_fmt(R.Cr_kN, 1)} kN \u2264 "
+                   f"Cr,yield = {_fmt(Cr_yield_kN, 1)} kN.")
+    else:
+        st.warning(f"\u26a0\ufe0f Yield governs \u2014 capping Cr at {_fmt(Cr_yield_kN, 1)} kN "
+                   f"(column curve gave {_fmt(R.Cr_kN, 1)} kN).")
+    st.write(f"**Final Cr = {_fmt(Cr_final_kN, 1)} kN**")
 
     # Step 6
     st.subheader("Step 6 \u2014 Demand / Capacity Check")

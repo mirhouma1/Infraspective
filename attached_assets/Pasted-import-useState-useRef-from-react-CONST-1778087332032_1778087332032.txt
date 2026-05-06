@@ -1,0 +1,849 @@
+import { useState, useRef } from “react”;
+
+// ─────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────
+const PHI = 0.9;
+const E = 200000;
+const G = 77000;
+
+// ─────────────────────────────────────────────
+// MATH HELPERS
+// ─────────────────────────────────────────────
+function omega2General(Mmax, Ma, Mb, Mc) {
+const d = Math.sqrt(Mmax**2 + 4*Ma**2 + 7*Mb**2 + 4*Mc**2);
+return Math.min(4 * Mmax / d, 2.5);
+}
+function omega2Linear(k) {
+return Math.min(1.75 + 1.05*k + 0.3*k*k, 2.5);
+}
+function criticalMoment(L, Iy, J, Cw, w2) {
+const term1 = E * Iy * G * J;
+const term2 = (Math.PI * E / L)**2 * Iy * Cw;
+return (w2 * Math.PI / L) * Math.sqrt(term1 + term2) / 1e6;
+}
+
+// ─────────────────────────────────────────────
+// COLOUR SYSTEM
+// ─────────────────────────────────────────────
+const C = {
+bg: “#0d1117”,
+surface: “#161b22”,
+border: “#21262d”,
+accent: “#58a6ff”,
+green: “#3fb950”,
+red: “#f85149”,
+yellow: “#d29922”,
+purple: “#bc8cff”,
+text: “#c9d1d9”,
+muted: “#8b949e”,
+steel: “#4a9eff”,
+};
+
+const classColor = { 1: “#3fb950”, 2: “#58a6ff”, 3: “#d29922”, 4: “#f85149” };
+
+// ─────────────────────────────────────────────
+// SHARED UI
+// ─────────────────────────────────────────────
+function Card({ children, style }) {
+return (
+<div style={{
+background: C.surface, border: `1px solid ${C.border}`,
+borderRadius: 10, padding: “18px 20px”, …style
+}}>
+{children}
+</div>
+);
+}
+function Label({ children }) {
+return <div style={{ fontSize: 11, color: C.muted, textTransform: “uppercase”, letterSpacing: 1, marginBottom: 4 }}>{children}</div>;
+}
+function Value({ children, color }) {
+return <div style={{ fontSize: 22, fontWeight: 700, color: color || C.text, fontFamily: “monospace” }}>{children}</div>;
+}
+function Input({ label, value, onChange, unit, min, max, step }) {
+return (
+<div style={{ marginBottom: 10 }}>
+<label style={{ fontSize: 12, color: C.muted, display: “block”, marginBottom: 3 }}>{label}</label>
+<div style={{ display: “flex”, alignItems: “center”, gap: 6 }}>
+<input
+type=“number” value={value} min={min} max={max} step={step || 1}
+onChange={e => onChange(Number(e.target.value))}
+style={{
+background: “#0d1117”, border: `1px solid ${C.border}`,
+color: C.text, borderRadius: 6, padding: “6px 10px”,
+fontSize: 13, width: 90, outline: “none”,
+}}
+/>
+{unit && <span style={{ fontSize: 11, color: C.muted }}>{unit}</span>}
+</div>
+</div>
+);
+}
+function Badge({ children, color }) {
+return (
+<span style={{
+background: color + “22”, border: `1px solid ${color}`,
+color: color, borderRadius: 4, padding: “2px 8px”, fontSize: 12, fontWeight: 600
+}}>{children}</span>
+);
+}
+function SectionTab({ tabs, active, onChange }) {
+return (
+<div style={{ display: “flex”, gap: 4, marginBottom: 18, flexWrap: “wrap” }}>
+{tabs.map(t => (
+<button key={t.id} onClick={() => onChange(t.id)} style={{
+background: active === t.id ? C.accent : “transparent”,
+border: `1px solid ${active === t.id ? C.accent : C.border}`,
+color: active === t.id ? “#fff” : C.muted,
+borderRadius: 6, padding: “6px 14px”, fontSize: 12,
+cursor: “pointer”, fontWeight: active === t.id ? 700 : 400,
+transition: “all 0.15s”
+}}>{t.label}</button>
+))}
+</div>
+);
+}
+
+// ─────────────────────────────────────────────
+// SVG DIAGRAMS
+// ─────────────────────────────────────────────
+
+// Annotated I-Section cross-section with stress distribution overlay
+function ISectionSVG({ sectionClass, mode }) {
+const W = 180, H = 200;
+const bf = 80, tf = 8, hw = 120, tw = 6;
+const cx = W / 2;
+const topFlange = 20;
+
+// stress block colours
+const compColor = “#f85149cc”;
+const tensColor = “#3fb950cc”;
+
+// plastic stress for Class 1/2, elastic for 3
+const stressMode = (sectionClass <= 2) ? “plastic” : “elastic”;
+
+return (
+<svg width={W} height={H} style={{ display: “block”, margin: “0 auto” }}>
+{/* Web */}
+<rect x={cx - tw/2} y={topFlange + tf} width={tw} height={hw} fill=”#2d3748” stroke={C.border} strokeWidth={1} />
+{/* Top flange */}
+<rect x={cx - bf/2} y={topFlange} width={bf} height={tf} fill=”#4a5568” stroke={C.border} strokeWidth={1} />
+{/* Bottom flange */}
+<rect x={cx - bf/2} y={topFlange + tf + hw} width={bf} height={tf} fill=”#4a5568” stroke={C.border} strokeWidth={1} />
+
+```
+  {/* Stress blocks overlay */}
+  {mode === "stress" && stressMode === "plastic" && (
+    <>
+      <rect x={cx - bf/2} y={topFlange} width={bf} height={tf + hw/2} fill={compColor} opacity={0.5} />
+      <rect x={cx - bf/2} y={topFlange + tf + hw/2} width={bf} height={hw/2 + tf} fill={tensColor} opacity={0.5} />
+      <line x1={cx - bf/2 - 10} y1={topFlange + tf + hw/2} x2={cx + bf/2 + 10} y2={topFlange + tf + hw/2}
+        stroke="#fff" strokeWidth={1.5} strokeDasharray="4,3" />
+      <text x={cx - bf/2 - 14} y={topFlange + tf + hw/2 - 6} fill="#f85149" fontSize={9}>C</text>
+      <text x={cx - bf/2 - 14} y={topFlange + tf + hw/2 + 12} fill="#3fb950" fontSize={9}>T</text>
+    </>
+  )}
+  {mode === "stress" && stressMode === "elastic" && (
+    <>
+      {/* Triangular elastic stress */}
+      <polygon
+        points={`${cx-bf/2},${topFlange} ${cx+bf/2},${topFlange} ${cx},${topFlange+tf+hw/2}`}
+        fill={compColor} opacity={0.35}
+      />
+      <polygon
+        points={`${cx-bf/2},${topFlange+tf+hw+tf} ${cx+bf/2},${topFlange+tf+hw+tf} ${cx},${topFlange+tf+hw/2}`}
+        fill={tensColor} opacity={0.35}
+      />
+      <line x1={cx - bf/2 - 10} y1={topFlange + tf + hw/2} x2={cx + bf/2 + 10} y2={topFlange + tf + hw/2}
+        stroke="#fff" strokeWidth={1.5} strokeDasharray="4,3" />
+    </>
+  )}
+
+  {/* Class label */}
+  <text x={cx} y={H - 4} textAnchor="middle" fill={classColor[sectionClass] || C.muted} fontSize={11} fontWeight={700}>
+    Class {sectionClass} — {stressMode === "plastic" ? "Plastic" : "Elastic"} Distribution
+  </text>
+
+  {/* Dimension lines */}
+  <line x1={cx - bf/2 - 3} y1={topFlange} x2={cx - bf/2 - 3} y2={topFlange+tf} stroke={C.muted} strokeWidth={0.8} />
+  <text x={cx - bf/2 - 12} y={topFlange + tf/2 + 3} fill={C.muted} fontSize={8}>tf</text>
+  <line x1={cx + bf/2 + 5} y1={topFlange} x2={cx + bf/2 + 5} y2={topFlange+tf+hw} stroke={C.muted} strokeWidth={0.8} />
+  <text x={cx + bf/2 + 8} y={topFlange + tf + hw/2} fill={C.muted} fontSize={8}>d</text>
+</svg>
+```
+
+);
+}
+
+// Beam elevation with brace marks and moment diagram
+function BeamElevationSVG({ braced, L_display, loadType }) {
+const W = 320, H = 130;
+const y0 = 60, x0 = 30, x1 = W - 30;
+const beamY = y0;
+const len = x1 - x0;
+
+// brace positions
+const braces = braced
+? [x0, x0 + len/3, x0 + 2*len/3, x1]
+: [x0, x1];
+
+// moment diagram shape
+const mPoints = loadType === “udl”
+? `${x0},${beamY} ${x0 + len*0.25},${beamY + 30} ${x0 + len/2},${beamY + 45} ${x0 + len*0.75},${beamY + 30} ${x1},${beamY}`
+: `${x0},${beamY} ${x0 + len/2},${beamY + 45} ${x1},${beamY}`;
+
+return (
+<svg width={W} height={H} style={{ display: “block”, margin: “0 auto” }}>
+{/* Beam */}
+<rect x={x0} y={beamY - 5} width={len} height={10} fill=”#4a5568” rx={2} />
+
+```
+  {/* Load arrows */}
+  {loadType === "udl" && Array.from({ length: 7 }).map((_, i) => {
+    const x = x0 + (i + 0.5) * len / 7;
+    return <line key={i} x1={x} y1={beamY - 18} x2={x} y2={beamY - 6} stroke={C.steel} strokeWidth={1.5}
+      markerEnd="url(#arr)" />;
+  })}
+  {loadType === "point" && (
+    <line x1={x0 + len/2} y1={beamY - 20} x2={x0 + len/2} y2={beamY - 6}
+      stroke={C.steel} strokeWidth={2} markerEnd="url(#arr)" />
+  )}
+
+  {/* UDL line */}
+  {loadType === "udl" && <line x1={x0} y1={beamY - 18} x2={x1} y2={beamY - 18} stroke={C.steel} strokeWidth={1} />}
+
+  {/* Brace marks (lateral restraint symbols) */}
+  {braces.map((bx, i) => (
+    <g key={i}>
+      <line x1={bx} y1={beamY - 5} x2={bx} y2={beamY + 20} stroke={C.green} strokeWidth={1.5} />
+      <line x1={bx - 6} y1={beamY + 20} x2={bx + 6} y2={beamY + 20} stroke={C.green} strokeWidth={1.5} />
+    </g>
+  ))}
+
+  {/* Moment diagram */}
+  <polyline points={mPoints} fill="none" stroke={C.accent} strokeWidth={1.5} strokeDasharray="5,3" opacity={0.7} />
+
+  {/* Supports */}
+  <polygon points={`${x0},${beamY+5} ${x0-8},${beamY+20} ${x0+8},${beamY+20}`} fill={C.muted} />
+  <polygon points={`${x1},${beamY+5} ${x1-8},${beamY+20} ${x1+8},${beamY+20}`} fill={C.muted} />
+  <line x1={x0-10} y1={beamY+20} x2={x1+10} y2={beamY+20} stroke={C.muted} strokeWidth={1} />
+
+  {/* Labels */}
+  <text x={W/2} y={H - 5} textAnchor="middle" fill={C.muted} fontSize={10}>
+    {braced ? "Laterally Supported" : "Laterally Unsupported"}
+    {" — "}
+    {loadType === "udl" ? "UDL" : "Point Load"}
+  </text>
+
+  {/* Arrow marker */}
+  <defs>
+    <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill={C.steel} />
+    </marker>
+  </defs>
+</svg>
+```
+
+);
+}
+
+// LTB Mr vs L curve
+function LTBCurveSVG({ Mr_vals, Mp, My, sectionClass }) {
+if (!Mr_vals || Mr_vals.length < 2) return null;
+const W = 300, H = 160, pad = { l: 45, r: 15, t: 15, b: 35 };
+const iW = W - pad.l - pad.r, iH = H - pad.t - pad.b;
+
+const maxL = Mr_vals[Mr_vals.length - 1].L;
+const maxM = Math.max(PHI * Mp, Mr_vals[0].Mr) * 1.05;
+
+const sx = L => pad.l + (L / maxL) * iW;
+const sy = M => pad.t + iH - (M / maxM) * iH;
+
+const pts = Mr_vals.map(d => `${sx(d.L).toFixed(1)},${sy(d.Mr).toFixed(1)}`).join(” “);
+
+return (
+<svg width={W} height={H} style={{ display: “block”, margin: “0 auto” }}>
+{/* Grid */}
+{[0.25, 0.5, 0.75, 1].map(f => (
+<line key={f} x1={pad.l} y1={sy(maxM * f)} x2={W - pad.r} y2={sy(maxM * f)}
+stroke={C.border} strokeWidth={0.5} />
+))}
+
+```
+  {/* phi*Mp line */}
+  <line x1={pad.l} y1={sy(PHI * Mp)} x2={W - pad.r} y2={sy(PHI * Mp)}
+    stroke={classColor[sectionClass <= 2 ? 1 : 3]} strokeWidth={1} strokeDasharray="5,3" />
+  <text x={W - pad.r + 2} y={sy(PHI * Mp) + 4} fill={C.muted} fontSize={9}>φMp</text>
+
+  {/* phi*My line */}
+  {sectionClass > 2 && (
+    <>
+      <line x1={pad.l} y1={sy(PHI * My)} x2={W - pad.r} y2={sy(PHI * My)}
+        stroke={classColor[3]} strokeWidth={1} strokeDasharray="5,3" />
+      <text x={W - pad.r + 2} y={sy(PHI * My) + 4} fill={C.muted} fontSize={9}>φMy</text>
+    </>
+  )}
+
+  {/* Mr curve */}
+  <polyline points={pts} fill="none" stroke={C.accent} strokeWidth={2} />
+
+  {/* Axes */}
+  <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke={C.muted} strokeWidth={1} />
+  <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke={C.muted} strokeWidth={1} />
+
+  {/* Axis labels */}
+  <text x={W / 2} y={H - 4} textAnchor="middle" fill={C.muted} fontSize={10}>Unbraced Length L (mm)</text>
+  <text x={10} y={H / 2} textAnchor="middle" fill={C.muted} fontSize={10}
+    transform={`rotate(-90, 10, ${H/2})`}>Mr (kN·m)</text>
+</svg>
+```
+
+);
+}
+
+// Shear Fs vs h/w diagram
+function ShearFsDiagram({ Fy, stiffened, kv }) {
+const W = 300, H = 160;
+const pad = { l: 45, r: 15, t: 15, b: 35 };
+const iW = W - pad.l - pad.r, iH = H - pad.t - pad.b;
+
+const sqFy = Math.sqrt(Fy);
+const maxRatio = 200;
+const steps = 120;
+const points = [];
+
+for (let i = 0; i <= steps; i++) {
+const r = (i / steps) * maxRatio;
+if (r === 0) continue;
+let Fs;
+if (!stiffened) {
+if (r <= 1014 / sqFy) Fs = 0.66 * Fy;
+else if (r <= 1435 / sqFy) Fs = 670 * sqFy / r;
+else Fs = 961200 / (r * r);
+} else {
+const kvv = kv || 5.34;
+const Fcri = 290 * Math.sqrt(Fy * kvv) / r;
+const Fcre = 180000 * kvv / (r * r);
+const l1 = 439 * Math.sqrt(kvv / Fy);
+const l2 = 502 * Math.sqrt(kvv / Fy);
+const l3 = 621 * Math.sqrt(kvv / Fy);
+if (r <= l1) Fs = 0.66 * Fy;
+else if (r <= l2) Fs = Fcri;
+else if (r <= l3) Fs = Fcri + (1 / Math.sqrt(1 + (r/100)**2)) * (0.5*Fy - 0.866*Fcri);
+else Fs = Fcre + (1 / Math.sqrt(1 + (r/100)**2)) * (0.5*Fy - 0.866*Fcre);
+}
+Fs = Math.max(0, Math.min(Fs, 0.66 * Fy));
+points.push({ r, Fs });
+}
+
+const maxFs = 0.66 * Fy;
+const sx = r => pad.l + (r / maxRatio) * iW;
+const sy = f => pad.t + iH - (f / maxFs) * iH;
+
+const pts = points.map(p => `${sx(p.r).toFixed(1)},${sy(p.Fs).toFixed(1)}`).join(” “);
+
+return (
+<svg width={W} height={H} style={{ display: “block”, margin: “0 auto” }}>
+{[0.25, 0.5, 0.75, 1].map(f => (
+<line key={f} x1={pad.l} y1={sy(maxFs * f)} x2={W - pad.r} y2={sy(maxFs * f)}
+stroke={C.border} strokeWidth={0.5} />
+))}
+<polyline points={pts} fill="none" stroke={C.accent} strokeWidth={2} />
+<line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke={C.muted} strokeWidth={1} />
+<line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke={C.muted} strokeWidth={1} />
+<text x={W / 2} y={H - 4} textAnchor=“middle” fill={C.muted} fontSize={10}>h/w ratio</text>
+<text x={10} y={H / 2} textAnchor=“middle” fill={C.muted} fontSize={10}
+transform={`rotate(-90, 10, ${H/2})`}>Fs (MPa)</text>
+<text x={pad.l + 4} y={sy(maxFs) - 3} fill={C.green} fontSize={9}>0.66Fy = {(0.66*Fy).toFixed(0)}</text>
+</svg>
+);
+}
+
+// ─────────────────────────────────────────────
+// PANELS
+// ─────────────────────────────────────────────
+
+function ShearPanel() {
+const [h, setH] = useState(400);
+const [w, setW] = useState(8);
+const [Fy, setFy] = useState(350);
+const [stiffened, setStiffened] = useState(false);
+const [a, setA] = useState(600);
+
+const sqFy = Math.sqrt(Fy);
+const ratio = h / w;
+
+let Fs, caseLabel, Fcri, Fcre, kv;
+if (!stiffened) {
+const l1 = 1014 / sqFy, l2 = 1435 / sqFy;
+if (ratio <= l1) { Fs = 0.66 * Fy; caseLabel = “Case i: Fs = 0.66Fy”; }
+else if (ratio <= l2) { Fs = 670 * sqFy / ratio; caseLabel = “Case ii: Fs = 670√Fy / (h/w)”; }
+else { Fs = 961200 / (ratio**2); caseLabel = “Case iii: Fs = 961200 / (h/w)²”; }
+} else {
+const aspect = a / h;
+kv = aspect < 1 ? 4 + 5.34 / aspect**2 : 5.34 + 4 / aspect**2;
+const ka = 1 / Math.sqrt(1 + aspect**2);
+Fcri = 290 * Math.sqrt(Fy * kv) / ratio;
+Fcre = 180000 * kv / (ratio**2);
+const l1 = 439 * Math.sqrt(kv / Fy), l2 = 502 * Math.sqrt(kv / Fy), l3 = 621 * Math.sqrt(kv / Fy);
+if (ratio <= l1) { Fs = 0.66 * Fy; caseLabel = “Case i: Fs = 0.66Fy”; }
+else if (ratio <= l2) { Fs = Fcri; caseLabel = “Case ii: Fs = Fcri”; }
+else if (ratio <= l3) { Fs = Fcri + ka*(0.5*Fy - 0.866*Fcri); caseLabel = “Case iii: Post-buckling”; }
+else { Fs = Fcre + ka*(0.5*Fy - 0.866*Fcre); caseLabel = “Case iv: Elastic buckling”; }
+}
+
+const Aw = h * w;
+const Vr = PHI * Aw * Fs / 1000;
+
+return (
+<div>
+<div style={{ display: “grid”, gridTemplateColumns: “1fr 1fr”, gap: 12, marginBottom: 16 }}>
+<div>
+<div style={{ marginBottom: 12 }}>
+<Label>Web type</Label>
+<div style={{ display: “flex”, gap: 8 }}>
+{[“Unstiffened”, “Stiffened”].map(t => (
+<button key={t} onClick={() => setStiffened(t === “Stiffened”)} style={{
+background: (stiffened === (t === “Stiffened”)) ? C.accent : “transparent”,
+border: `1px solid ${C.border}`, color: (stiffened === (t === “Stiffened”)) ? “#fff” : C.muted,
+borderRadius: 5, padding: “5px 12px”, fontSize: 12, cursor: “pointer”
+}}>{t}</button>
+))}
+</div>
+</div>
+<Input label="Web depth h" value={h} onChange={setH} unit="mm" min={100} max={2000} step={10} />
+<Input label="Web thickness w" value={w} onChange={setW} unit="mm" min={4} max={30} />
+<Input label="Yield strength Fy" value={Fy} onChange={setFy} unit="MPa" min={250} max={690} step={50} />
+{stiffened && <Input label="Stiffener spacing a" value={a} onChange={setA} unit="mm" min={100} max={3000} step={50} />}
+</div>
+
+```
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <Card>
+        <Label>h / w</Label>
+        <Value color={C.text}>{ratio.toFixed(1)}</Value>
+      </Card>
+      <Card>
+        <Label>Shear yield stress Fs</Label>
+        <Value color={C.accent}>{Fs.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 400 }}>MPa</span></Value>
+      </Card>
+      <Card>
+        <Label>Factored shear resistance Vr</Label>
+        <Value color={C.green}>{Vr.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 400 }}>kN</span></Value>
+      </Card>
+      <div style={{ padding: "8px 12px", background: "#1c2128", borderRadius: 6, borderLeft: `3px solid ${C.yellow}` }}>
+        <div style={{ fontSize: 11, color: C.yellow }}>{caseLabel}</div>
+      </div>
+    </div>
+  </div>
+
+  <Card style={{ marginTop: 4 }}>
+    <Label>Fs vs h/w — {stiffened ? "Stiffened" : "Unstiffened"} Web (Fy = {Fy} MPa)</Label>
+    <ShearFsDiagram Fy={Fy} stiffened={stiffened} kv={kv} />
+  </Card>
+</div>
+```
+
+);
+}
+
+function ClassificationPanel() {
+const [Fy, setFy] = useState(350);
+const [bel, setBel] = useState(60);
+const [t, setT] = useState(10);
+const [D, setD] = useState(200);
+const [Dt, setDt] = useState(6);
+const [h, setH] = useState(350);
+const [w, setW] = useState(7);
+const [Cf, setCf] = useState(200);
+const [Cy, setCy] = useState(2000);
+const [elemType, setElemType] = useState(“flange_i”);
+
+const sqFy = Math.sqrt(Fy);
+
+const results = {
+flange_i: (() => {
+const r = bel/t;
+const l1 = 145/sqFy, l2 = 170/sqFy, l3 = 200/sqFy;
+const cls = r <= l1 ? 1 : r <= l2 ? 2 : r <= l3 ? 3 : 4;
+return { r, l1, l2, l3, cls, label: “I/T Flange (one edge)” };
+})(),
+stem_t: (() => {
+const r = bel/t;
+const l1 = 145/sqFy, l2 = 170/sqFy, l3 = 340/sqFy;
+const cls = r <= l1 ? 1 : r <= l2 ? 2 : r <= l3 ? 3 : 4;
+return { r, l1, l2, l3, cls, label: “T-stem / Minor-axis” };
+})(),
+rhs: (() => {
+const r = bel/t;
+const l1 = 420/sqFy, l2 = 525/sqFy, l3 = 670/sqFy;
+const cls = r <= l1 ? 1 : r <= l2 ? 2 : r <= l3 ? 3 : 4;
+return { r, l1, l2, l3, cls, label: “RHS Flange (two edges)” };
+})(),
+box: (() => {
+const r = bel/t;
+const l1 = 525/sqFy, l2 = 525/sqFy, l3 = 670/sqFy;
+const cls = r <= l1 ? 1 : r <= l3 ? 3 : 4;
+return { r, l1, l2, l3, cls, label: “Box Section Flange” };
+})(),
+web_combined: (() => {
+const r = h/w;
+const cf_r = Cf / (PHI * Cy);
+const l1 = (1100/sqFy)*(1 - 0.39*cf_r);
+const l2 = (1700/sqFy)*(1 - 0.61*cf_r);
+const l3 = (1900/sqFy)*(1 - 0.65*cf_r);
+const cls = r <= l1 ? 1 : r <= l2 ? 2 : r <= l3 ? 3 : 4;
+return { r, l1, l2, l3, cls, label: “Web (Flexure + Axial)” };
+})(),
+chs: (() => {
+const r = D/Dt;
+const l1 = 13000/Fy, l2 = 18000/Fy, l3 = 66000/Fy;
+const cls = r <= l1 ? 1 : r <= l2 ? 2 : r <= l3 ? 3 : 4;
+return { r, l1, l2, l3, cls, label: “CHS (D/t)” };
+})(),
+};
+
+const cur = results[elemType];
+
+// bar chart widths
+const barMax = cur.l3 * 1.3;
+const pct = v => Math.min(v / barMax * 100, 100);
+
+return (
+<div>
+<div style={{ marginBottom: 14 }}>
+<Label>Element type</Label>
+<div style={{ display: “flex”, gap: 6, flexWrap: “wrap” }}>
+{Object.entries(results).map(([k, v]) => (
+<button key={k} onClick={() => setElemType(k)} style={{
+background: elemType === k ? C.accent : “transparent”,
+border: `1px solid ${elemType === k ? C.accent : C.border}`,
+color: elemType === k ? “#fff” : C.muted,
+borderRadius: 5, padding: “5px 10px”, fontSize: 11, cursor: “pointer”
+}}>{v.label}</button>
+))}
+</div>
+</div>
+
+```
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+    <div>
+      <Input label="Yield strength Fy" value={Fy} onChange={setFy} unit="MPa" min={250} max={690} step={50} />
+      {!["web_combined", "chs"].includes(elemType) && <>
+        <Input label="bel (effective width)" value={bel} onChange={setBel} unit="mm" min={20} max={300} step={5} />
+        <Input label="t (thickness)" value={t} onChange={setT} unit="mm" min={4} max={40} />
+      </>}
+      {elemType === "chs" && <>
+        <Input label="D (outer diameter)" value={D} onChange={setD} unit="mm" min={50} max={600} step={10} />
+        <Input label="t (wall thickness)" value={Dt} onChange={setDt} unit="mm" min={2} max={25} />
+      </>}
+      {elemType === "web_combined" && <>
+        <Input label="h (web depth)" value={h} onChange={setH} unit="mm" min={100} max={1500} step={10} />
+        <Input label="w (web thickness)" value={w} onChange={setW} unit="mm" min={4} max={25} />
+        <Input label="Cf (axial compression)" value={Cf} onChange={setCf} unit="kN" min={0} max={10000} step={50} />
+        <Input label="Cy = Ag·Fy" value={Cy} onChange={setCy} unit="kN" min={500} max={30000} step={100} />
+      </>}
+    </div>
+
+    <div>
+      <Card>
+        <Label>{cur.label} — Section Class</Label>
+        <Value color={classColor[cur.cls]}>Class {cur.cls}</Value>
+        <div style={{ marginTop: 6, fontSize: 12, color: C.muted }}>
+          Ratio = {cur.r.toFixed(2)}
+        </div>
+      </Card>
+      <ISectionSVG sectionClass={cur.cls} mode="stress" />
+    </div>
+  </div>
+
+  {/* Visual bar showing limits */}
+  <Card>
+    <Label>Width-to-thickness ratio vs class limits</Label>
+    <div style={{ marginTop: 10 }}>
+      {[
+        { label: `Class 1 limit: ${cur.l1.toFixed(1)}`, w: pct(cur.l1), color: classColor[1] },
+        { label: `Class 2 limit: ${cur.l2.toFixed(1)}`, w: pct(cur.l2), color: classColor[2] },
+        { label: `Class 3 limit: ${cur.l3.toFixed(1)}`, w: pct(cur.l3), color: classColor[3] },
+        { label: `Actual ratio: ${cur.r.toFixed(2)}`, w: pct(cur.r), color: classColor[cur.cls] },
+      ].map(bar => (
+        <div key={bar.label} style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 3 }}>{bar.label}</div>
+          <div style={{ background: "#21262d", borderRadius: 3, height: 10, position: "relative" }}>
+            <div style={{ width: `${bar.w}%`, background: bar.color, height: "100%", borderRadius: 3, transition: "width 0.3s" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  </Card>
+</div>
+```
+
+);
+}
+
+function MomentPanel() {
+const [sectionClass, setSectionClass] = useState(1);
+const [Z, setZ] = useState(1200e3);
+const [S, setS] = useState(1050e3);
+const [Fy, setFy] = useState(350);
+const [Iy, setIy] = useState(12e6);
+const [J, setJ] = useState(600e3);
+const [Cw, setCw] = useState(800e9);
+const [L, setL] = useState(6000);
+const [lateralMode, setLateralMode] = useState(“supported”);
+const [k, setK] = useState(1.0);
+const [loadType, setLoadType] = useState(“udl”);
+
+const Mp = Z * Fy / 1e6;
+const My = S * Fy / 1e6;
+const w2 = omega2Linear(k);
+
+let Mr, Mu_val, caseStr;
+if (lateralMode === “supported”) {
+if (sectionClass <= 2) { Mr = PHI * Mp; caseStr = “Cl. 13.5a: Mr = φMp”; }
+else { Mr = PHI * My; caseStr = “Cl. 13.5b: Mr = φMy”; }
+Mu_val = null;
+} else {
+Mu_val = criticalMoment(L, Iy, J, Cw, w2);
+const Mref = sectionClass <= 2 ? Mp : My;
+const thresh = 0.67 * Mref;
+if (Mu_val > thresh) {
+Mr = Math.min(1.15 * PHI * Mref * (1 - 0.28 * Mref / Mu_val), PHI * Mref);
+caseStr = `Cl. 13.6: Mu > 0.67M${sectionClass<=2?"p":"y"} → inelastic LTB`;
+} else {
+Mr = PHI * Mu_val;
+caseStr = `Cl. 13.6: Mu ≤ 0.67M${sectionClass<=2?"p":"y"} → elastic LTB`;
+}
+}
+
+// Build Mr vs L curve
+const Mr_vals = [];
+for (let Li = 500; Li <= 15000; Li += 200) {
+const Mu_i = criticalMoment(Li, Iy, J, Cw, w2);
+const Mref = sectionClass <= 2 ? Mp : My;
+let Mr_i;
+if (Mu_i > 0.67 * Mref) {
+Mr_i = Math.min(1.15 * PHI * Mref * (1 - 0.28 * Mref / Mu_i), PHI * Mref);
+} else {
+Mr_i = PHI * Mu_i;
+}
+Mr_vals.push({ L: Li, Mr: Mr_i });
+}
+
+return (
+<div>
+<div style={{ display: “flex”, gap: 8, marginBottom: 14, flexWrap: “wrap” }}>
+<div>
+<Label>Section class</Label>
+<div style={{ display: “flex”, gap: 4 }}>
+{[1,2,3,4].map(c => (
+<button key={c} onClick={() => setSectionClass(c)} style={{
+background: sectionClass === c ? classColor[c] : “transparent”,
+border: `1px solid ${classColor[c]}`,
+color: sectionClass === c ? “#fff” : classColor[c],
+borderRadius: 5, padding: “5px 12px”, fontSize: 12, cursor: “pointer”, fontWeight: 700
+}}>{c}</button>
+))}
+</div>
+</div>
+<div>
+<Label>Support condition</Label>
+<div style={{ display: “flex”, gap: 4 }}>
+{[[“supported”,“Laterally Supported”],[“unsupported”,“Laterally Unsupported”]].map(([v,l]) => (
+<button key={v} onClick={() => setLateralMode(v)} style={{
+background: lateralMode === v ? C.accent : “transparent”,
+border: `1px solid ${lateralMode === v ? C.accent : C.border}`,
+color: lateralMode === v ? “#fff” : C.muted,
+borderRadius: 5, padding: “5px 12px”, fontSize: 12, cursor: “pointer”
+}}>{l}</button>
+))}
+</div>
+</div>
+</div>
+
+```
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+    <div>
+      <Input label="Z (plastic modulus)" value={Z/1e3} onChange={v => setZ(v*1e3)} unit="×10³ mm³" min={100} max={20000} step={50} />
+      <Input label="S (elastic modulus)" value={S/1e3} onChange={v => setS(v*1e3)} unit="×10³ mm³" min={100} max={18000} step={50} />
+      <Input label="Fy" value={Fy} onChange={setFy} unit="MPa" min={250} max={690} step={50} />
+      {lateralMode === "unsupported" && <>
+        <Input label="Unbraced length L" value={L} onChange={setL} unit="mm" min={500} max={15000} step={250} />
+        <Input label="Iy (weak axis)" value={Iy/1e6} onChange={v => setIy(v*1e6)} unit="×10⁶ mm⁴" min={0.1} max={500} step={1} />
+        <Input label="J (torsional const.)" value={J/1e3} onChange={v => setJ(v*1e3)} unit="×10³ mm⁴" min={10} max={5000} step={10} />
+        <Input label="Cw (warping const.)" value={Cw/1e9} onChange={v => setCw(v*1e9)} unit="×10⁹ mm⁶" min={0} max={5000} step={10} />
+        <Input label="k (moment ratio)" value={k} onChange={setK} unit="(-1 to +1)" min={-1} max={1} step={0.05} />
+      </>}
+    </div>
+
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <Card>
+        <Label>φMp</Label>
+        <Value color={classColor[1]}>{(PHI * Mp).toFixed(1)} <span style={{ fontSize: 13, fontWeight: 400 }}>kN·m</span></Value>
+      </Card>
+      <Card>
+        <Label>φMy</Label>
+        <Value color={classColor[3]}>{(PHI * My).toFixed(1)} <span style={{ fontSize: 13, fontWeight: 400 }}>kN·m</span></Value>
+      </Card>
+      {Mu_val !== null && (
+        <Card>
+          <Label>Mu (elastic critical)</Label>
+          <Value color={C.purple}>{Mu_val.toFixed(1)} <span style={{ fontSize: 13, fontWeight: 400 }}>kN·m</span></Value>
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>ω₂ = {w2.toFixed(3)}</div>
+        </Card>
+      )}
+      <Card>
+        <Label>Mr (factored resistance)</Label>
+        <Value color={C.green}>{Mr.toFixed(1)} <span style={{ fontSize: 13, fontWeight: 400 }}>kN·m</span></Value>
+      </Card>
+      <div style={{ padding: "8px 12px", background: "#1c2128", borderRadius: 6, borderLeft: `3px solid ${C.yellow}` }}>
+        <div style={{ fontSize: 11, color: C.yellow }}>{caseStr}</div>
+      </div>
+    </div>
+  </div>
+
+  <BeamElevationSVG braced={lateralMode === "supported"} L_display={L} loadType={loadType} />
+
+  {lateralMode === "unsupported" && (
+    <Card style={{ marginTop: 12 }}>
+      <Label>Mr vs Unbraced Length — Class {sectionClass}</Label>
+      <LTBCurveSVG Mr_vals={Mr_vals} Mp={Mp} My={My} sectionClass={sectionClass} />
+      <div style={{ fontSize: 10, color: C.muted, marginTop: 6, textAlign: "center" }}>
+        Current L = {L} mm → Mr = {Mr.toFixed(1)} kN·m
+      </div>
+    </Card>
+  )}
+</div>
+```
+
+);
+}
+
+function DeflectionPanel() {
+const [L, setL] = useState(8000);
+const [appKey, setAppKey] = useState(“other_floor_crack_susceptible”);
+
+const limits = {
+industrial_floor: [“L/300”, 300, “Industrial floors”],
+industrial_inelastic_roof: [“L/240”, 240, “Industrial — inelastic roof”],
+industrial_elastic_roof: [“L/180”, 180, “Industrial — elastic roof”],
+crane_girder_heavy: [“L/800”, 800, “Crane girder ≥ 225 kN”],
+crane_girder_light: [“L/600”, 600, “Crane girder < 225 kN”],
+other_floor_crack_susceptible: [“L/360”, 360, “Other: floors (crack susceptible)”],
+other_floor_no_crack: [“L/300”, 300, “Other: floors (not susceptible)”],
+wind_drift_building: [“h/400”, 400, “Wind drift (building)”],
+storey_drift_cladding: [“h/500”, 500, “Storey drift (cladding)”],
+};
+
+const [label, div, desc] = limits[appKey];
+const delta = L / div;
+
+return (
+<div>
+<div style={{ display: “grid”, gridTemplateColumns: “1fr 1fr”, gap: 12, marginBottom: 16 }}>
+<div>
+<Input label="Span / Height L or h" value={L} onChange={setL} unit="mm" min={1000} max={30000} step={500} />
+<Label>Application</Label>
+<div style={{ display: “flex”, flexDirection: “column”, gap: 5, marginTop: 4 }}>
+{Object.entries(limits).map(([k, [lbl, d, desc]]) => (
+<button key={k} onClick={() => setAppKey(k)} style={{
+background: appKey === k ? C.accent + “22” : “transparent”,
+border: `1px solid ${appKey === k ? C.accent : C.border}`,
+color: appKey === k ? C.accent : C.muted,
+borderRadius: 5, padding: “5px 10px”, fontSize: 11,
+cursor: “pointer”, textAlign: “left”
+}}>
+<span style={{ fontFamily: “monospace”, marginRight: 8 }}>{lbl}</span>{desc}
+</button>
+))}
+</div>
+</div>
+
+```
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Card>
+        <Label>Selected limit</Label>
+        <Value color={C.accent}>{label}</Value>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{desc}</div>
+      </Card>
+      <Card>
+        <Label>Max allowable deflection</Label>
+        <Value color={C.green}>{delta.toFixed(1)} <span style={{ fontSize: 14, fontWeight: 400 }}>mm</span></Value>
+      </Card>
+
+      {/* Visual deflection beam */}
+      <Card>
+        <Label>Deflection visualization</Label>
+        <svg width="100%" height={100} viewBox="0 0 280 100" style={{ display: "block" }}>
+          <line x1={20} y1={45} x2={260} y2={45} stroke={C.border} strokeWidth={1} strokeDasharray="4,3" />
+          <path d={`M20,45 Q140,${45 + Math.min(delta/L*1200, 40)} 260,45`}
+            fill="none" stroke={C.accent} strokeWidth={2.5} />
+          <polygon points="20,40 20,50 10,45" fill={C.muted} />
+          <circle cx={260} cy={45} r={5} fill={C.muted} />
+          <line x1={140} y1={45} x2={140} y2={45 + Math.min(delta/L*1200, 40)}
+            stroke={C.yellow} strokeWidth={1} strokeDasharray="3,2" />
+          <text x={145} y={65} fill={C.yellow} fontSize={10}>{delta.toFixed(1)} mm</text>
+          <text x={130} y={95} fill={C.muted} fontSize={9} textAnchor="middle">L = {L} mm</text>
+        </svg>
+      </Card>
+    </div>
+  </div>
+</div>
+```
+
+);
+}
+
+// ─────────────────────────────────────────────
+// MAIN APP
+// ─────────────────────────────────────────────
+export default function App() {
+const [tab, setTab] = useState(“shear”);
+
+const tabs = [
+{ id: “shear”, label: “Shear (Cl. 13.4)” },
+{ id: “class”, label: “Section Classification” },
+{ id: “moment”, label: “Moment Resistance” },
+{ id: “deflection”, label: “Deflection (Table D.1)” },
+];
+
+return (
+<div style={{
+background: C.bg, minHeight: “100vh”, color: C.text,
+fontFamily: “‘IBM Plex Sans’, ‘Segoe UI’, sans-serif”,
+padding: “0 0 40px 0”
+}}>
+{/* Header */}
+<div style={{
+background: C.surface, borderBottom: `1px solid ${C.border}`,
+padding: “16px 24px”, marginBottom: 20
+}}>
+<div style={{ display: “flex”, alignItems: “baseline”, gap: 12 }}>
+<div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: “monospace” }}>
+CSA S16
+</div>
+<div style={{ fontSize: 13, color: C.muted }}>Chapter 4 — Flexural Members</div>
+<div style={{ marginLeft: “auto” }}>
+<Badge color={C.accent}>CIVE 3205</Badge>
+</div>
+</div>
+</div>
+
+```
+  <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 16px" }}>
+    <SectionTab tabs={tabs} active={tab} onChange={setTab} />
+
+    <Card>
+      {tab === "shear" && <ShearPanel />}
+      {tab === "class" && <ClassificationPanel />}
+      {tab === "moment" && <MomentPanel />}
+      {tab === "deflection" && <DeflectionPanel />}
+    </Card>
+  </div>
+</div>
+```
+
+);
+}

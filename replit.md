@@ -7,7 +7,8 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 ```
 ├── app.py                                          # Page 1 — Flexure Calculator (W sections)
 ├── _theme.py                                       # Global UI theme (CSS, logo, footer, disclaimer page)
-├── connection_diagram.py                           # SVG connection diagram generator
+├── connection_diagram.py                           # SVG connection diagram generator (Page 3)
+├── flexure_diagrams.py                             # SVG diagrams for Page 1 (cross-section, beam, LTB & shear curves)
 ├── static/
 │   └── logo.png                                    # Infraspective Solutions brand logo
 ├── pages/
@@ -47,9 +48,12 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 ## Pages
 
 ### Page 1 — Flexure (app.py)
-- Section classification per CSA S16 Table 2 (Class 1–4)
+- Section classification per CSA S16 Table 2 (Class 1–4) + cross-section SVG with plastic/elastic stress overlay
 - Flange/web slenderness using clear web depth h = d − 2k
-- Laterally supported Mr using Zx (Class 1/2) or Sx (Class 3)
+- Laterally supported Mr using Zx (Class 1/2) or Sx (Class 3); Class 4 via Se
+- Shear (Cl. 13.4.1.1) unstiffened/stiffened webs + Fs-vs-h/w SVG curve
+- LTB (Cl. 13.6) with preset ω₂ cases + advanced ω₂ formulas (linear-gradient κ Eq. 3, general 4-point Eq. 2); beam-elevation SVG + Mr-vs-Lb curve SVG
+- Deflection check with CSA S16 Table D.1 limits (industrial floor/roof, crane girders, wind/storey drift, etc.) plus custom L/n
 - Optional demand/capacity check
 
 ### Page 2 — Compression (pages/2_Compression.py)

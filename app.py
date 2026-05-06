@@ -10,6 +10,12 @@ import pandas as pd
 import streamlit as st
 
 from _theme import apply_theme, render_sidebar_logo, render_footer, disclaimer_page
+from flexure_diagrams import (
+    i_section_stress_svg,
+    beam_elevation_svg,
+    ltb_curve_svg,
+    shear_fs_curve_svg,
+)
 
 # ----------------------------
 # CONFIG
@@ -704,6 +710,57 @@ OMEGA2_CASES = [
     ("cantilever_point", "Cantilever point load (ω₂ = 1.00)"),
 ]
 
+# ── Additional ω₂ formulas (CSA S16 Cl. 13.6 Eq. 2 & Eq. 3) ──────────────────
+G_MPA_DEFAULT = 77000.0  # shear modulus of steel (MPa)
+
+
+def omega2_general(M_max: float, M_a: float, M_b: float, M_c: float) -> float:
+    """4-point ω₂ for any moment distribution (Cl. 13.6, Eq. 2):
+       ω₂ = 4·M_max / sqrt(M_max² + 4·M_a² + 7·M_b² + 4·M_c²) ≤ 2.5
+       Moments are absolute values at L/4 (M_a), L/2 (M_b), 3L/4 (M_c)."""
+    Mm = abs(M_max); Ma = abs(M_a); Mb = abs(M_b); Mc = abs(M_c)
+    denom = math.sqrt(Mm * Mm + 4.0 * Ma * Ma + 7.0 * Mb * Mb + 4.0 * Mc * Mc)
+    if denom <= 0:
+        return 1.0
+    return min(4.0 * Mm / denom, 2.5)
+
+
+def omega2_linear(kappa: float) -> float:
+    """Linear-gradient ω₂ (Cl. 13.6, Eq. 3):
+       ω₂ = 1.75 + 1.05·κ + 0.3·κ²  ≤ 2.5
+       κ = ratio of smaller to larger end moment (+ double curvature, − single curvature)."""
+    k = max(-1.0, min(1.0, float(kappa)))
+    return min(1.75 + 1.05 * k + 0.3 * k * k, 2.5)
+
+
+def critical_elastic_moment_kNm(L_mm: float, Iy_mm4: float, J_mm4: float,
+                                Cw_mm6: float, omega2: float,
+                                E_MPa: float = E_MPA_DEFAULT,
+                                G_MPa: float = G_MPA_DEFAULT) -> float:
+    """Critical elastic LTB moment Mu (Cl. 13.6, Eq. 1) in kN·m."""
+    if L_mm <= 0:
+        return 0.0
+    term1 = E_MPa * Iy_mm4 * G_MPa * J_mm4
+    term2 = (math.pi * E_MPa / L_mm) ** 2 * Iy_mm4 * Cw_mm6
+    Mu_Nmm = (omega2 * math.pi / L_mm) * math.sqrt(max(term1 + term2, 0.0))
+    return Mu_Nmm / 1e6
+
+
+# ── CSA S16 Table D.1 — Serviceability deflection limits ─────────────────────
+TABLE_D1_LIMITS = [
+    ("custom",                       "Custom L / n  (use selector below)",                  None),
+    ("industrial_floor",             "Industrial — floor",                                  300),
+    ("industrial_inelastic_roof",    "Industrial — inelastic roof",                         240),
+    ("industrial_elastic_roof",      "Industrial — elastic roof",                           180),
+    ("crane_girder_heavy",           "Crane girder ≥ 225 kN  (L/800)",                      800),
+    ("crane_girder_light",           "Crane girder < 225 kN  (L/600)",                      600),
+    ("crane_lateral",                "Crane runway — lateral  (L/600)",                     600),
+    ("other_floor_crack_susceptible","Other — floors, crack-susceptible finish (L/360)",   360),
+    ("other_floor_no_crack",         "Other — floors, not susceptible (L/300)",             300),
+    ("wind_drift_building",          "Wind drift — building  (h/400)",                      400),
+    ("storey_drift_cladding",        "Storey drift — cladding  (h/500)",                    500),
+]
+
 
 def residual_stress_factor(section_class: int, Fy: float, Lb_mm: float, rts_mm: float) -> float:
     """Residual stress / inelastic transition factor in (0,1]."""
@@ -926,6 +983,13 @@ if selected_section:
         }
         st.table(ratio_data)
 
+        # ── Cross-section diagram with stress block overlay (Class 1/2 plastic, 3/4 elastic) ──
+        st.markdown("**Cross-Section & Stress Distribution**")
+        st.markdown(
+            i_section_stress_svg(int(class_info["class_section"]), mode="stress"),
+            unsafe_allow_html=True,
+        )
+
     st.divider()
 
     st.subheader("Moment Resistance (Laterally Supported)")
@@ -1052,6 +1116,27 @@ if selected_section:
                     for wmsg in warnings:
                         st.write("⚠️ " + str(wmsg))
 
+            # ── Shear curve: Fs vs h/w with operating point ────────────────
+            with st.expander("Shear curve diagram — Fs vs h/w", expanded=False):
+                _kv_for_plot = None
+                if web_type.startswith("Stiffened") and a_mm is not None and h > 0:
+                    _aspect = float(a_mm) / float(h)
+                    _kv_for_plot = (4.0 + 5.34 / _aspect**2) if _aspect < 1.0 else (5.34 + 4.0 / _aspect**2)
+                st.markdown(
+                    shear_fs_curve_svg(
+                        Fy=float(Fy),
+                        h_over_w_actual=float(h) / float(w) if w > 0 else 0.0,
+                        Fs_actual=float(Fs_MPa),
+                        stiffened=web_type.startswith("Stiffened"),
+                        kv=_kv_for_plot,
+                    ),
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Curve traces CSA S16 Cl. 13.4.1.1 branches (yield plateau \u2192 inelastic "
+                    "buckling \u2192 elastic buckling). Red dot = current section operating point."
+                )
+
         except Exception as e:
             st.error(f"Shear calculation error: {e}")
 
@@ -1107,6 +1192,139 @@ if selected_section:
                 if ltb_res.get("trace"):
                     ltb_res["trace"].render()
 
+            # ── Beam elevation diagram (with brace marks + moment shape) ──
+            st.markdown("**Beam Elevation Diagram**")
+            _ltb_load_type = "udl" if omega2_case in ("udl", "triangular") else (
+                "point" if omega2_case == "midspan_point" else "udl"
+            )
+            st.markdown(
+                beam_elevation_svg(braced=False, load_type=_ltb_load_type),
+                unsafe_allow_html=True,
+            )
+
+            # ── Mr vs Lb curve ─────────────────────────────────────────────
+            try:
+                _Iy_raw = shape.get("Iy"); _J_raw = shape.get("J"); _Cw_raw = shape.get("Cw")
+                _Zx_raw = shape.get("Zx"); _Sx_raw = shape.get("Sx")
+                if all(x is not None for x in (_Iy_raw, _J_raw, _Cw_raw, _Zx_raw, _Sx_raw)):
+                    _Iy = float(_Iy_raw) * 1e6
+                    _J  = float(_J_raw)  * 1e3
+                    _Cw = float(_Cw_raw) * 1e9
+                    _Zx = float(_Zx_raw) * 1e3
+                    _Sx = float(_Sx_raw) * 1e3
+                    _cls = int(class_info["class_section"])
+                    _Mp_kNm = _Zx * float(Fy) / 1e6
+                    _My_kNm = _Sx * float(Fy) / 1e6
+                    _Mref = _Mp_kNm if _cls <= 2 else _My_kNm
+
+                    _L_pts: List[float] = []
+                    _Mr_pts: List[float] = []
+                    _L_step = 250.0
+                    _Lmax_plot = max(15000.0, Lb_mm * 1.5)
+                    _Li = 500.0
+                    while _Li <= _Lmax_plot:
+                        _Mu_i = critical_elastic_moment_kNm(_Li, _Iy, _J, _Cw, omega2)
+                        if _Mu_i > 0.67 * _Mref:
+                            _Mr_i = min(1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_i),
+                                        PHI_B * _Mref)
+                        else:
+                            _Mr_i = PHI_B * _Mu_i
+                        _L_pts.append(_Li); _Mr_pts.append(_Mr_i)
+                        _Li += _L_step
+
+                    _Mu_now = critical_elastic_moment_kNm(Lb_mm, _Iy, _J, _Cw, omega2)
+                    if _Mu_now > 0.67 * _Mref:
+                        _Mr_now = min(1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_now),
+                                      PHI_B * _Mref)
+                    else:
+                        _Mr_now = PHI_B * _Mu_now
+
+                    st.markdown("**Mr vs Unbraced Length Lb  (CSA S16 Cl. 13.6 textbook curve)**")
+                    st.markdown(
+                        ltb_curve_svg(
+                            L_list=_L_pts, Mr_list=_Mr_pts,
+                            phiMp=PHI_B * _Mp_kNm, phiMy=PHI_B * _My_kNm,
+                            section_class=_cls,
+                            L_current_mm=Lb_mm, Mr_current=_Mr_now,
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(f"Mu (current) = {_Mu_now:,.1f} kN·m  |  "
+                               f"Mr (curve, current) = {_Mr_now:,.1f} kN·m  |  "
+                               f"ω₂ = {omega2:.2f}")
+                else:
+                    st.info("Mr-vs-Lb curve unavailable — Iy, J, Cw, Zx or Sx missing for this section.")
+            except Exception as _e:
+                st.info(f"Mr-vs-Lb curve unavailable: {_e}")
+
+            # ── Advanced ω₂ formulas (Cl. 13.6 Eq. 2 & Eq. 3) ──────────────
+            with st.expander("Advanced ω₂ — general 4-point or linear-gradient formula", expanded=False):
+                _adv_mode = st.radio(
+                    "ω₂ formula",
+                    ["Preset case (above)",
+                     "Linear gradient — Eq. 3:  ω₂ = 1.75 + 1.05κ + 0.3κ²",
+                     "General 4-point — Eq. 2:  ω₂ = 4·M_max / √(M²_max + 4M²_a + 7M²_b + 4M²_c)"],
+                    index=0,
+                    horizontal=False,
+                    key="adv_omega2_mode",
+                )
+                _omega2_alt = None
+                if _adv_mode.startswith("Linear"):
+                    _kappa = st.slider(
+                        "κ = M_small / M_large  (+ double curvature, − single curvature)",
+                        min_value=-1.0, max_value=1.0, value=0.0, step=0.05, key="kappa_input",
+                    )
+                    _omega2_alt = omega2_linear(_kappa)
+                    st.latex(r"\omega_2 = 1.75 + 1.05\,\kappa + 0.3\,\kappa^2 \le 2.5")
+                    st.write(f"κ = {_kappa:.2f}  →  ω₂ = {_omega2_alt:.3f}")
+                elif _adv_mode.startswith("General"):
+                    _c1, _c2, _c3, _c4 = st.columns(4)
+                    with _c1:
+                        _Mmax = st.number_input("M_max", min_value=0.0, value=100.0, step=10.0, key="Mmax_in")
+                    with _c2:
+                        _Ma   = st.number_input("M_a (¼·L)", min_value=0.0, value=50.0, step=10.0, key="Ma_in")
+                    with _c3:
+                        _Mb   = st.number_input("M_b (½·L)", min_value=0.0, value=80.0, step=10.0, key="Mb_in")
+                    with _c4:
+                        _Mc   = st.number_input("M_c (¾·L)", min_value=0.0, value=50.0, step=10.0, key="Mc_in")
+                    _omega2_alt = omega2_general(_Mmax, _Ma, _Mb, _Mc)
+                    st.latex(r"\omega_2 = \frac{4\,M_{max}}{\sqrt{M_{max}^2 + 4M_a^2 + 7M_b^2 + 4M_c^2}} \le 2.5")
+                    st.write(f"ω₂ = {_omega2_alt:.3f}")
+
+                if _omega2_alt is not None:
+                    try:
+                        _Iy_raw = shape.get("Iy"); _J_raw = shape.get("J"); _Cw_raw = shape.get("Cw")
+                        _Zx_raw = shape.get("Zx"); _Sx_raw = shape.get("Sx")
+                        if all(x is not None for x in (_Iy_raw, _J_raw, _Cw_raw, _Zx_raw, _Sx_raw)):
+                            _Iy = float(_Iy_raw) * 1e6
+                            _J  = float(_J_raw)  * 1e3
+                            _Cw = float(_Cw_raw) * 1e9
+                            _Zx = float(_Zx_raw) * 1e3
+                            _Sx = float(_Sx_raw) * 1e3
+                            _cls = int(class_info["class_section"])
+                            _Mp = _Zx * float(Fy) / 1e6
+                            _My = _Sx * float(Fy) / 1e6
+                            _Mu_alt = critical_elastic_moment_kNm(Lb_mm, _Iy, _J, _Cw, _omega2_alt)
+                            _Mref = _Mp if _cls <= 2 else _My
+                            if _Mu_alt > 0.67 * _Mref:
+                                _Mr_alt = min(1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_alt),
+                                              PHI_B * _Mref)
+                                _branch = "Inelastic LTB:  Mr = 1.15·φ·M_ref·(1 − 0.28·M_ref/Mu) ≤ φ·M_ref"
+                            else:
+                                _Mr_alt = PHI_B * _Mu_alt
+                                _branch = "Elastic LTB:  Mr = φ·Mu"
+                            st.write(f"**Mu (Cl. 13.6 Eq. 1)** = {_Mu_alt:,.1f} kN·m")
+                            st.write(f"**Mr (Cl. 13.6)** = {_Mr_alt:,.1f} kN·m   _({_branch})_")
+                            if ltb_res.get("ok"):
+                                _delta = _Mr_alt - float(ltb_res["Mr_kNm"])
+                                st.caption(f"Difference vs preset-ω₂ result above: "
+                                           f"{_delta:+,.1f} kN·m "
+                                           f"({100.0*_delta/max(float(ltb_res['Mr_kNm']),1e-6):+.1f}%)")
+                        else:
+                            st.info("Iy / J / Cw / Zx / Sx missing — alternate Mr cannot be computed.")
+                    except Exception as _e2:
+                        st.info(f"Alt-ω₂ Mr unavailable: {_e2}")
+
         except Exception as e:
             st.error(f"LTB calculation error: {e}")
 
@@ -1142,12 +1360,23 @@ if selected_section:
                 else:
                     P_load = st.number_input("P (kN)", min_value=0.1, value=50.0, step=5.0)
 
-                defl_limit_ratio = st.selectbox(
-                    "Deflection limit",
-                    options=[180, 240, 360, 480],
-                    format_func=lambda x: f"L/{x}",
-                    index=1,
+                _td1_key = st.selectbox(
+                    "Deflection limit  (CSA S16 Table D.1)",
+                    options=[k for k, _, _ in TABLE_D1_LIMITS],
+                    format_func=lambda k: dict((kk, ll) for kk, ll, _ in TABLE_D1_LIMITS)[k],
+                    index=0,
                 )
+                _td1_div = dict((kk, dv) for kk, _, dv in TABLE_D1_LIMITS).get(_td1_key)
+                if _td1_div is None:
+                    defl_limit_ratio = st.selectbox(
+                        "Custom L / n",
+                        options=[180, 240, 360, 480],
+                        format_func=lambda x: f"L/{x}",
+                        index=1,
+                    )
+                else:
+                    defl_limit_ratio = _td1_div
+                    st.caption(f"Using Table D.1 limit: L / {_td1_div}")
 
             try:
                 E = E_MPA_DEFAULT

@@ -183,9 +183,17 @@ CANON_SYNONYMS: Dict[str, List[str]] = {
     "w": ["w", "W", "tw", "web_thickness", "web_thickness_w", "web_thickness_w_mm"],
 
     # Section properties (IMPORTANT: include exact CSA headers too)
+    # Note: _norm() strips parentheses + non-ascii, so "Iy (10^6 mm?)" → "iy_106_mm"
     "Zx": ["Zx", "zx", "z_x", "plastic_modulus_zx", "plastic_modulus_zx_mm3", "zx_mm3", "zx_103_mm"],
     "Sx": ["Sx", "sx", "s_x", "elastic_modulus_sx", "elastic_modulus_sx_mm3", "sx_mm3", "sx_103_mm"],
     "Ix": ["Ix", "ix", "i_x", "ix_106_mm4", "ix_106_mm"],
+    "Zy": ["Zy", "zy", "z_y", "zy_mm3", "zy_103_mm"],
+    "Sy": ["Sy", "sy", "s_y", "sy_mm3", "sy_103_mm"],
+    "Iy": ["Iy", "iy", "i_y", "iy_106_mm4", "iy_106_mm"],
+    "J":  ["J", "j", "torsion_constant_j", "j_103_mm4", "j_103_mm"],
+    "Cw": ["Cw", "cw", "c_w", "warping_constant_cw", "cw_109_mm6", "cw_109_mm"],
+    "rx": ["rx", "r_x", "radius_of_gyration_rx", "rx_mm"],
+    "ry": ["ry", "r_y", "radius_of_gyration_ry", "ry_mm"],
     "k":  ["k", "K", "distance_k", "distance_k_mm", "fillet_distance"],
 }
 
@@ -211,10 +219,13 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
         if v is not None:
             out[sym] = v
 
-    for sym in ("Zx", "Sx", "Ix", "k"):
+    for sym in ("Zx", "Sx", "Ix", "Zy", "Sy", "Iy", "J", "Cw", "rx", "ry", "k"):
         v = _pick(rec, CANON_SYNONYMS[sym])
         if v is not None:
-            out[sym] = v
+            try:
+                out[sym] = float(str(v).replace(",", "").strip())
+            except (ValueError, TypeError):
+                out[sym] = v
 
     return out
 

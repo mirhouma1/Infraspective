@@ -950,6 +950,24 @@ if selected_section:
         st.error(f"Section {selected_section} not found.")
         st.stop()
 
+    # ── Raw CSV record (mirrors Compression page's "Raw CSV Record" tab) ──
+    with st.expander(f"🗃️ Raw CSV record — {selected_section}", expanded=False):
+        st.caption("All properties for this section as loaded from the CISC W-section table. "
+                   "Canonical keys (Zx, Sx, Ix, Iy, J, Cw, Sy, Zy, rx, ry, k, d, b, t, w) are "
+                   "what the calculation engine consumes; remaining keys are the original CSV headers.")
+        _canonical_keys = ("designation", "d", "b", "t", "w", "k",
+                           "Ix", "Sx", "Zx", "rx", "Iy", "Sy", "Zy", "ry", "J", "Cw")
+        _canon_rows = [(k, shape.get(k)) for k in _canonical_keys if shape.get(k) is not None]
+        if _canon_rows:
+            st.markdown("**Canonical properties (used by calculations)**")
+            st.table(pd.DataFrame(_canon_rows, columns=["Property", "Value"]).set_index("Property"))
+        _raw_rows = [(k, v) for k, v in shape.items() if k not in _canonical_keys]
+        if _raw_rows:
+            st.markdown("**All other CSV columns**")
+            st.table(pd.DataFrame(_raw_rows, columns=["CSV Column", "Value"]).set_index("CSV Column"))
+        if st.checkbox("Show full record as JSON", value=False, key="raw_json_toggle"):
+            st.json(shape)
+
     try:
         class_info = table2_class_major_axis(shape, float(Fy))
         mr_info = Mr_laterally_supported(shape, float(Fy), class_info["class_section"])

@@ -326,9 +326,13 @@ def class_limits_flange(Fy: float) -> tuple:
 
 
 def class_limits_web(Fy: float) -> tuple:
-    """Returns (Class 1, Class 2, Class 3) limits for web."""
+    """Returns (Class 1, Class 2, Class 3) limits for the WEB of an I-section in flexure.
+
+    CSA S16 Table 2 (webs of I-sections): 1100/1700/1900 ÷ √Fy, each multiplied by
+    (1 − k·Cf/(φCy)). In pure bending Cf = 0, so the reduction term is 1.0.
+    """
     r = 1.0 / math.sqrt(Fy)
-    return 420*r, 525*r, 670*r
+    return 1100*r, 1700*r, 1900*r
 
 
 def classify_table2_W_major(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
@@ -363,11 +367,16 @@ def classify_table2_W_major(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
 
 
 def flange_lambda_r(Fy: float) -> float:
-    return 170.0 / math.sqrt(Fy)
+    # Class 3/4 boundary for an I-section flange (one edge supported), CSA S16 Table 2.
+    # An element only becomes Class 4 (needs an effective-width reduction) once it
+    # exceeds the Class 3 limit, so the effective-width boundary must equal that limit.
+    return 200.0 / math.sqrt(Fy)
 
 
 def web_lambda_r(Fy: float) -> float:
-    return 525.0 / math.sqrt(Fy)
+    # Class 3/4 boundary for an I-section web (two edges supported) in flexure, CSA S16
+    # Table 2 (Cf = 0). Matches the Class 3 web limit used in classification (1700/√Fy).
+    return 1700.0 / math.sqrt(Fy)
 
 
 # ----------------------------
@@ -474,8 +483,8 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     lam_w = h / w          # h/w
 
     r = 1.0 / math.sqrt(Fy)
-    f1, f2, f3 = 145 * r, 170 * r, 200 * r
-    w1, w2, w3 = 420 * r, 525 * r, 670 * r
+    f1, f2, f3 = 145 * r, 170 * r, 200 * r  # flange of I-section (one edge)
+    w1, w2, w3 = 1100 * r, 1700 * r, 1900 * r  # web of I-section (two edges), Cf=0 in flexure
 
     def classify(lam: float, lim1: float, lim2: float, lim3: float) -> int:
         if lam <= lim1:
@@ -513,7 +522,7 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
             "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
             "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
         },
-        "coeffs": {"flange": (145, 170, 200), "web": (420, 525, 670)},
+        "coeffs": {"flange": (145, 170, 200), "web": (1100, 1700, 1900)},
         "geometry_used": geom,
         "se_info": se_info,
     }
@@ -544,7 +553,7 @@ def classification_steps_md(ci: Dict[str, Any], Fy: float) -> str:
     lines = []
     lines.append(f"**Material:** Fy = {Fy:g} MPa  →  √Fy = {sqrt_fy:.3f}")
     lines.append("")
-    lines.append("**1 · Flange — b/2t** (element supported along one edge, Table 2)")
+    lines.append("**1 · Flange — b/2t** (flange of I-section, supported along one edge — Table 2)")
     lines.append(f"- Measured: b = {b:.1f} mm, t = {t:.1f} mm")
     lines.append(f"- Ratio: b/2t = {b:.1f} / (2 × {t:.1f}) = **{lam_f:.2f}**")
     lines.append(f"- Class 1 limit: 145/√Fy = 145/{sqrt_fy:.3f} = {lim(cf1):.2f}")
@@ -552,9 +561,10 @@ def classification_steps_md(ci: Dict[str, Any], Fy: float) -> str:
     lines.append(f"- Class 3 limit: 200/√Fy = 200/{sqrt_fy:.3f} = {lim(cf3):.2f}")
     lines.append(f"- Result: {verdict(lam_f, lim(cf1), lim(cf2), lim(cf3), ci['class_flange'])}")
     lines.append("")
-    lines.append("**2 · Web — h/w** (element supported along two edges, Table 2)")
+    lines.append("**2 · Web — h/w** (web of I-section, supported along two edges — Table 2)")
     lines.append(f"- Clear web depth: h = d − 2t = {d:.1f} − 2 × {t:.1f} = {h:.1f} mm")
     lines.append(f"- Ratio: h/w = {h:.1f} / {w:.1f} = **{lam_w:.2f}**")
+    lines.append("- Pure bending (no axial): the (1 − Cf/φCy) reduction term = 1.0")
     lines.append(f"- Class 1 limit: {cw1}/√Fy = {cw1}/{sqrt_fy:.3f} = {lim(cw1):.2f}")
     lines.append(f"- Class 2 limit: {cw2}/√Fy = {cw2}/{sqrt_fy:.3f} = {lim(cw2):.2f}")
     lines.append(f"- Class 3 limit: {cw3}/√Fy = {cw3}/{sqrt_fy:.3f} = {lim(cw3):.2f}")
@@ -580,10 +590,19 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
             return {"mr_kNm": None, "mode": "Missing Zx data", "error": True}
         Zx = fnum(Zx_raw, "Zx") * 1000  # (10^3 mm^3) → (mm^3)
         Mr_Nmm = PHI_B * Zx * Fy
+        mr_kNm = to_kNm_from_Nmm(Mr_Nmm)
+        steps = [
+            f"**Class {class_section} → plastic section — use Zx** (CSA S16 Cl. 13.5 a)",
+            f"- Plastic modulus: Zx = {Zx/1000:.0f} × 10³ mm³ = {Zx:,.0f} mm³",
+            "- Formula: Mr = φb · Zx · Fy",
+            f"- Substitute: Mr = {PHI_B} × {Zx:,.0f} × {Fy:g}",
+            f"- Mr = {Mr_Nmm:,.0f} N·mm = **{mr_kNm:,.1f} kN·m**",
+        ]
         return {
-            "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
+            "mr_kNm": round(mr_kNm, 1),
             "mode": f"Plastic (Zx = {Zx/1000:.0f} × 10³ mm³)",
             "error": False,
+            "steps": steps,
         }
 
     if class_section == 3:
@@ -591,10 +610,19 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
             return {"mr_kNm": None, "mode": "Missing Sx data", "error": True}
         Sx = fnum(Sx_raw, "Sx") * 1000
         Mr_Nmm = PHI_B * Sx * Fy
+        mr_kNm = to_kNm_from_Nmm(Mr_Nmm)
+        steps = [
+            "**Class 3 → non-compact section — use Sx** (CSA S16 Cl. 13.5 b)",
+            f"- Elastic modulus: Sx = {Sx/1000:.0f} × 10³ mm³ = {Sx:,.0f} mm³",
+            "- Formula: Mr = φb · Sx · Fy",
+            f"- Substitute: Mr = {PHI_B} × {Sx:,.0f} × {Fy:g}",
+            f"- Mr = {Mr_Nmm:,.0f} N·mm = **{mr_kNm:,.1f} kN·m**",
+        ]
         return {
-            "mr_kNm": round(to_kNm_from_Nmm(Mr_Nmm), 1),
+            "mr_kNm": round(mr_kNm, 1),
             "mode": f"Elastic (Sx = {Sx/1000:.0f} × 10³ mm³)",
             "error": False,
+            "steps": steps,
         }
 
     # Class 4
@@ -606,12 +634,20 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
     se_result = compute_Se_CSA(d, b, t, w, Fy)
     Se = se_result["Se"]
     Mr_kNm = Mr_class4(Se, Fy, PHI_B)
+    steps = [
+        "**Class 4 → slender section — use effective modulus Se** (CSA S16 Cl. 13.5 c)",
+        f"- Effective modulus: Se = {Se/1000:.0f} × 10³ mm³ = {Se:,.0f} mm³",
+        "- Formula: Mr = φb · Se · Fy",
+        f"- Substitute: Mr = {PHI_B} × {Se:,.0f} × {Fy:g}",
+        f"- Mr = **{Mr_kNm:,.1f} kN·m**  (see Se derivation below for how Se is built)",
+    ]
 
     return {
         "mr_kNm": round(Mr_kNm, 1),
         "mode": f"Effective (Se = {Se/1000:.0f} × 10³ mm³)",
         "error": False,
         "class4_details": se_result,
+        "steps": steps,
     }
 
 
@@ -1094,6 +1130,10 @@ if selected_section:
                     st.error(f"❌ **FAIL** — Mu/Mr = {ratio:.2f} > 1.0")
                 st.metric("Demand/Capacity Ratio", f"{ratio:.2%}")
 
+        if mr_info.get("steps"):
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join(mr_info["steps"]))
+
     st.divider()
 
     # ----------------------------
@@ -1483,6 +1523,36 @@ if selected_section:
                         st.error(f"❌ **FAIL** — δ = {delta_mm:.2f} mm > L/{defl_limit_ratio} = {delta_limit:.2f} mm")
 
                     st.caption(f"Utilization: {ratio:.1%}")
+
+                with st.expander("📐 Show calculation steps", expanded=True):
+                    if defl_case == "udl":
+                        st.markdown("\n".join([
+                            "**Mid-span deflection — UDL, simply supported**",
+                            "- Formula: δ = 5 · w · L⁴ / (384 · E · I)",
+                            f"- Inputs (consistent units): w = {w_load:.2f} N/mm "
+                            f"(= {w_load:.2f} kN/m), L = {L_mm:,.0f} mm, "
+                            f"E = {E:,.0f} MPa, I = {Ix_val*1e6:,.0f} mm⁴",
+                            f"- Substitute: δ = 5 × {w_load:.2f} × ({L_mm:,.0f})⁴ / "
+                            f"(384 × {E:,.0f} × {Ix_val*1e6:,.0f})",
+                            f"- δmax = **{delta_mm:.2f} mm**",
+                        ]))
+                    else:
+                        st.markdown("\n".join([
+                            "**Mid-span deflection — central point load, simply supported**",
+                            "- Formula: δ = P · L³ / (48 · E · I)",
+                            f"- Inputs (consistent units): P = {P_load*1000:,.0f} N "
+                            f"(= {P_load:.1f} kN), L = {L_mm:,.0f} mm, "
+                            f"E = {E:,.0f} MPa, I = {Ix_val*1e6:,.0f} mm⁴",
+                            f"- Substitute: δ = {P_load*1000:,.0f} × ({L_mm:,.0f})³ / "
+                            f"(48 × {E:,.0f} × {Ix_val*1e6:,.0f})",
+                            f"- δmax = **{delta_mm:.2f} mm**",
+                        ]))
+                    st.markdown("\n".join([
+                        f"- Allowable limit: L/{defl_limit_ratio} = {L_mm:,.0f} mm / {defl_limit_ratio} "
+                        f"= {delta_limit:.2f} mm",
+                        f"- Utilization: δ ÷ (L/{defl_limit_ratio}) = {delta_mm:.2f} ÷ {delta_limit:.2f} "
+                        f"= {ratio:.1%}",
+                    ]))
 
             except Exception as e:
                 st.error(f"Deflection calculation error: {e}")

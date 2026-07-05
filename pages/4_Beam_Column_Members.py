@@ -735,6 +735,27 @@ try:
             else:
                 st.warning("Mry could not be computed (Class 4 or missing modulus).")
 
+        with st.expander("📐 Show calculation steps", expanded=True):
+            _steps_mr = [f"**Moment Resistance — CSA S16 Cl. 13.5** (Section Class {sc})"]
+            _mod_lbl = "Z" if sc in (1, 2) else "S"
+            if mod_x_val is not None and Mrx_kNm is not None:
+                _steps_mr += [
+                    f"- Formula: M_rx = φ · {_mod_lbl}x · Fy",
+                    f"- Substitute: M_rx = {PHI} × {mod_x_val:,.0f} mm³ × {Fy:.0f} MPa = {Mrx_kNm * 1e6:,.0f} N·mm",
+                    f"- Result: **M_rx = {Mrx_kNm:.1f} kN·m**",
+                ]
+            else:
+                _steps_mr.append("- M_rx not computed (Class 4 or missing modulus).")
+            if mod_y_val is not None and Mry_kNm is not None:
+                _steps_mr += [
+                    f"- Formula: M_ry = φ · {_mod_lbl}y · Fy",
+                    f"- Substitute: M_ry = {PHI} × {mod_y_val:,.0f} mm³ × {Fy:.0f} MPa = {Mry_kNm * 1e6:,.0f} N·mm",
+                    f"- Result: **M_ry = {Mry_kNm:.1f} kN·m**",
+                ]
+            else:
+                _steps_mr.append("- M_ry not computed (Class 4 or missing modulus).")
+            st.markdown("\n".join(_steps_mr))
+
         st.markdown("---")
 
         # ── Step 2 : Tension resistance Tr ────────────────────────────────
@@ -746,6 +767,14 @@ try:
             f"= {Tr_kN:.1f} kN",
             language="text",
         )
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Tension Resistance Tr — CSA S16 Cl. 13.2**",
+                "- Formula: Tr = φ · A · Fy",
+                f"- Substitute: Tr = {PHI} × {A:,.0f} mm² × {Fy:.0f} MPa = {Tr_kN * 1000:,.0f} N",
+                f"- Result: **Tr = {Tr_kN:.1f} kN**",
+            ]))
 
         st.markdown("---")
 
@@ -769,6 +798,17 @@ try:
             st.success(f"✅  PASS   Interaction = {interaction:.3f} ≤ 1.0")
         else:
             st.error(f"❌  FAIL   Interaction = {interaction:.3f} > 1.0")
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Tension + Bending Interaction — CSA S16 Cl. 13.9**",
+                "- Formula: Tf/Tr + Mfx/Mrx + Mfy/Mry ≤ 1.0",
+                f"- Tf/Tr = {Tf:.1f} / {Tr_kN:.1f} = {ratio_T:.4f}",
+                f"- Mfx/Mrx = {Mfx:.1f} / {mrx_str} = {ratio_Mx:.4f}",
+                f"- Mfy/Mry = {Mfy:.1f} / {mry_str} = {ratio_My:.4f}",
+                f"- Substitute: {ratio_T:.4f} + {ratio_Mx:.4f} + {ratio_My:.4f}",
+                f"- Result: **Interaction = {interaction:.4f}** ({'PASS ≤ 1.0' if interaction <= 1.0 else 'FAIL > 1.0'})",
+            ]))
 
         # ── Step 4 : Cl. 13.9.2 — Laterally unsupported check ────────────
         if run_136:
@@ -816,6 +856,14 @@ try:
                 language="text",
             )
 
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Critical Elastic Moment Mu — CSA S16 Cl. 13.6**",
+                    "- Formula: Mu = (ω₂·π/L)·√(E·Iy·G·J + (π·E/L)²·Iy·Cw)",
+                    f"- Substitute: Mu = ({omega2_val:.3f}·π/{L_mm_136:,.0f})·√({E:,.0f}×{Iy_val:.3e}×{G_STEEL:,.0f}×{J_val:.3e} + (π×{E:,.0f}/{L_mm_136:,.0f})²×{Iy_val:.3e}×{Cw_mm6:.3e})",
+                    f"- Result: **Mu = {Mu_kNm:.1f} kN·m**",
+                ]))
+
             st.markdown("**4b — Plastic Moment Mp and branch selection**")
             Zx_val = get_prop(shape, "Zx")
             st.code(
@@ -824,6 +872,16 @@ try:
                 f"  Mu = {Mu_kNm:.1f} kN·m  →  {branch}",
                 language="text",
             )
+
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Plastic Moment Mp & Branch Selection — CSA S16 Cl. 13.6**",
+                    "- Formula: Mp = Fy · Zx",
+                    f"- Substitute: Mp = {Fy:.0f} MPa × {Zx_val:,.0f} mm³ = {Mp_kNm*1e6:,.0f} N·mm",
+                    f"- Result: **Mp = {Mp_kNm:.1f} kN·m**",
+                    f"- Threshold: 0.67·Mp = {0.67*Mp_kNm:.1f} kN·m",
+                    f"- Branch: Mu = {Mu_kNm:.1f} kN·m → **{branch}**",
+                ]))
 
             st.markdown("**4c — Factored Moment Resistance Mr  (Cl. 13.6)**")
             st.latex(res_136["formula"])
@@ -841,6 +899,24 @@ try:
                     f"  Mr = {Mr136_kNm:.1f} kN·m",
                     language="text",
                 )
+
+            with st.expander("📐 Show calculation steps", expanded=True):
+                if branch.startswith("Mu >"):
+                    _mr_steps = [
+                        "**Factored Moment Resistance Mr — CSA S16 Cl. 13.6** (Mu > 0.67·Mp)",
+                        "- Formula: Mr = 1.15·φ·Mp·(1 − 0.28·Mp/Mu) ≤ φ·Mp",
+                        f"- Substitute: Mr = 1.15 × {PHI} × {Mp_kNm:.1f} × (1 − 0.28 × {Mp_kNm:.1f} / {Mu_kNm:.1f}) = {1.15*PHI*Mp_kNm*(1-0.28*Mp_kNm/Mu_kNm):.1f} kN·m",
+                        f"- Cap: φ·Mp = {PHI*Mp_kNm:.1f} kN·m",
+                        f"- Result: **Mr = {Mr136_kNm:.1f} kN·m**",
+                    ]
+                else:
+                    _mr_steps = [
+                        "**Factored Moment Resistance Mr — CSA S16 Cl. 13.6** (Mu ≤ 0.67·Mp)",
+                        "- Formula: Mr = φ·Mu",
+                        f"- Substitute: Mr = {PHI} × {Mu_kNm:.1f} kN·m",
+                        f"- Result: **Mr = {Mr136_kNm:.1f} kN·m**",
+                    ]
+                st.markdown("\n".join(_mr_steps))
 
             st.markdown("**4d — Interaction Check  (Cl. 13.9.2)**")
             if sc in (1, 2):
@@ -874,6 +950,20 @@ try:
                 st.success(f"✅  PASS   Cl. 13.9.2 Interaction = {interact_136:.3f} ≤ 1.0")
             else:
                 st.error(f"❌  FAIL   Cl. 13.9.2 Interaction = {interact_136:.3f} > 1.0")
+
+            with st.expander("📐 Show calculation steps", expanded=True):
+                if sc in (1, 2):
+                    _mod_136_n, _mod_136_v = "Z", Zx_v
+                else:
+                    _mod_136_n, _mod_136_v = "S", Sx_v
+                st.markdown("\n".join([
+                    f"**Laterally Unsupported Interaction — CSA S16 Cl. 13.9.2** (Class {sc})",
+                    f"- Formula: Mf/Mr − Tf·{_mod_136_n}/(Mr·A) ≤ 1.0",
+                    f"- Mfx/Mr = {Mfx:.1f} / {Mr136_kNm:.1f} = {Mfx/Mr136_kNm:.4f}",
+                    f"- Tf·{_mod_136_n}/(Mr·A) = {Tf:.1f} × {_mod_136_v:.3e} / ({Mr136_kNm:.1f}×10³ × {A:.0f}) = {(Tf*_mod_136_v)/(Mr136_kNm*1e3*A):.4f}",
+                    f"- Substitute: {Mfx/Mr136_kNm:.4f} − {(Tf*_mod_136_v)/(Mr136_kNm*1e3*A):.4f}",
+                    f"- Result: **Interaction = {interact_136:.4f}** ({'PASS ≤ 1.0' if interact_136 <= 1.0 else 'FAIL > 1.0'})",
+                ]))
 
     else:  # COMPRESSION — Results
         missing = [s for s, v in [("A", A), ("rx", rx), ("ry", ry), ("Ix", Ix), ("Iy", Iy)] if v is None]
@@ -984,6 +1074,18 @@ try:
                 language="text",
             )
 
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Euler Load Ce & Amplification U₁ — CSA S16 Cl. 13.8.4**",
+                f"- Moment gradient factor (Cl. 13.8.5): ω₁x = {omega1_x:.3f}, ω₁y = {omega1_y:.3f}",
+                "- Formula: Ce = π²·E·I / L²",
+                f"- Ce,x = π² × {E:.0f} × {Ix:.3e} / {Lx_mm:.0f}² = {Ce_x:,.0f} kN",
+                f"- Ce,y = π² × {E:.0f} × {Iy:.3e} / {Ly_mm:.0f}² = {Ce_y:,.0f} kN",
+                "- Formula: U₁ = ω₁ / (1 − Cf/Ce) ≥ 1.0",
+                f"- U₁x = {omega1_x:.3f} / (1 − {Cf:.1f}/{Ce_x:,.0f}) = {U1x_raw:.4f} → **{U1x:.4f}** (≥ 1.0)",
+                f"- U₁y = {omega1_y:.3f} / (1 − {Cf:.1f}/{Ce_y:,.0f}) = {U1y_raw:.4f} → **{U1y:.4f}** (≥ 1.0)",
+            ]))
+
         st.markdown("---")
 
         # ── P-Delta (system-level) — informational note ───────────────────────
@@ -1037,6 +1139,27 @@ try:
             else:
                 st.warning("Mry could not be computed (Class 4 or missing modulus).")
 
+        with st.expander("📐 Show calculation steps", expanded=True):
+            _steps_mr_c = [f"**Moment Resistance — CSA S16 Cl. 13.5** (Section Class {sc})"]
+            _mod_lbl_c = "Z" if sc in (1, 2) else "S"
+            if mod_x_val is not None and Mrx_135 is not None:
+                _steps_mr_c += [
+                    f"- Formula: M_rx = φ · {_mod_lbl_c}x · Fy",
+                    f"- Substitute: M_rx = {PHI} × {mod_x_val:,.0f} mm³ × {Fy:.0f} MPa = {Mrx_135 * 1e6:,.0f} N·mm",
+                    f"- Result: **M_rx = {Mrx_135:.1f} kN·m**",
+                ]
+            else:
+                _steps_mr_c.append("- M_rx not computed (Class 4 or missing modulus).")
+            if mod_y_val is not None and Mry_135 is not None:
+                _steps_mr_c += [
+                    f"- Formula: M_ry = φ · {_mod_lbl_c}y · Fy",
+                    f"- Substitute: M_ry = {PHI} × {mod_y_val:,.0f} mm³ × {Fy:.0f} MPa = {Mry_135 * 1e6:,.0f} N·mm",
+                    f"- Result: **M_ry = {Mry_135:.1f} kN·m**",
+                ]
+            else:
+                _steps_mr_c.append("- M_ry not computed (Class 4 or missing modulus).")
+            st.markdown("\n".join(_steps_mr_c))
+
         st.markdown("---")
 
         # =====================================================================
@@ -1075,6 +1198,20 @@ try:
             st.success(f"✅  PASS   Check (a) = {int_a:.3f} ≤ 1.0")
         else:
             st.error(f"❌  FAIL   Check (a) = {int_a:.3f} > 1.0")
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Check (a): Cross-Sectional Strength — CSA S16 Cl. 13.8.2a**",
+                "- Compressive resistance (λ = 0): Cr = φ·A·Fy",
+                f"- Substitute: Cr = {PHI} × {A:,.0f} mm² × {Fy:.0f} MPa = {Cr_a:.1f} kN",
+                f"- Result: **Cr = {Cr_a:.1f} kN**",
+                f"- Interaction formula ({clause_ref}): Cf/Cr + {coeff_Mx}·U₁x·Mfx/Mrx + 0.6·U₁y·Mfy/Mry ≤ 1.0",
+                f"- Cf/Cr = {Cf:.1f} / {Cr_a:.1f} = {ra_C:.4f}",
+                f"- {coeff_Mx}·U₁x·Mfx/Mrx = {coeff_Mx} × {U1x:.4f} × {Mfx:.1f} / {Mrx_135:.1f} = {ra_Mx:.4f}",
+                f"- 0.6·U₁y·Mfy/Mry = 0.60 × {U1y:.4f} × {Mfy:.1f} / {Mry_135:.1f} = {ra_My:.4f}",
+                f"- Substitute: {ra_C:.4f} + {ra_Mx:.4f} + {ra_My:.4f}",
+                f"- Result: **Check (a) = {int_a:.4f}** ({'PASS ≤ 1.0' if int_a <= 1.0 else 'FAIL > 1.0'})",
+            ]))
 
         st.markdown("---")
 
@@ -1132,6 +1269,31 @@ try:
         else:
             st.error(f"❌  FAIL   Check (b) = {int_b:.3f} > 1.0")
 
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Check (b): Overall Member Strength — CSA S16 Cl. 13.8.2b**",
+                "- Slenderness: KL/r = K·L/r (K = 1)",
+                f"- KL/r (x) = {Lx_mm:.0f} / {rx:.1f} = {KLr_x_K1:.2f}",
+                f"- KL/r (y) = {Ly_mm:.0f} / {ry:.1f} = {KLr_y_K1:.2f}",
+                f"- Governing KL/r = {KLr_b:.2f} ({gov_axis_b}-axis)",
+                "- Non-dimensional slenderness: λ = (KL/r)·√(Fy/(π²·E))",
+                f"- λ = {KLr_b:.2f} × √({Fy:.0f}/(π²×{E:.0f})) = {lam_b:.4f}",
+                "- Euler stress: Fe = π²·E/(KL/r)²",
+                f"- Fe = π² × {E:.0f} / {KLr_b:.2f}² = {Fe_b:.1f} MPa",
+                f"- Column curve (n = {N_CSA}): Fcr = Fy / (1 + λ^(2n))^(1/n)",
+                f"- Fcr = {Fy:.0f} / (1 + {lam_b:.4f}^(2×{N_CSA}))^(1/{N_CSA}) = {Fcr_b:.1f} MPa",
+                "- Compressive resistance: Cr = φ·A·Fcr",
+                f"- Cr = {PHI} × {A:,.0f} × {Fcr_b:.1f} / 1000 = {Cr_b:.1f} kN",
+                "- Coefficient: β = 0.6 + 0.4·λy ≤ 0.85",
+                f"- β = 0.6 + 0.4 × {lam_y_K1:.4f} = {0.6 + 0.4*lam_y_K1:.4f} → **{beta_bc:.4f}**",
+                f"- Interaction formula ({clause_ref}): Cf/Cr + {coeff_Mx}·U₁x·Mfx/Mrx + β·U₁y·Mfy/Mry ≤ 1.0",
+                f"- Cf/Cr = {Cf:.1f} / {Cr_b:.1f} = {rb_C:.4f}",
+                f"- {coeff_Mx}·U₁x·Mfx/Mrx = {coeff_Mx} × {U1x:.4f} × {Mfx:.1f} / {Mrx_135:.1f} = {rb_Mx:.4f}",
+                f"- β·U₁y·Mfy/Mry = {beta_bc:.4f} × {U1y:.4f} × {Mfy:.1f} / {Mry_135:.1f} = {rb_My:.4f}",
+                f"- Substitute: {rb_C:.4f} + {rb_Mx:.4f} + {rb_My:.4f}",
+                f"- Result: **Check (b) = {int_b:.4f}** ({'PASS ≤ 1.0' if int_b <= 1.0 else 'FAIL > 1.0'})",
+            ]))
+
         # ── Additional moment-only check ──────────────────────────────────────
         st.markdown("**Additional moment-only check  (Cl. 13.8.2b):**")
         st.latex(r"\frac{M_{fx}}{M_{rx}} + \frac{M_{fy}}{M_{ry}} \leq 1.0")
@@ -1149,6 +1311,16 @@ try:
             st.success(f"✅  PASS   Moment check = {int_b_add:.3f} ≤ 1.0")
         else:
             st.error(f"❌  FAIL   Moment check = {int_b_add:.3f} > 1.0")
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Additional Moment-Only Check — CSA S16 Cl. 13.8.2b**",
+                "- Formula: Mfx/Mrx + Mfy/Mry ≤ 1.0",
+                f"- Mfx/Mrx = {Mfx:.1f} / {Mrx_135:.1f} = {rb_add_x:.4f}",
+                f"- Mfy/Mry = {Mfy:.1f} / {Mry_135:.1f} = {rb_add_y:.4f}",
+                f"- Substitute: {rb_add_x:.4f} + {rb_add_y:.4f}",
+                f"- Result: **Moment check = {int_b_add:.4f}** ({'PASS ≤ 1.0' if int_b_add <= 1.0 else 'FAIL > 1.0'})",
+            ]))
 
         st.markdown("---")
 
@@ -1246,6 +1418,32 @@ try:
                 st.success(f"✅  PASS   Check (c) = {int_c:.3f} ≤ 1.0")
             else:
                 st.error(f"❌  FAIL   Check (c) = {int_c:.3f} > 1.0")
+
+            with st.expander("📐 Show calculation steps", expanded=True):
+                _c_steps = [
+                    "**Check (c): Lateral Torsional Buckling — CSA S16 Cl. 13.8.2c**",
+                    "- Weak-axis slenderness (K = 1): KL/r = Ly/ry",
+                    f"- KL/r (y) = {Ly_mm:.0f} / {ry:.1f} = {KLr_c:.2f}",
+                    "- Non-dimensional slenderness: λ = (KL/r)·√(Fy/(π²·E))",
+                    f"- λ = {KLr_c:.2f} × √({Fy:.0f}/(π²×{E:.0f})) = {lam_c:.4f}",
+                    "- Euler stress: Fe = π²·E/(KL/r)²",
+                    f"- Fe = π² × {E:.0f} / {KLr_c:.2f}² = {Fe_c:.1f} MPa",
+                    f"- Column curve (n = {N_CSA}): Fcr = Fy / (1 + λ^(2n))^(1/n)",
+                    f"- Fcr = {Fy:.0f} / (1 + {lam_c:.4f}^(2×{N_CSA}))^(1/{N_CSA}) = {Fcr_c:.1f} MPa",
+                    "- Compressive resistance: Cr = φ·A·Fcr",
+                    f"- Cr = {PHI} × {A:,.0f} × {Fcr_c:.1f} / 1000 = {Cr_c:.1f} kN",
+                    "- Critical elastic moment (Cl. 13.6): Mu = (ω₂·π/L)·√(E·Iy·G·J + (π·E/L)²·Iy·Cw)",
+                    f"- Mu = {Mu_c:.1f} kN·m (L = Ly = {Ly_mm_ltb:,.0f} mm, ω₂ = {omega2_c:.3f})",
+                    f"- Plastic moment: Mp = Fy·Zx = {Mp_c:.1f} kN·m;  0.67·Mp = {0.67*Mp_c:.1f} kN·m → {branch_c}",
+                    f"- Moment resistance: **Mrx (Cl. 13.6) = {Mrx_c:.1f} kN·m**",
+                    f"- Interaction formula ({clause_ref}): Cf/Cr + {coeff_Mx}·U₁x·Mfx/Mrx + β·U₁y·Mfy/Mry ≤ 1.0",
+                    f"- Cf/Cr = {Cf:.1f} / {Cr_c:.1f} = {rc_C:.4f}",
+                    f"- {coeff_Mx}·U₁x·Mfx/Mrx = {coeff_Mx} × {U1x:.4f} × {Mfx:.1f} / {Mrx_c:.1f} = {rc_Mx:.4f}",
+                    f"- β·U₁y·Mfy/Mry = {beta_bc:.4f} × {U1y:.4f} × {Mfy:.1f} / {Mry_135:.1f} = {rc_My:.4f}",
+                    f"- Substitute: {rc_C:.4f} + {rc_Mx:.4f} + {rc_My:.4f}",
+                    f"- Result: **Check (c) = {int_c:.4f}** ({'PASS ≤ 1.0' if int_c <= 1.0 else 'FAIL > 1.0'})",
+                ]
+                st.markdown("\n".join(_c_steps))
 
         except Exception as e_ltb:
             st.error(f"Check (c) could not be computed: {e_ltb}")
@@ -1496,6 +1694,19 @@ try:
             f"  sigma_bottom   = {sigma_a:.1f} - {sigma_bx:.1f}  = {sigma_bot:.1f} MPa  {'<= Fy OK' if abs(sigma_bot) < Fy else '> Fy  YIELDED'}",
             language="text",
         )
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Cross-Section Stress Distribution — combined axial + strong-axis bending**",
+                "- Axial stress: σ_axial = Cf/A",
+                f"- σ_axial = {Cf*1000:.0f} N / {A:.0f} mm² = **{sigma_a:.1f} MPa** (compression)",
+                "- Bending stress (elastic peak): σ_bending = Mfx/Sx",
+                f"- σ_bending = {Mfx*1e6:.0f} N·mm / {Sx:.0f} mm³ = **{sigma_bx:.1f} MPa**",
+                "- Compression flange: σ_top = σ_axial + σ_bending",
+                f"- σ_top = {sigma_a:.1f} + {sigma_bx:.1f} = **{sigma_top:.1f} MPa** ({'≤ Fy OK' if sigma_top < Fy else '> Fy YIELDED'})",
+                "- Tension flange: σ_bottom = σ_axial − σ_bending",
+                f"- σ_bottom = {sigma_a:.1f} − {sigma_bx:.1f} = **{sigma_bot:.1f} MPa** ({'≤ Fy OK' if abs(sigma_bot) < Fy else '> Fy YIELDED'})",
+            ]))
 
 except Exception as e:
     st.error(f"Calculation error: {e}")

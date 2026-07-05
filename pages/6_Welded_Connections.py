@@ -512,6 +512,20 @@ with res_col:
             )
         st.code("\n".join(lines), language="text")
 
+        with st.expander("📐 Show calculation steps", expanded=True):
+            throat_rows = [
+                "**Effective Throat & Weld Area — CSA S16 Cl. 13.13.2.2**",
+                "- Formula: aw = D / √2",
+                f"- Substitute: aw = {D:.1f} / √2",
+                f"- Result: **aw = {throat:.3f} mm**",
+            ]
+            for i, s in enumerate(segments):
+                Aw_i = fillet_Aw(D, s["L"])
+                throat_rows.append(f"- Seg {i+1} — Formula: Aw = aw × L")
+                throat_rows.append(f"- Seg {i+1} — Substitute: Aw = {throat:.3f} × {s['L']:.0f}")
+                throat_rows.append(f"- Seg {i+1} — Result: **Aw = {Aw_i:.2f} mm²**")
+            st.markdown("\n".join(throat_rows))
+
         # ── Step 2: Multi-Orientation Factor Mw ──────────────────────────────
         st.markdown("#### Step 2 — Multi-Orientation Factor Mw  *(Cl. 13.13.2.2)*")
         st.latex(r"M_w = \frac{0.85 + \theta_1/600}{0.85 + \theta_2/600}")
@@ -550,6 +564,28 @@ with res_col:
                     f"             = {Mw_i:.4f}",
                     language="text",
                 )
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            mw_rows = [
+                "**Multi-Orientation Factor Mw — CSA S16 Cl. 13.13.2.2**",
+                "- Formula: Mw = (0.85 + θ₁/600) / (0.85 + θ₂/600)",
+            ]
+            if len(segments) == 1:
+                mw_rows.append(
+                    f"- Single weld orientation (θ = {segments[0]['theta']:.0f}°) → Mw = 1.0"
+                )
+                mw_rows.append("- Result: **Mw = 1.000**")
+            else:
+                mw_rows.append(f"- θ₂ = {theta_max:.0f}° (Seg {idx_max+1}, nearest to 90°)")
+                for i, s in enumerate(segments):
+                    num = 0.85 + s["theta"] / 600
+                    denom = 0.85 + theta_max / 600
+                    mw_rows.append(
+                        f"- Seg {i+1} — Substitute: Mw = (0.85 + {s['theta']:.0f}/600) / "
+                        f"(0.85 + {theta_max:.0f}/600) = {num:.5f} / {denom:.5f}"
+                    )
+                    mw_rows.append(f"- Seg {i+1} — Result: **Mw = {mw_values[i]:.4f}**")
+            st.markdown("\n".join(mw_rows))
 
         # ── Step 3: Factored Shear Resistance Vr per segment ──────────────────
         st.markdown("#### Step 3 — Factored Shear Resistance Vr  *(Cl. 13.13.2.2)*")
@@ -592,8 +628,27 @@ with res_col:
                 language="text",
             )
 
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    f"**Factored Shear Resistance Vr — Seg {i+1} — CSA S16 Cl. 13.13.2.2**",
+                    "- Orientation factor formula: 1.00 + 0.50·sin¹·⁵θ",
+                    f"- Substitute: 1.00 + 0.50 × sin¹·⁵({s['theta']:.0f}°) = 1.00 + 0.50 × {sin15_t:.4f}",
+                    f"- Result: **orientation factor = {of_val:.4f}**",
+                    "- Formula: Vr = 0.67·φw·Aw·Xu·(orientation factor)·Mw",
+                    f"- Substitute: Vr = 0.67 × {PHI_W} × {res['Aw_mm2']:.2f} × {Xu:.0f} × {of_val:.4f} × {Mw_i:.4f}",
+                    f"- Result: **Vr = {res['Vr_kN']:.2f} kN**",
+                ]))
+
         st.markdown("---")
         st.markdown(f"**Total Vr (all segments) = {total_Vr_kN:.2f} kN**")
+        _sub_total_vr = " + ".join(f"{r['Vr_kN']:.2f}" for r in seg_results)
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Total Factored Shear Resistance — CSA S16 Cl. 13.13.2.2**",
+                "- Formula: Vr,total = Σ Vr,i",
+                f"- Substitute: Vr,total = {_sub_total_vr}",
+                f"- Result: **Vr,total = {total_Vr_kN:.2f} kN**",
+            ]))
         st.markdown("---")
 
         # ── Step 4: Base metal check (optional) ──────────────────────────────
@@ -606,6 +661,13 @@ with res_col:
                 f"     = {Vr_bm:.2f} kN",
                 language="text",
             )
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Base Metal Shear Check — CSA S16 Cl. 13.13.2.2**",
+                    "- Formula: Vr = 0.67·φw·Am·Fu",
+                    f"- Substitute: Vr = 0.67 × {PHI_W} × {Am_mm2:.0f} × {Fu:.0f}",
+                    f"- Result: **Vr = {Vr_bm:.2f} kN**",
+                ]))
             gov_Vr = min(total_Vr_kN, Vr_bm)
             st.markdown("---")
             if gov_Vr == total_Vr_kN:
@@ -618,9 +680,23 @@ with res_col:
                     f"NOTE — Base metal governs: **Vr = {Vr_bm:.2f} kN** "
                     f"(weld metal Vr = {total_Vr_kN:.2f} kN)"
                 )
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Governing Factored Shear Resistance — CSA S16 Cl. 13.13.2.2**",
+                    "- Formula: Vr = min(weld metal Vr, base metal Vr)",
+                    f"- Substitute: Vr = min({total_Vr_kN:.2f} kN, {Vr_bm:.2f} kN)",
+                    f"- Result: **Vr = {gov_Vr:.2f} kN**",
+                ]))
         else:
             gov_Vr = total_Vr_kN
             st.success(f"**Governing Vr = {gov_Vr:.2f} kN**")
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Governing Factored Shear Resistance — CSA S16 Cl. 13.13.2.2**",
+                    "- Formula: Vr = Σ Vr,i (weld metal governs — no base-metal check requested)",
+                    f"- Substitute: Vr = {total_Vr_kN:.2f} kN",
+                    f"- Result: **Vr = {gov_Vr:.2f} kN**",
+                ]))
 
         st.info(
             "Weld returns not accounted for in the joint capacity "
@@ -653,6 +729,17 @@ with res_col:
         st.success(
             f"**Vr = {res_g['Vr_kN']:.2f} kN** — governed by {res_g['governs']}"
         )
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Groove Weld Shear Resistance — CSA S16 Cl. 13.13.2.1**",
+                "- Base metal formula: Vr = 0.67·φw·Am·Fu",
+                f"- Substitute: Vr = 0.67 × {PHI_W} × {Am_mm2_groove:.0f} × {Fu:.0f}",
+                f"- Result: **Vr(base metal) = {res_g['Vr_base_kN']:.2f} kN**",
+                "- Weld metal formula: Vr = 0.67·φw·Aw·Xu",
+                f"- Substitute: Vr = 0.67 × {PHI_W} × {Aw_mm2:.0f} × {Xu:.0f}",
+                f"- Result: **Vr(weld metal) = {res_g['Vr_weld_kN']:.2f} kN**",
+                f"- Governing (least): **Vr = {res_g['Vr_kN']:.2f} kN** ({res_g['governs']})",
+            ]))
         st.markdown("---")
 
         if weld_type == "Complete Joint Penetration (CJP) Groove":
@@ -665,6 +752,13 @@ with res_col:
                 r"T_r = \phi \cdot A_g \cdot F_y \quad "
                 r"\text{(base metal governs — full restoration)}"
             )
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**CJP Groove Tension Resistance — CSA S16 Cl. 13.13.3.1**",
+                    "- Formula: Tr = φ·Ag·Fy",
+                    "- Substitute: matching electrodes fully restore the base metal strength",
+                    "- Result: **Tr = full base metal tension capacity (φ·Ag·Fy)**",
+                ]))
 
         else:   # PJP
             st.markdown("#### Step 2 — Tension Resistance  *(Cl. 13.13.3.2 / 13.13.3.3)*")
@@ -678,6 +772,17 @@ with res_col:
                     language="text",
                 )
                 st.success(f"**Tr = {res_t['Tr_kN']:.2f} kN**")
+                with st.expander("📐 Show calculation steps", expanded=True):
+                    st.markdown("\n".join([
+                        "**PJP Groove Tension Resistance — CSA S16 Cl. 13.13.3.2**",
+                        "- Weld formula: Tr = φw·An·Fu",
+                        f"- Substitute: Tr = {PHI_W} × {An_mm2:.0f} × {Fu:.0f}",
+                        f"- Result: **Tr(weld) = {res_t['Tr_weld_kN']:.2f} kN**",
+                        "- Base metal formula: Tr = φ·Ag·Fy",
+                        f"- Substitute: Tr = {PHI} × {Ag_mm2:.0f} × {Fy:.0f}",
+                        f"- Result: **Tr(base metal capacity) = {res_t['Tr_cap_kN']:.2f} kN**",
+                        f"- Governing (least): **Tr = {res_t['Tr_kN']:.2f} kN** ({res_t['governs']})",
+                    ]))
             else:
                 st.latex(
                     r"T_r = \phi_w\sqrt{(A_n F_u)^2 + (A_w X_u)^2} \leq \phi\,A_g\,F_y"
@@ -694,6 +799,17 @@ with res_col:
                     language="text",
                 )
                 st.success(f"**Tr = {res_tc['Tr_kN']:.2f} kN**")
+                with st.expander("📐 Show calculation steps", expanded=True):
+                    st.markdown("\n".join([
+                        "**PJP + Fillet Combined Tension — CSA S16 Cl. 13.13.3.3**",
+                        "- Weld formula: Tr = φw·√((An·Fu)² + (Aw·Xu)²)",
+                        f"- Substitute: Tr = {PHI_W} × √(({An_mm2:.0f}×{Fu:.0f})² + ({Aw_fillet_mm2:.0f}×{Xu:.0f})²)",
+                        f"- Result: **Tr(weld) = {res_tc['Tr_weld_kN']:.2f} kN**",
+                        "- Base metal formula: Tr = φ·Ag·Fy",
+                        f"- Substitute: Tr = {PHI} × {Ag_mm2:.0f} × {Fy:.0f}",
+                        f"- Result: **Tr(base metal capacity) = {res_tc['Tr_cap_kN']:.2f} kN**",
+                        f"- Governing (least): **Tr = {res_tc['Tr_kN']:.2f} kN** ({res_tc['governs']})",
+                    ]))
 
     # ══════════════════════════════════════════════════════════════════════════
     # FLARE BEVEL GROOVE
@@ -709,6 +825,16 @@ with res_col:
             language="text",
         )
         st.success(f"**Vr = {res_fb['Vr_kN']:.2f} kN**")
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Flare Bevel Groove Shear Resistance — CSA S16 Cl. 13.13.2.3**",
+                "- Area formula: Aw = 0.50·wf·L",
+                f"- Substitute: Aw = 0.50 × {wf_mm:.0f} × {L_fb:.0f}",
+                f"- Result: **Aw = {res_fb['Aw_mm2']:.0f} mm²**",
+                "- Formula: Vr = 0.67·φw·Aw·Fu",
+                f"- Substitute: Vr = 0.67 × {PHI_W} × {res_fb['Aw_mm2']:.0f} × {Fu:.0f}",
+                f"- Result: **Vr = {res_fb['Vr_kN']:.2f} kN**",
+            ]))
 
     # ══════════════════════════════════════════════════════════════════════════
     # DETAILING CHECKS (all weld types)
@@ -741,6 +867,16 @@ with res_col:
             f"L = {L_det:.0f} mm  {'PASS' if l_eff_ok else 'FAIL'}",
             language="text",
         )
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Fillet Weld Detailing Checks — CSA S16 Cl. 6.2.3**",
+                f"- Min fillet size (Table, t_thicker = {t_thicker:.0f} mm): D_min = {D_min} mm ; "
+                f"D = {D:.0f} mm → **{'PASS' if d_min_ok else 'FAIL'}**",
+                f"- Max fillet size: D_max = t_thinner − 2 (t ≥ 6 mm) = {D_max:.0f} mm ; "
+                f"D = {D:.0f} mm → **{'PASS' if d_max_ok else 'FAIL'}**",
+                f"- Min effective length: L_min = max(38, 4D) = max(38, 4×{D:.0f}) = {L_min:.0f} mm ; "
+                f"L = {L_det:.0f} mm → **{'PASS' if l_eff_ok else 'FAIL'}**",
+            ]))
 
         if is_lap and L_lap > 0:
             L_lap_min = lap_min_overlap(t_thinner, t_thicker)
@@ -751,6 +887,13 @@ with res_col:
                 f"{'PASS' if lap_ok else 'FAIL'}",
                 language="text",
             )
+            with st.expander("📐 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Lap Joint Minimum Overlap — CSA S16 Cl. 6.2.3**",
+                    "- Formula: L_overlap ≥ max(5·t_thinner, 25 mm)",
+                    f"- Substitute: max(5 × {min(t_thinner, t_thicker):.0f}, 25) = {L_lap_min:.0f} mm",
+                    f"- Result: L = {L_lap:.0f} mm → **{'PASS' if lap_ok else 'FAIL'}**",
+                ]))
     else:
         st.info(
             "Detailing checks shown for fillet welds only. "

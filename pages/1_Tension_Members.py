@@ -369,9 +369,10 @@ def calc_gross_yield(Ag: float, Fy: float) -> Calc:
     return Calc(
         "Gross Section Yielding (Cl. 13.2a-i)", Tr,
         [
-            "Tr = phi * Ag * Fy",
-            f"   = {PHI} x {Ag:,.1f} mm2 x {Fy:.1f} MPa / 1000",
-            f"   = {Tr:,.1f} kN",
+            "**Gross Section Yielding — CSA S16 Cl. 13.2 a) i)**",
+            "- Formula: Tr = φ · Ag · Fy",
+            f"- Substitute: Tr = {PHI} × {Ag:,.1f} mm² × {Fy:.1f} MPa ÷ 1000",
+            f"- Result: **{Tr:,.1f} kN**",
         ],
     )
 
@@ -382,11 +383,12 @@ def calc_net_fracture(An: float, U: float, Fu: float) -> Calc:
     return Calc(
         "Net Section Fracture (Cl. 13.2a-iii)", Tr,
         [
-            "Ane = U * An",
-            f"    = {U:.2f} x {An:,.1f} = {Ane:,.1f} mm2",
-            "Tr = phi_u * Ane * Fu",
-            f"   = {PHI_U} x {Ane:,.1f} x {Fu:.1f} / 1000",
-            f"   = {Tr:,.1f} kN",
+            "**Net Section Fracture — CSA S16 Cl. 13.2 a) iii)**",
+            "- Shear-lag effective net area (Cl. 12.3.3): Ane = U · An",
+            f"- Substitute: Ane = {U:.2f} × {An:,.1f} mm² = **{Ane:,.1f} mm²**",
+            "- Formula: Tr = φu · Ane · Fu",
+            f"- Substitute: Tr = {PHI_U} × {Ane:,.1f} mm² × {Fu:.1f} MPa ÷ 1000",
+            f"- Result: **{Tr:,.1f} kN**",
         ],
     )
 
@@ -404,12 +406,13 @@ def calc_block_shear(
     return Calc(
         "Block Shear (Cl. 13.11)", Tr,
         [
-            "Tr = phi_u * [Ut*Ant*Fu + 0.6*Agv*(Fy+Fu)/2]",
-            f"Agv (total) = {n_shear_planes} plane(s) x {Agv:,.1f} = {Agv_total:,.1f} mm2",
-            f"Term1 = {Ut:.2f} x {Ant:,.1f} x {Fu:.1f} = {term1:,.0f} N",
-            f"Term2 = 0.6 x {Agv_total:,.1f} x ({Fy:.1f}+{Fu:.1f})/2 = {term2:,.0f} N",
-            f"Tr = {PHI_U} x ({term1:,.0f} + {term2:,.0f}) / 1000",
-            f"   = {Tr:,.1f} kN",
+            "**Block Shear — CSA S16 Cl. 13.11**",
+            "- Formula: Tr = φu · [Ut·Ant·Fu + 0.6·Agv·(Fy+Fu)/2]",
+            f"- Gross shear area: Agv = {n_shear_planes} plane(s) × {Agv:,.1f} mm² = **{Agv_total:,.1f} mm²**",
+            f"- Tension term: Ut·Ant·Fu = {Ut:.2f} × {Ant:,.1f} × {Fu:.1f} = **{term1:,.0f} N**",
+            f"- Shear term: 0.6·Agv·(Fy+Fu)/2 = 0.6 × {Agv_total:,.1f} × ({Fy:.1f}+{Fu:.1f})/2 = **{term2:,.0f} N**",
+            f"- Substitute: Tr = {PHI_U} × ({term1:,.0f} + {term2:,.0f}) ÷ 1000",
+            f"- Result: **{Tr:,.1f} kN**",
         ],
     )
 
@@ -420,9 +423,10 @@ def calc_pin(An: float, Fy: float) -> Calc:
     return Calc(
         "Pin Connection (Cl. 13.2b)", Tr,
         [
-            "Tr = 0.75 * phi * An * Fy",
-            f"   = 0.75 x {PHI} x {An:,.1f} x {Fy:.1f} / 1000",
-            f"   = {Tr:,.1f} kN",
+            "**Pin Connection — CSA S16 Cl. 13.2 b)**",
+            "- Formula: Tr = 0.75 · φ · An · Fy",
+            f"- Substitute: Tr = 0.75 × {PHI} × {An:,.1f} mm² × {Fy:.1f} MPa ÷ 1000",
+            f"- Result: **{Tr:,.1f} kN**",
         ],
     )
 
@@ -515,9 +519,8 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str) -> None:
     st.divider()
     st.subheader("Calculations — Shown Work")
     for c in calcs:
-        with st.expander(c.name, expanded=True):
-            for step in c.steps:
-                st.code(step, language=None)
+        with st.expander(f"📐 Show calculation steps — {c.name.split('(')[0].strip()}", expanded=True):
+            st.markdown("\n".join(c.steps))
             if c.note:
                 st.info(c.note)
 

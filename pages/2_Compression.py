@@ -878,6 +878,24 @@ def render_report(
     else:
         st.success(f"KL/r = {_fmt(R.KLr_gov, 1)} is within the limit of 200.")
 
+    with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+        if sec.family in ("ANGLE", "DOUBLE_ANGLE"):
+            st.markdown("\n".join([
+                "**Slenderness ratio KL/r \u2014 CSA S16 Cl. 13.3.3 (angles)**",
+                f"- Modified rule: {R.angle_note}",
+                f"- Result: Governing KL/r = **{_fmt(R.KLr_gov, 1)}**",
+            ]))
+        else:
+            st.markdown("\n".join([
+                "**Slenderness ratio KL/r \u2014 CSA S16 Cl. 13.3.1**",
+                "- Formula: (KL/r)\u2093 = K\u2093\u00b7L\u2093 / r\u2093 ;  (KL/r)\u1d67 = K\u1d67\u00b7L\u1d67 / r\u1d67",
+                f"- Substitute (x): (KL/r)\u2093 = ({_fmt(Kx, 2)} \u00d7 {_fmt(Lx, 0)}) / {_fmt(sec.rx_mm, 1)}",
+                f"- Result (x): (KL/r)\u2093 = **{_fmt(R.KLr_x, 1)}**",
+                f"- Substitute (y): (KL/r)\u1d67 = ({_fmt(Ky, 2)} \u00d7 {_fmt(Ly, 0)}) / {_fmt(sec.ry_mm, 1)}",
+                f"- Result (y): (KL/r)\u1d67 = **{_fmt(R.KLr_y, 1)}**",
+                f"- Governing: KL/r = max({_fmt(R.KLr_x, 1)}, {_fmt(R.KLr_y, 1)}) = **{_fmt(R.KLr_gov, 1)}**",
+            ]))
+
     # Step 2b — Effective Length Factor reference (CSA S16 / AISC standard end conditions)
     st.subheader("Step 2b \u2014 Effective Length Factor Reference (K)")
     st.write("Standard end-restraint values used to set Kx, Ky, Kz inputs:")
@@ -898,6 +916,17 @@ def render_report(
     st.write(f"Fey = {_fmt(R.Fey_MPa, 1)} MPa")
     st.write(f"Min (flexural) Fe = {_fmt(R.Fe_flex_MPa, 1)} MPa")
 
+    with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+        st.markdown("\n".join([
+            "**Elastic (Euler) buckling stress F\u2091 \u2014 CSA S16 Cl. 13.3.1**",
+            "- Formula: F\u2091 = \u03c0\u00b2\u00b7E / (KL/r)\u00b2",
+            f"- Substitute (x): F\u2091\u2093 = \u03c0\u00b2 \u00d7 {_fmt(E, 0)} / ({_fmt(R.KLr_x, 1)})\u00b2",
+            f"- Result (x): F\u2091\u2093 = **{_fmt(R.Fex_MPa, 1)} MPa**",
+            f"- Substitute (y): F\u2091\u1d67 = \u03c0\u00b2 \u00d7 {_fmt(E, 0)} / ({_fmt(R.KLr_y, 1)})\u00b2",
+            f"- Result (y): F\u2091\u1d67 = **{_fmt(R.Fey_MPa, 1)} MPa**",
+            f"- Governing flexural F\u2091 = min(F\u2091\u2093, F\u2091\u1d67) = **{_fmt(R.Fe_flex_MPa, 1)} MPa**",
+        ]))
+
     if sec.family in ("W", "WWF"):
         st.subheader("Step 3b \u2014 Torsional Buckling (Clause 13.3.2a)")
         if R.Fez_MPa is not None:
@@ -914,10 +943,30 @@ def render_report(
                 st.warning(f"Torsional buckling governs: Fez = {_fmt(R.Fez_MPa, 1)} MPa < Fe_flex = {_fmt(R.Fe_flex_MPa, 1)} MPa")
             else:
                 st.success(f"Flexural buckling governs: Fe_flex = {_fmt(R.Fe_flex_MPa, 1)} MPa \u2264 Fez = {_fmt(R.Fez_MPa, 1)} MPa")
+
+            with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+                st.markdown("\n".join([
+                    "**Torsional buckling stress F\u2091\u1d63 \u2014 CSA S16 Cl. 13.3.2 a)**",
+                    "- Formula: F\u2091\u1d63 = [\u03c0\u00b2\u00b7E\u00b7C_w / (K\u1d67L\u1d67)\u00b2 + G\u00b7J] \u00b7 1/(A\u00b7r\u0305\u2092\u00b2)",
+                    f"- Warping term: \u03c0\u00b2\u00b7E\u00b7C_w / (K\u1d67L\u1d67)\u00b2 = \u03c0\u00b2 \u00d7 {_fmt(E, 0)} \u00d7 {_fmt(sec.Cw_mm6, 0)} / ({_fmt(KzLz, 0)})\u00b2 = **{_fmt(warping, 0)} N**",
+                    f"- St. Venant term: G\u00b7J = {_fmt(G, 0)} \u00d7 {_fmt(sec.J_mm4, 0)} = **{_fmt(stv, 0)} N**",
+                    f"- Denominator: A\u00b7r\u0305\u2092\u00b2 = {_fmt(sec.A_mm2, 0)} \u00d7 {_fmt(sec.r_bar_o_sq, 0)} = **{_fmt(denom, 0)} mm\u2074**",
+                    f"- Result: F\u2091\u1d63 = **{_fmt(R.Fez_MPa, 1)} MPa**",
+                ]))
         else:
             st.info("Torsional buckling not computed \u2014 J or Cw not available in CSV for this section.")
 
     st.write(f"**Governing Fe = {_fmt(R.Fe_gov_MPa, 1)} MPa**")
+
+    with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+        st.markdown("\n".join([
+            "**Governing elastic buckling stress F\u2091 \u2014 CSA S16 Cl. 13.3.1 / 13.3.2**",
+            "- Formula: F\u2091 = min(flexural F\u2091, torsional F\u2091\u1d63)",
+            f"- Substitute: F\u2091 = min({_fmt(R.Fe_flex_MPa, 1)} MPa, "
+            + (f"{_fmt(R.Fez_MPa, 1)} MPa)" if R.Fez_MPa is not None else "n/a)"),
+            f"- Result: **F\u2091 = {_fmt(R.Fe_gov_MPa, 1)} MPa** "
+            + ("(torsional governs)" if R.torsion_governs else "(flexural governs)"),
+        ]))
 
     # Step 3c — Flexural-Torsional Buckling (Clause 13.3.2b) for singly-symmetric sections
     st.subheader("Step 3c \u2014 Flexural-Torsional Buckling (Clause 13.3.2b)")
@@ -945,6 +994,15 @@ def render_report(
                 st.write(f"Fey = {_fmt(Fey_v, 1)} MPa | Fez = {_fmt(Fez_v, 1)} MPa")
                 st.write(f"\u03a9 = {_fmt(Omega, 3)} (upper-bound \u2014 x\u2080, y\u2080 not in CSV)")
                 st.write(f"Feyz = {_fmt(Feyz, 1)} MPa")
+                with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+                    st.markdown("\n".join([
+                        "**Flexural-torsional buckling stress F\u2091\u1d67\u1d63 \u2014 CSA S16 Cl. 13.3.2 b)**",
+                        "- Formula: \u03a9 = 1 \u2212 (x\u2080\u00b2 + y\u2080\u00b2)/r\u0305\u2092\u00b2",
+                        f"- Substitute: \u03a9 = **{_fmt(Omega, 3)}** (upper-bound; x\u2080, y\u2080 not in CSV)",
+                        "- Formula: F\u2091\u1d67\u1d63 = (F\u2091\u1d67 + F\u2091\u1d63)/(2\u03a9)\u00b7[1 \u2212 \u221a(1 \u2212 4\u00b7F\u2091\u1d67\u00b7F\u2091\u1d63\u00b7\u03a9/(F\u2091\u1d67 + F\u2091\u1d63)\u00b2)]",
+                        f"- Substitute: F\u2091\u1d67\u1d63 = ({_fmt(Fey_v, 1)} + {_fmt(Fez_v, 1)})/(2 \u00d7 {_fmt(Omega, 3)})\u00b7[1 \u2212 \u221a(1 \u2212 4 \u00d7 {_fmt(Fey_v, 1)} \u00d7 {_fmt(Fez_v, 1)} \u00d7 {_fmt(Omega, 3)}/({_fmt(sum_e, 1)})\u00b2)]",
+                        f"- Result: F\u2091\u1d67\u1d63 = **{_fmt(Feyz, 1)} MPa**",
+                    ]))
                 if Feyz < R.Fe_gov_MPa:
                     st.warning(f"Flexural-torsional governs: Feyz = {_fmt(Feyz, 1)} MPa < "
                                f"current governing Fe = {_fmt(R.Fe_gov_MPa, 1)} MPa. "
@@ -967,11 +1025,32 @@ def render_report(
     st.write(f"n = {_fmt(n_curve, 2)}")
     st.write(f"Fcr = {_fmt(Fy, 0)} / (1 + {_fmt(R.lam, 3)}^(2\u00d7{n_curve}))^(1/{n_curve}) = {_fmt(R.Fcr_MPa, 1)} MPa")
 
+    with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+        st.markdown("\n".join([
+            "**Non-dimensional slenderness \u03bb \u2014 CSA S16 Cl. 13.3.1**",
+            "- Formula: \u03bb = \u221a(F_y / F_e)",
+            f"- Substitute: \u03bb = \u221a({_fmt(Fy, 0)} / {_fmt(R.Fe_gov_MPa, 1)})",
+            f"- Result: \u03bb = **{_fmt(R.lam, 3)}**",
+            "",
+            "**Critical buckling stress F_cr (column curve) \u2014 CSA S16 Cl. 13.3.1**",
+            "- Formula: F_cr = F_y / (1 + \u03bb^(2n))^(1/n)",
+            f"- Substitute: F_cr = {_fmt(Fy, 0)} / (1 + {_fmt(R.lam, 3)}^(2\u00d7{n_curve}))^(1/{n_curve})",
+            f"- Result: F_cr = **{_fmt(R.Fcr_MPa, 1)} MPa**  (n = {_fmt(n_curve, 2)})",
+        ]))
+
     # Step 5
     st.subheader("Step 5 \u2014 Factored Compressive Resistance")
     st.latex(r"C_r = \phi_c \, A_e \, F_{cr}")
     st.write(f"Cr = {phi_c} \u00d7 {_fmt(R.Ae_mm2, 0)} mm\u00b2 \u00d7 {_fmt(R.Fcr_MPa, 1)} MPa / 1000")
     st.write(f"**Cr = {_fmt(R.Cr_kN, 1)} kN**")
+
+    with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+        st.markdown("\n".join([
+            "**Factored compressive resistance C_r \u2014 CSA S16 Cl. 13.3.1**",
+            "- Formula: C_r = \u03c6_c \u00b7 A_e \u00b7 F_cr",
+            f"- Substitute: C_r = {phi_c} \u00d7 {_fmt(R.Ae_mm2, 0)} mm\u00b2 \u00d7 {_fmt(R.Fcr_MPa, 1)} MPa / 1000",
+            f"- Result: C_r = **{_fmt(R.Cr_kN, 1)} kN**",
+        ]))
 
     # Step 5b — Yield-cap (squash-load) sanity check
     st.subheader("Step 5b \u2014 Yield Capacity Cap (Sanity Check)")
@@ -990,6 +1069,19 @@ def render_report(
                    f"(column curve gave {_fmt(R.Cr_kN, 1)} kN).")
     st.write(f"**Final Cr = {_fmt(Cr_final_kN, 1)} kN**")
 
+    with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+        st.markdown("\n".join([
+            "**Yield capacity cap C_r,yield \u2014 CSA S16 Cl. 13.3.1**",
+            "- Formula: C_r,yield = \u03c6_c \u00b7 A \u00b7 F_y",
+            f"- Substitute: C_r,yield = {phi_c} \u00d7 {_fmt(sec.A_mm2, 0)} mm\u00b2 \u00d7 {_fmt(Fy, 0)} MPa / 1000",
+            f"- Result: C_r,yield = **{_fmt(Cr_yield_kN, 1)} kN**",
+            "",
+            "**Final compressive resistance C_r**",
+            "- Formula: C_r = min(column-curve C_r, C_r,yield)",
+            f"- Substitute: C_r = min({_fmt(R.Cr_kN, 1)} kN, {_fmt(Cr_yield_kN, 1)} kN)",
+            f"- Result: C_r = **{_fmt(Cr_final_kN, 1)} kN**",
+        ]))
+
     # Step 6
     st.subheader("Step 6 \u2014 Demand / Capacity Check")
     if Pu_kN is None:
@@ -1002,6 +1094,14 @@ def render_report(
             st.success(f"\u2705 PASS \u2014 Pu/Cr = {util:.3f}")
         else:
             st.error(f"\u274c FAIL \u2014 Pu/Cr = {util:.3f} > 1.00")
+
+        with st.expander("\U0001f4d0 Show calculation steps", expanded=True):
+            st.markdown("\n".join([
+                "**Demand / capacity ratio \u2014 CSA S16 Cl. 13.3.1**",
+                "- Formula: U = P_u / C_r \u2264 1.0",
+                f"- Substitute: U = {_fmt(Pu_kN, 1)} kN / {_fmt(R.Cr_kN, 1)} kN",
+                f"- Result: U = **{_fmt(util, 3)}** \u2014 " + ("PASS" if util <= 1.0 else "FAIL"),
+            ]))
 
 # ─────────────────────────────────────────────────────────────
 # STREAMLIT UI

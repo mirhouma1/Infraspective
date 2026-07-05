@@ -3,6 +3,9 @@
 ## Overview
 A multi-page Streamlit app for checking steel members per CSA S16 (Canadian steel design standard).
 
+## User Preferences
+- **Show calculation steps for everything.** The user wants every result to display a transparent, step-by-step derivation (formula → substitution → result), matching the CSA S16 code tables (e.g. Table 2 for slenderness limits). Prefer visible/expanded step breakdowns, not just final numbers.
+
 ## Project Structure
 ```
 ├── app.py                                          # Page 1 — Flexure Calculator (W sections)

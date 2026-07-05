@@ -513,9 +513,58 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
             "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
             "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
         },
+        "coeffs": {"flange": (145, 170, 200), "web": (420, 525, 670)},
         "geometry_used": geom,
         "se_info": se_info,
     }
+
+
+def classification_steps_md(ci: Dict[str, Any], Fy: float) -> str:
+    """Build a step-by-step derivation (Markdown) of the Table 2 slenderness classification."""
+    g = ci["geometry_used"]
+    b, t, d, w, h = g["b"], g["t"], g["d"], g["w"], g["h"]
+    sqrt_fy = math.sqrt(Fy)
+    cf1, cf2, cf3 = ci["coeffs"]["flange"]
+    cw1, cw2, cw3 = ci["coeffs"]["web"]
+    lam_f = (b / 2.0) / t
+    lam_w = h / w
+
+    def lim(coef: int) -> float:
+        return coef / sqrt_fy
+
+    def verdict(lam: float, l1: float, l2: float, l3: float, cls: int) -> str:
+        if cls == 1:
+            return f"{lam:.2f} ≤ {l1:.2f}  →  **Class 1**"
+        if cls == 2:
+            return f"{l1:.2f} < {lam:.2f} ≤ {l2:.2f}  →  **Class 2**"
+        if cls == 3:
+            return f"{l2:.2f} < {lam:.2f} ≤ {l3:.2f}  →  **Class 3**"
+        return f"{lam:.2f} > {l3:.2f}  →  **Class 4**"
+
+    lines = []
+    lines.append(f"**Material:** Fy = {Fy:g} MPa  →  √Fy = {sqrt_fy:.3f}")
+    lines.append("")
+    lines.append("**1 · Flange — b/2t** (element supported along one edge, Table 2)")
+    lines.append(f"- Measured: b = {b:.1f} mm, t = {t:.1f} mm")
+    lines.append(f"- Ratio: b/2t = {b:.1f} / (2 × {t:.1f}) = **{lam_f:.2f}**")
+    lines.append(f"- Class 1 limit: 145/√Fy = 145/{sqrt_fy:.3f} = {lim(cf1):.2f}")
+    lines.append(f"- Class 2 limit: 170/√Fy = 170/{sqrt_fy:.3f} = {lim(cf2):.2f}")
+    lines.append(f"- Class 3 limit: 200/√Fy = 200/{sqrt_fy:.3f} = {lim(cf3):.2f}")
+    lines.append(f"- Result: {verdict(lam_f, lim(cf1), lim(cf2), lim(cf3), ci['class_flange'])}")
+    lines.append("")
+    lines.append("**2 · Web — h/w** (element supported along two edges, Table 2)")
+    lines.append(f"- Clear web depth: h = d − 2t = {d:.1f} − 2 × {t:.1f} = {h:.1f} mm")
+    lines.append(f"- Ratio: h/w = {h:.1f} / {w:.1f} = **{lam_w:.2f}**")
+    lines.append(f"- Class 1 limit: {cw1}/√Fy = {cw1}/{sqrt_fy:.3f} = {lim(cw1):.2f}")
+    lines.append(f"- Class 2 limit: {cw2}/√Fy = {cw2}/{sqrt_fy:.3f} = {lim(cw2):.2f}")
+    lines.append(f"- Class 3 limit: {cw3}/√Fy = {cw3}/{sqrt_fy:.3f} = {lim(cw3):.2f}")
+    lines.append(f"- Result: {verdict(lam_w, lim(cw1), lim(cw2), lim(cw3), ci['class_web'])}")
+    lines.append("")
+    lines.append(
+        f"**3 · Section Class** = max(flange = {ci['class_flange']}, web = {ci['class_web']}) "
+        f"= **Class {ci['class_section']}**  (governed by {ci['governing']})"
+    )
+    return "\n".join(lines)
 
 
 # ----------------------------
@@ -1011,6 +1060,9 @@ if selected_section:
             "Element Class": [class_info["class_flange"], class_info["class_web"]],
         }
         st.table(ratio_data)
+
+        with st.expander("📐 Show calculation steps", expanded=True):
+            st.markdown(classification_steps_md(class_info, float(Fy)))
 
         # ── Cross-section diagram with stress block overlay (Class 1/2 plastic, 3/4 elastic) ──
         st.markdown("**Cross-Section & Stress Distribution**")

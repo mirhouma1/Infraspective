@@ -17,11 +17,18 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 │   ├── 4_Beam_Column_Members.py                    # Page 4 — Beam-Column Check (Cl. 13.8)
 │   ├── 5_Tension_Members.py                        # Page 5 — Tension Member (Angle, one-leg)
 │   └── 6_Welded_Connections.py                     # Page 6 — Welded Connection Solver
-├── data/
-│   ├── w_sections.csv                              # 285 Canadian W-sections (UTF-8)
-│   ├── Properties Table - HSS - Rectangular.csv   # HSS Rectangular (UTF-8)
-│   ├── Property Table - HSS - Circle.csv           # HSS Circular (latin-1)
-│   └── Property Table - HSS - Square.csv           # HSS Square (latin-1)
+├── data/                                           # ALL regenerated from CISC SST12.1 (see scripts/convert_sst12.py)
+│   ├── w_sections.csv                              # 289 W-sections (shared pipeline, simple headers)
+│   ├── Property Table - HSS - Square.csv           # 82 square HSS
+│   ├── Properties Table - HSS - Rectangular.csv   # 99 rectangular HSS
+│   ├── Property Table - HSS - Circle.csv           # 80 round HSS
+│   ├── Channel Sections Properties.csv            # 72 C + MC channels (tension pipeline)
+│   ├── Structural Tees WT Properties.csv          # 188 WT tees (tension pipeline)
+│   ├── Double Angle Properties.csv                # 228 double angles (tension pipeline)
+│   ├── Angle Properties Table.xlsx                # 149 single angles (tension pipeline)
+│   └── _legacy_sst_backup/                         # original pre-SST12.1 data files (not globbed)
+├── scripts/
+│   └── convert_sst12.py                            # regenerates all data/ files from SST12.1 xlsx
 └── .streamlit/config.toml
 ```
 
@@ -81,13 +88,18 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 
 ## Technical Notes
 
-### CSV Encoding
-- w_sections.csv and HSS Rectangular: UTF-8 (columns contain garbled `ý`, `?` for ², ⁴)
-- HSS Circle and Square: latin-1 fallback
-- `_norm()` strips all non-ASCII chars so garbled headers resolve correctly
+### Data Source (CISC SST12.1)
+- All `data/` files are regenerated from `attached_assets/CISC_StructuralSectionTables_SST12.1_*.xlsx` via `scripts/convert_sst12.py`.
+- SST12.1 already stores properties in the app's 10^x convention (Ix=10^6, Sx/Zx=10^3, J=10^3, Cw=10^9) — no re-scaling on conversion.
+- Two output conventions from one source:
+  - **Shared pipeline** (flexure/compression/beam-column) — W + HSS CSVs use **simple bare headers** (`Ix`, `Sx`, `Zx`, `Area`, `d`, `b`, `t`, `w`, `k`, `ba/t`, `h/w`) which every page's alias table matches directly.
+  - **Tension pipeline** — channel/WT/double-angle CSVs + single-angle xlsx use bespoke exact names (`Area_mm2`, `t_mm`, `w_mm`, `b_mm`, `d_mm`, `rx_mm`, `ry_mm`).
+- HSS designations are renamed from SST12.1's `HS…` prefix to `HSS…` so `section_family()` (`"HSS" in n`) and `parse_hss_designation()` keep working.
+- WWF sections are NOT in SST12.1 (separate CISC welded-wide-flange table); no WWF data is generated.
+- To regenerate: `python3 scripts/convert_sst12.py` (backs up originals to `data/_legacy_sst_backup/` on first run only).
 
 ### Column Alias System
-Each page uses a `_norm()` + `_ALIASES` lookup to map raw CSV header variants to canonical property names. Multipliers are always applied unconditionally: Ix/Iy×1e6, Zx/Zy/Sx/Sy×1e3, J×1e3, Cw×1e9.
+Each shared page uses a `_norm()` + alias lookup to map CSV header variants to canonical property names. Multipliers are applied unconditionally in calc: Ix/Iy×1e6, Zx/Zy/Sx/Sy×1e3, J×1e3, Cw×1e9.
 
 ### CSA S16 Constants
 - φ = 0.9 for all resistance factors

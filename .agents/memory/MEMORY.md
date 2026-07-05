@@ -1,0 +1,1 @@
+- [SST12.1 data pipeline](sst12-data-pipeline.md) — steel-section CSVs are generated; shared pipeline needs BARE headers (flexure alias gap), tension pipeline needs exact _mm names.

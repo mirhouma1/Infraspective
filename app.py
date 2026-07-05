@@ -1119,6 +1119,8 @@ if selected_section:
                 lam = h_over_w
                 branch = f"13.4.1.1(b) {res.get('region','')}".strip()
                 warnings = res.get("warnings", [])
+                for wmsg in warnings:
+                    tb.warn(str(wmsg))
 
                 for item in res.get("trace", []):
                     s = str(item).strip()
@@ -1142,10 +1144,6 @@ if selected_section:
 
             with st.expander("Shear calculation trace (show steps)", expanded=False):
                 tb.render()
-                if warnings:
-                    st.markdown("**Warnings / scope:**")
-                    for wmsg in warnings:
-                        st.write("⚠️ " + str(wmsg))
 
             # ── Shear curve: Fs vs h/w with operating point ────────────────
             with st.expander("Shear curve diagram — Fs vs h/w", expanded=False):

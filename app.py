@@ -28,7 +28,7 @@ CLASS_BENDING_CSV = DATA_DIR / "CISC 11th Edition - Class of Sections in Bending
 PHI_B = 0.9
 PHI_V_DEFAULT = 0.9
 
-APP_TITLE = "INSFRASPECTIVE — CSA S16 Structural Calculator"
+APP_TITLE = "CSA S16 - Beam Flexure Calculator"
 DISCLAIMER_VERSION = "2026-01-01_v2"
 
 DISCLAIMER_MD = """

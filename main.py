@@ -176,41 +176,117 @@ def stiffened_web_shear_CSA13_4(
     a_over_h: float,
     Aw_mm2: float,
     phi_v: float = 0.9,
+    h_mm: Optional[float] = None,
+    tw_mm: Optional[float] = None,
+    a_mm: Optional[float] = None,
 ) -> dict:
     if Fy_MPa <= 0 or hw_over_tw <= 0 or Aw_mm2 <= 0:
         raise ValueError("Fy_MPa, hw_over_tw, and Aw_mm2 must be > 0")
 
+    trace: List[str] = []
+    warnings: List[str] = []
+
+    trace.append("CSA S16 13.4.1.1(b) - Stiffened web")
+
+    # --- geometry echo (optional richer trace if h, w, a provided) ---
+    if h_mm is not None and tw_mm is not None:
+        trace.append(
+            f"h = {h_mm:.2f} mm, w = {tw_mm:.2f} mm, h/w = {hw_over_tw:.4f}"
+        )
+        trace.append(
+            f"$$A_w = h \\, w = ({h_mm:.2f})({tw_mm:.2f}) = {Aw_mm2:.2f}\\ \\mathrm{{mm}}^2$$"
+        )
+    else:
+        trace.append(f"h/w = {hw_over_tw:.4f} (given)")
+        trace.append(f"$$A_w = {Aw_mm2:.2f}\\ \\mathrm{{mm}}^2\\ \\text{{(given)}}$$")
+
+    if a_mm is not None:
+        trace.append(f"a = {a_mm:.2f} mm, a/h = {a_over_h:.4f}")
+    else:
+        trace.append(f"a/h = {a_over_h:.4f} (given)")
+
+    # --- kv (shear buckling coefficient) ---
     kv = kv_from_a_over_h(a_over_h)
+    if a_over_h < 1.0:
+        trace.append(
+            f"$$k_v = 4 + \\frac{{5.34}}{{(a/h)^2}} = 4 + \\frac{{5.34}}{{({a_over_h:.4f})^2}} = {kv:.4f}$$"
+        )
+    else:
+        trace.append(
+            f"$$k_v = 5.34 + \\frac{{4}}{{(a/h)^2}} = 5.34 + \\frac{{4}}{{({a_over_h:.4f})^2}} = {kv:.4f}$$"
+        )
+
+    # --- ka (aspect coefficient) ---
     k0 = k0_from_a_over_h(a_over_h)
+    trace.append(
+        f"$$k_a = \\frac{{1}}{{\\sqrt{{1 + (a/h)^2}}}} = \\frac{{1}}{{\\sqrt{{1 + ({a_over_h:.4f})^2}}}} = {k0:.4f}$$"
+    )
 
-    # MPa
+    # --- critical stresses (MPa) ---
+    # NOTE: Fcre uses kv per S16 13.4.1.1(b)(iv), NOT ka.
     Fcri = 290.0 * math.sqrt(Fy_MPa * kv) / hw_over_tw
-    Fcre = 180000.0 * k0 / (hw_over_tw ** 2)
+    Fcre = 180000.0 * kv / (hw_over_tw ** 2)
+    trace.append(
+        f"$$F_{{cri}} = \\frac{{290\\sqrt{{F_y k_v}}}}{{h/w}} = \\frac{{290\\sqrt{{({Fy_MPa:.0f})({kv:.4f})}}}}{{{hw_over_tw:.4f}}} = {Fcri:.2f}\\ \\mathrm{{MPa}}$$"
+    )
+    trace.append(
+        f"$$F_{{cre}} = \\frac{{180\\,000\\, k_v}}{{(h/w)^2}} = \\frac{{180\\,000\\,({kv:.4f})}}{{({hw_over_tw:.4f})^2}} = {Fcre:.2f}\\ \\mathrm{{MPa}}$$"
+    )
 
+    # --- slenderness thresholds ---
     root = math.sqrt(kv / Fy_MPa)
     t1 = 439.0 * root
     t2 = 502.0 * root
     t3 = 621.0 * root
+    trace.append(
+        f"$$439\\sqrt{{k_v/F_y}} = {t1:.3f} \\quad 502\\sqrt{{k_v/F_y}} = {t2:.3f} \\quad 621\\sqrt{{k_v/F_y}} = {t3:.3f}$$"
+    )
 
+    # --- region selection and Fs ---
     if hw_over_tw <= t1:
         Fs = 0.66 * Fy_MPa
         region = "b(i)"
+        trace.append(f"Region b(i): h/w = {hw_over_tw:.4f} <= {t1:.3f}")
+        trace.append(
+            f"$$F_s = 0.66 F_y = 0.66({Fy_MPa:.0f}) = {Fs:.2f}\\ \\mathrm{{MPa}}$$"
+        )
     elif hw_over_tw <= t2:
         Fs = Fcri
         region = "b(ii)"
+        trace.append(
+            f"Region b(ii): {t1:.3f} < h/w = {hw_over_tw:.4f} <= {t2:.3f}"
+        )
+        trace.append(f"$$F_s = F_{{cri}} = {Fs:.2f}\\ \\mathrm{{MPa}}$$")
     elif hw_over_tw <= t3:
         Fs = Fcri + k0 * (0.50 * Fy_MPa - 0.866 * Fcri)
         region = "b(iii)"
+        trace.append(
+            f"Region b(iii): {t2:.3f} < h/w = {hw_over_tw:.4f} <= {t3:.3f}"
+        )
+        trace.append(
+            f"$$F_s = F_{{cri}} + k_a(0.50 F_y - 0.866 F_{{cri}}) = {Fcri:.2f} + {k0:.4f}(0.50({Fy_MPa:.0f}) - 0.866({Fcri:.2f})) = {Fs:.2f}\\ \\mathrm{{MPa}}$$"
+        )
     else:
         Fs = Fcre + k0 * (0.50 * Fy_MPa - 0.866 * Fcre)
         region = "b(iv)"
+        trace.append(f"Region b(iv): h/w = {hw_over_tw:.4f} > {t3:.3f}")
+        trace.append(
+            f"$$F_s = F_{{cre}} + k_a(0.50 F_y - 0.866 F_{{cre}}) = {Fcre:.2f} + {k0:.4f}(0.50({Fy_MPa:.0f}) - 0.866({Fcre:.2f})) = {Fs:.2f}\\ \\mathrm{{MPa}}$$"
+        )
 
-    # Vr = phi * Aw * Fs  => (N/mm^2)*(mm^2) = N
+    # --- factored shear resistance ---
     Vr_N = phi_v * Aw_mm2 * Fs
+    Vr_kN = Vr_N / 1000.0
+    trace.append(
+        f"$$V_r = \\phi_v A_w F_s = ({phi_v:.2f})({Aw_mm2:.1f})({Fs:.2f})/1000 = {Vr_kN:.2f}\\ \\mathrm{{kN}}$$"
+    )
+
+    warnings.append("Scope: CSA S16 13.4.1.1(b) stiffened web, elastic shear.")
+    warnings.append("Fcre computed with kv per 13.4.1.1(b)(iv), not ka.")
 
     return {
         "Vr_N": Vr_N,
-        "Vr_kN": Vr_N / 1000.0,
+        "Vr_kN": Vr_kN,
         "Fs_MPa": Fs,
         "region": region,
         "kv": kv,
@@ -222,8 +298,11 @@ def stiffened_web_shear_CSA13_4(
             "502*sqrt(kv/Fy)": t2,
             "621*sqrt(kv/Fy)": t3,
         },
+        "trace": trace,
+        "warnings": warnings,
+        "ok": True,
+        "scope": "CSA S16 13.4.1.1(b) - stiffened web, elastic shear",
     }
-
 
 # ----------------------------
 # Example: wire it together

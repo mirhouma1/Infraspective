@@ -1109,21 +1109,23 @@ if selected_section:
                     a_over_h=a_over_h,
                     Aw_mm2=Aw,
                     phi_v=float(phi_v),
+                    h_mm=h,
+                    tw_mm=w,
+                    a_mm=float(a_mm),
                 )
 
                 Vr_kN = float(res["Vr_kN"])
                 Fs_MPa = float(res["Fs_MPa"])
                 lam = h_over_w
                 branch = f"13.4.1.1(b) {res.get('region','')}".strip()
-                warnings = []
+                warnings = res.get("warnings", [])
 
-                tb.text("CSA S16 13.4.1.1(b) — Stiffened web")
-                tb.text(f"h = {h:.2f} mm, w = {w:.2f} mm, h/w = {h_over_w:.4f}")
-                tb.text(f"a = {float(a_mm):.2f} mm, a/h = {a_over_h:.4f}")
-                tb.text(f"kv = {float(res['kv']):.4f}, k0 = {float(res['k0']):.4f}")
-                tb.text(f"Fs = {Fs_MPa:.2f} MPa (region {res.get('region','')})")
-                tb.text(f"Aw = h*w = {Aw:.1f} mm²")
-                tb.text(f"Vr = φv*Aw*Fs = {float(phi_v):.2f} * {Aw:.1f} * {Fs_MPa:.2f} = {Vr_kN:.2f} kN")
+                for item in res.get("trace", []):
+                    s = str(item).strip()
+                    if s.startswith("$$") and s.endswith("$$"):
+                        tb.latex(s[2:-2].strip())
+                    else:
+                        tb.text(s)
 
             with shear_col3:
                 st.metric("Factored Shear Resistance (Vr)", f"{Vr_kN:,.1f} kN")

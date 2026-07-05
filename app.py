@@ -32,13 +32,13 @@ APP_TITLE = "CSA S16 - Beam Flexure Calculator"
 DISCLAIMER_VERSION = "2026-01-01_v2"
 
 DISCLAIMER_MD = """
-# INSFRASPECTIVE – USER ACCESS AGREEMENT
+# INFRASPECTIVE – USER ACCESS AGREEMENT
 
 ---
 
 **1. BETA EVALUATION & OPTIMIZATION**
 
-Insfraspective provides this application for testing and optimization purposes. By using the App, you agree to provide technical feedback and usage data to assist in the refinement of the calculation engine.
+Infraspective provides this application for testing and optimization purposes. By using the App, you agree to provide technical feedback and usage data to assist in the refinement of the calculation engine.
 
 ---
 
@@ -52,13 +52,13 @@ The User agrees not to rely on any App output for any project purpose unless and
 
 The User acknowledges that any use of App outputs without independent verification is done entirely at their own risk.
 
-Use of this App does not create an engineer-client relationship between the User and Insfraspective.
+Use of this App does not create an engineer-client relationship between the User and Infraspective.
 
 ---
 
 **3. DATA USAGE**
 
-In exchange for access to the Beta platform, Insfraspective collects technical input parameters and interaction patterns. This data is used exclusively to optimize the software's logic and performance. Personal information is managed in accordance with the Alberta Personal Information Protection Act (PIPA).
+In exchange for access to the Beta platform, Infraspective collects technical input parameters and interaction patterns. This data is used exclusively to optimize the software's logic and performance. Personal information is managed in accordance with the Alberta Personal Information Protection Act (PIPA).
 
 ---
 
@@ -66,11 +66,11 @@ In exchange for access to the Beta platform, Insfraspective collects technical i
 
 This software is provided "AS IS" and is in a Beta state, meaning it may contain errors, incomplete features, or incorrect calculations.
 
-Insfraspective disclaims all warranties regarding the accuracy of the Beta calculations.
+Infraspective disclaims all warranties regarding the accuracy of the Beta calculations.
 
 The User assumes all risk associated with the use of the App's outputs. Use of this App is entirely at the User's own risk.
 
-To the maximum extent permitted by law, Insfraspective shall not be liable for any direct, indirect, incidental, or consequential damages arising from use of the App.
+To the maximum extent permitted by law, Infraspective shall not be liable for any direct, indirect, incidental, or consequential damages arising from use of the App.
 
 This limitation of liability applies even if the App fails its essential purpose or is found to be in fundamental breach of contract.
 
@@ -80,7 +80,7 @@ No compensation or damages of any kind are payable for errors, omissions, or ina
 
 **5. INDEMNITY**
 
-The User agrees to indemnify, defend, and hold harmless Insfraspective from any and all claims, demands, losses, or legal fees (including solicitor-client costs) arising from the User's use of, misuse of, or reliance on the App, whether the claim is made by the User or a third party.
+The User agrees to indemnify, defend, and hold harmless Infraspective from any and all claims, demands, losses, or legal fees (including solicitor-client costs) arising from the User's use of, misuse of, or reliance on the App, whether the claim is made by the User or a third party.
 
 ---
 
@@ -100,7 +100,7 @@ If any provision of this Agreement is found unenforceable, the remaining provisi
 
 Before each use of the App, the User shall affirmatively confirm their agreement below.
 
-The User acknowledges that failure to verify does not transfer liability to Insfraspective.
+The User acknowledges that failure to verify does not transfer liability to Infraspective.
 
 ---
 
@@ -125,7 +125,7 @@ FOOTER_HTML = """
 .block-container { padding-bottom: 3.5rem; }
 </style>
 <div class="footer-disclaimer">
-  <b>Insfraspective — Beta Software:</b> All outputs must be independently verified by a licensed P.Eng before any project reliance. Results do not constitute professional engineering advice.
+  <b>Infraspective — Beta Software:</b> All outputs must be independently verified by a licensed P.Eng before any project reliance. Results do not constitute professional engineering advice.
 </div>
 """
 

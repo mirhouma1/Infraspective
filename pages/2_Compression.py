@@ -128,6 +128,13 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
                 des = r2.get("designation")
                 if not des or not str(des).strip():
                     continue
+                # Only keep sections this page can actually build (needs A/rx/ry).
+                # Filters out tension-only shapes (e.g. double angles with Ag/ry_s0
+                # headers) that are globbed from data/ but would error on selection.
+                if (_to_float(r2.get("A")) is None
+                        or _to_float(r2.get("rx")) is None
+                        or _to_float(r2.get("ry")) is None):
+                    continue
                 shapes[des] = r2
                 order.append(des)
 

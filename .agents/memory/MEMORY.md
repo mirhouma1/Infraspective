@@ -1,1 +1,2 @@
 - [SST12.1 data pipeline](sst12-data-pipeline.md) — steel-section CSVs are generated; shared pipeline needs BARE headers (flexure alias gap), tension pipeline needs exact _mm names.
+- [Compression/Beam-Column loader gate](compression-loader-gate.md) — both pages glob all data CSVs; must skip tension double-angle rows (Ag/ry_s0 unaliased) or the default section errors on load.

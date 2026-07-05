@@ -127,6 +127,13 @@ def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
             c = _canonicalize(rec)
             des = c.get("designation")
             if des:
+                # Only keep sections this page can build (needs Area/rx/ry).
+                # Filters out tension-only shapes (e.g. double angles with Ag/ry_s0
+                # headers) that are globbed from data/ but would error on selection.
+                if (_flt(c.get("Area")) is None
+                        or _flt(c.get("rx")) is None
+                        or _flt(c.get("ry")) is None):
+                    continue
                 key = str(des).strip()
                 shapes[key] = c
                 order.append(key)

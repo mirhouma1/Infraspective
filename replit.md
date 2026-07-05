@@ -33,17 +33,19 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 ```
 
 ## Logo Assets
-- `static/logo.png` — sidebar logo (original)
-- `static/logo_brand.jpg` — high-res brand logo (JPEG, white background) used in page headers
+- `static/logo_mark.png` — single brand mark (transparent PNG); the ONLY logo shown in the app. Rendered in the sidebar only.
+- `static/logo.jpg` — high-res source brand logo (opaque). Kept as source; not embedded directly.
+- `static/logo.png` — legacy original logo (retained; `_logo_b64()` prefers `logo_mark.png`).
 
 ## Branding & Theme (_theme.py)
-- `apply_theme()` — injects global CSS; call once per page before any UI
-- `render_sidebar_logo()` — displays logo at sidebar top via `st.sidebar.image()`
-- `render_footer()` — sticky dark footer bar with "INFRASPECTIVE SOLUTIONS" text
-- `render_page_header(title, subtitle)` — full-width branded card at top of each page: logo (white bg panel) + blue divider + title/subtitle text; replaces `st.title()` on all pages
-- `render_page_banner(title, subtitle)` — dark blue banner below page title
-- `disclaimer_page()` — full styled disclaimer gate (logo + scrollable agreement + checkbox/button)
-- Logo loaded from `static/logo.png`, base64-encoded at runtime for HTML embeds
+- **Single-logo rule:** exactly ONE logo appears in the UI — a WHITE wordmark in the sidebar. There is NO top-bar/header logo overlay (it caused mobile hamburger overlap). Do not reintroduce a second logo.
+- `apply_theme()` — injects global CSS (Inter font, refined radii/shadows, hover/focus animations, responsive `@media(max-width:640px)`, `overflow-x:hidden`, styled mobile hamburger, sidebar nav styling + active-page highlight via `aria-current`); call once per page before any UI.
+- `render_sidebar_logo()` — renders the transparent brand mark recolored to white via CSS `filter: brightness(0) invert(1)` (blends onto the navy sidebar, no white plate), a small tagline, a divider, a "Calculators" label, and the six-page nav via `st.sidebar.page_link()` with Material icons.
+- `render_footer()` — sticky dark footer bar with "INFRASPECTIVE SOLUTIONS" text.
+- `render_page_header(title, subtitle)` / `render_page_banner(title, subtitle)` — defined but not currently called by any page.
+- `disclaimer_page()` — full styled disclaimer gate (logo + scrollable agreement + checkbox/button).
+- Logo loaded from `static/logo_mark.png`, base64-encoded at runtime for HTML embeds.
+- Pre-existing console noise: `Invalid color ... widgetBackgroundColor in theme.sidebar` warnings come from empty sidebar theme keys in `.streamlit/config.toml`; harmless.
 
 ### Theme Palette
 - Dark: `#0F172A`, Nav: `#1E3A8A`, Mid: `#1E40AF`, Blue: `#2563EB`

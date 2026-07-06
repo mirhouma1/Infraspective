@@ -14,6 +14,7 @@ _LOGO_PATH = Path(__file__).parent / "static" / "logo_mark.png"
 
 def _logo_b64() -> str:
     for p in (
+        Path(__file__).parent / "static" / "logo_mark_tight.png",
         Path(__file__).parent / "static" / "logo_mark.png",
         Path(__file__).parent / "static" / "logo.png",
         Path(__file__).parent / "static" / "logo.jpg",
@@ -91,20 +92,33 @@ button, input, select, textarea, .stMarkdown {
     margin: 0 !important;
 }
 
-/* ── Single brand mark — white wordmark blended onto the navy sidebar ── */
+/* ── Single brand mark — full-colour metallic logo on a light nameplate ── */
 .ins-logo {
     text-align: center;
-    padding: 16px 14px 4px;
-    margin: 2px 2px 2px;
+    padding: 14px 12px 4px;
+    margin: 6px 4px 2px;
+}
+.ins-logo .ins-plate {
+    display: block;
+    background: linear-gradient(180deg,#FFFFFF 0%,#EDF2FB 100%);
+    border: 1px solid rgba(219,234,254,0.85);
+    border-radius: 16px;
+    padding: 16px 18px;
+    box-shadow: 0 12px 30px rgba(6,12,34,0.40),
+                inset 0 1px 0 rgba(255,255,255,0.95);
+    transition: transform .25s ease, box-shadow .25s ease;
+}
+.ins-logo .ins-plate:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 38px rgba(6,12,34,0.48),
+                inset 0 1px 0 rgba(255,255,255,0.95);
 }
 .ins-logo img {
-    width: 88%;
-    max-width: 224px;
+    width: 100%;
+    max-width: 220px;
     height: auto;
-    display: inline-block;
-    /* recolor the dark brand mark to crisp white so it blends on the sidebar */
-    filter: brightness(0) invert(1) drop-shadow(0 2px 8px rgba(0,0,0,0.4));
-    opacity: 0.98;
+    display: block;
+    margin: 0 auto;
 }
 .ins-tagline {
     text-align: center;
@@ -560,7 +574,9 @@ def render_sidebar_logo() -> None:
     if b64:
         st.sidebar.markdown(
             f'<div class="ins-logo">'
+            f'<span class="ins-plate">'
             f'<img src="data:image/png;base64,{b64}" alt="Infraspective Solutions"/>'
+            f'</span>'
             f'</div>'
             f'<div class="ins-tagline">CSA S16 · Structural Suite</div>'
             f'<div class="ins-sidebar-divider"></div>',

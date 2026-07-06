@@ -36,18 +36,19 @@ A multi-page Streamlit app for checking steel members per CSA S16 (Canadian stee
 ```
 
 ## Logo Assets
-- `static/logo_mark.png` — single brand mark (transparent PNG); the ONLY logo shown in the app. Rendered in the sidebar only.
+- `static/logo_mark_tight.png` — the ONLY logo shown in the app (transparent PNG auto-cropped tight to the wordmark content, so it sits cleanly centered on a plate). `_logo_b64()` prefers this. Regenerate from `logo_mark.png` by cropping to the alpha bounding box + ~10% padding if the source logo changes.
+- `static/logo_mark.png` — full-margin transparent brand mark; fallback source for the tight crop.
 - `static/logo.jpg` — high-res source brand logo (opaque). Kept as source; not embedded directly.
-- `static/logo.png` — legacy original logo (retained; `_logo_b64()` prefers `logo_mark.png`).
+- `static/logo.png` — legacy original logo (retained fallback).
 
 ## Branding & Theme (_theme.py)
-- **Single-logo rule:** exactly ONE logo appears in the UI — a WHITE wordmark in the sidebar. There is NO top-bar/header logo overlay (it caused mobile hamburger overlap). Do not reintroduce a second logo.
+- **Single-logo rule:** exactly ONE logo appears in the UI — the full-colour metallic wordmark on a light "nameplate" card in the sidebar. There is NO top-bar/header logo overlay (it caused mobile hamburger overlap). Do not reintroduce a second logo. **Do NOT recolor the logo to a flat white silhouette** (`filter: brightness(0) invert(1)`) — it flattens the whole mark to one colour and the dark "SPEC" letters inside the metallic box vanish into a white blob (looks "chopped"). Show the logo in full colour on a light surface instead.
 - `apply_theme()` — injects global CSS (Inter font, refined radii/shadows, hover/focus animations, responsive `@media(max-width:640px)`, `overflow-x:hidden`, styled mobile hamburger, sidebar nav styling + active-page highlight via `aria-current`); call once per page before any UI.
-- `render_sidebar_logo()` — renders the transparent brand mark recolored to white via CSS `filter: brightness(0) invert(1)` (blends onto the navy sidebar, no white plate), a small tagline, a divider, a "Calculators" label, and the six-page nav via `st.sidebar.page_link()` with Material icons.
+- `render_sidebar_logo()` — renders the full-colour metallic brand mark inside a light rounded `.ins-plate` nameplate card (soft shadow + subtle hover lift) so it reads cleanly on the navy sidebar, a small tagline, a divider, a "Calculators" label, and the six-page nav via `st.sidebar.page_link()` with Material icons.
 - `render_footer()` — sticky dark footer bar with "INFRASPECTIVE SOLUTIONS" text.
 - `render_page_header(title, subtitle)` / `render_page_banner(title, subtitle)` — defined but not currently called by any page.
 - `disclaimer_page()` — full styled disclaimer gate (logo + scrollable agreement + checkbox/button).
-- Logo loaded from `static/logo_mark.png`, base64-encoded at runtime for HTML embeds.
+- Logo loaded from `static/logo_mark_tight.png` (falling back to `logo_mark.png`), base64-encoded at runtime for HTML embeds.
 - Pre-existing console noise: `Invalid color ... widgetBackgroundColor in theme.sidebar` warnings come from empty sidebar theme keys in `.streamlit/config.toml`; harmless.
 
 ### Theme Palette

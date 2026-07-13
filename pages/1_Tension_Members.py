@@ -716,15 +716,37 @@ def panel_double_angle(mat: Material, Tf: float) -> None:
         )
         return
 
-    chosen = st.selectbox("Double angle designation", sorted(df["designation"].tolist(), key=_nat_key), key="da_des")
-    row    = df.loc[df["designation"] == chosen].iloc[0]
+    DA_ARRANGEMENTS = {
+        "Equal legs (2L)":              "2LE",
+        "Long legs back-to-back (2LL)": "2LL",
+        "Short legs back-to-back (2LS)": "2LS",
+    }
+    arr_label = st.selectbox("Leg arrangement", list(DA_ARRANGEMENTS), key="da_arr")
+    prefix    = DA_ARRANGEMENTS[arr_label]
+
+    sub = df[df["designation"].astype(str).str.startswith(prefix)]
+    if sub.empty:
+        st.warning(f"No {arr_label} sections found in the data table.")
+        return
+
+    def _da_display(des: str) -> str:
+        return "2L" + des[3:] if prefix == "2LE" else des
+
+    chosen = st.selectbox(
+        "Double angle designation",
+        sorted(sub["designation"].tolist(), key=_nat_key),
+        format_func=_da_display,
+        key=f"da_des_{prefix}",
+    )
+    chosen_label = _da_display(chosen)
+    row    = sub.loc[sub["designation"] == chosen].iloc[0]
     Ag     = float(row["Ag"])
     t      = float(row["t"])
 
-    parts = chosen.replace("L", "").split("x")
-    try:
-        legs = [float(parts[0]), float(parts[1])]
-    except Exception:
+    m = _re.match(r"^2L[ELS]?(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)x", str(chosen))
+    if m:
+        legs = [float(m.group(1)), float(m.group(2))]
+    else:
         legs = [100.0, 100.0]
 
     with st.expander("Section properties", expanded=True):
@@ -800,7 +822,7 @@ def panel_double_angle(mat: Material, Tf: float) -> None:
             pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
             edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t,
             hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
-            section_label=chosen,
+            section_label=chosen_label,
             governing_path_n_holes=gov_path["n_holes"],
             zig_zag="zig" in gov_path["description"].lower(),
         )

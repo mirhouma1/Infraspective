@@ -526,7 +526,49 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str) -> None:
 
 
 # ── Section panels ────────────────────────────────────────────────────────────
-def panel_plate(mat: Material, Tf: float) -> None:
+def render_material():
+    st.divider()
+    st.subheader("Material")
+    GRADES = {
+        "G300W  (Fy=300, Fu=440)": (300.0, 440.0),
+        "G350W  (Fy=350, Fu=450)": (350.0, 450.0),
+        "G400W  (Fy=400, Fu=520)": (400.0, 520.0),
+        "G480W  (Fy=480, Fu=590)": (480.0, 590.0),
+        "Custom":                   None,
+    }
+    grade_sel = st.selectbox("Steel grade", list(GRADES.keys()))
+    if GRADES[grade_sel]:
+        Fy_def, Fu_def = GRADES[grade_sel]
+    else:
+        Fy_def, Fu_def = 350.0, 450.0
+
+    mc1, mc2, mc3 = st.columns(3)
+    with mc1:
+        Fy = st.number_input("Fy (MPa)", min_value=100.0, max_value=800.0,
+                              value=Fy_def, step=10.0, key="tm_Fy")
+    with mc2:
+        Fu = st.number_input("Fu (MPa)", min_value=200.0, max_value=900.0,
+                              value=Fu_def, step=10.0, key="tm_Fu")
+    with mc3:
+        Tf = st.number_input("Factored demand Tf (kN)", min_value=0.0,
+                              max_value=50000.0, value=0.0, step=10.0,
+                              help="Optional — shows utilization ratio",
+                              key="tm_Tf")
+
+    mat = Material(Fy=Fy, Fu=Fu)
+
+    if Fy > 460:
+        st.warning(
+            "Fy > 460 MPa: CSA S16 requires using Fy in place of the "
+            "(Fy+Fu)/2 shear average for block shear. "
+            "Review results carefully for high-strength steels."
+        )
+
+    st.divider()
+    return mat, Tf
+
+
+def panel_plate(render_material) -> None:
     st.subheader("Section — Flat Plate")
     c1, c2 = st.columns(2)
     with c1:
@@ -540,6 +582,8 @@ def panel_plate(mat: Material, Tf: float) -> None:
     Ag = width * thick
 
     pin_conn = st.checkbox("Pin connection (Cl. 13.2b)?", value=False, key="pl_pin")
+
+    mat, Tf = render_material()
 
     st.subheader("Connection Geometry")
     _, hole_dia, allowance = _bolt_hole_inputs("pl")
@@ -611,7 +655,7 @@ def panel_plate(mat: Material, Tf: float) -> None:
         components.html(svg, height=340)
 
 
-def panel_single_angle(mat: Material, Tf: float) -> None:
+def panel_single_angle(render_material) -> None:
     st.subheader("Section — Single Angle")
     df = load_angle_table()
     if df.empty:
@@ -631,6 +675,8 @@ def panel_single_angle(mat: Material, Tf: float) -> None:
         cc[1].metric("Leg 2 (mm)", f"{leg2:.1f}")
         cc[2].metric("t (mm)", f"{t:.1f}")
         cc[3].metric("Ag (mm2)", f"{Ag:,.0f}")
+
+    mat, Tf = render_material()
 
     st.subheader("Connection Geometry")
     conn_leg = st.radio("Connected leg", ["Leg 1", "Leg 2"], horizontal=True, key="sa_leg")
@@ -706,7 +752,7 @@ def panel_single_angle(mat: Material, Tf: float) -> None:
         components.html(svg, height=340)
 
 
-def panel_double_angle(mat: Material, Tf: float) -> None:
+def panel_double_angle(render_material) -> None:
     st.subheader("Section — Double Angle (Back-to-Back)")
     df = load_double_angle_table()
     if df.empty:
@@ -754,6 +800,8 @@ def panel_double_angle(mat: Material, Tf: float) -> None:
         cc[0].metric("Leg 1 (mm)", f"{legs[0]:.0f}")
         cc[1].metric("Leg 2 (mm)", f"{legs[1]:.0f}")
         cc[2].metric("Ag combined (mm2)", f"{Ag:,.0f}")
+
+    mat, Tf = render_material()
 
     st.subheader("Connection Geometry")
     conn_leg = st.radio(
@@ -829,7 +877,7 @@ def panel_double_angle(mat: Material, Tf: float) -> None:
         components.html(svg, height=340)
 
 
-def panel_wt(mat: Material, Tf: float) -> None:
+def panel_wt(render_material) -> None:
     st.subheader("Section — WT (Structural Tee)")
     df = load_wt_table()
     if df.empty:
@@ -856,6 +904,8 @@ def panel_wt(mat: Material, Tf: float) -> None:
         cc[2].metric("b (mm)", f"{b_fl:.1f}")
         cc[3].metric("t flange (mm)", f"{t_fl:.1f}")
         cc[4].metric("w stem (mm)", f"{t_st:.1f}")
+
+    mat, Tf = render_material()
 
     st.subheader("Connection Type")
     conn_el      = st.radio("Connected element", ["Flange", "Stem"], horizontal=True, key="wt_el")
@@ -930,7 +980,7 @@ def panel_wt(mat: Material, Tf: float) -> None:
         components.html(svg, height=340)
 
 
-def panel_channel(mat: Material, Tf: float) -> None:
+def panel_channel(render_material) -> None:
     st.subheader("Section — Channel (C / MC Shape)")
     df = load_channel_table()
     if df.empty:
@@ -957,6 +1007,8 @@ def panel_channel(mat: Material, Tf: float) -> None:
         cc[2].metric("b (mm)", f"{b_fl:.1f}")
         cc[3].metric("t flange (mm)", f"{t_fl:.1f}")
         cc[4].metric("w web (mm)", f"{t_web:.1f}")
+
+    mat, Tf = render_material()
 
     st.info("Channels are typically connected through the web. Connected width = depth d.")
     w_conn = d_dep
@@ -1045,56 +1097,17 @@ def main() -> None:
 
     st.subheader("1. Section Type")
     sec_type = st.selectbox("Member cross-section type", SECTION_TYPES)
-    st.divider()
-
-    st.subheader("2. Material")
-    GRADES = {
-        "G300W  (Fy=300, Fu=440)": (300.0, 440.0),
-        "G350W  (Fy=350, Fu=450)": (350.0, 450.0),
-        "G400W  (Fy=400, Fu=520)": (400.0, 520.0),
-        "G480W  (Fy=480, Fu=590)": (480.0, 590.0),
-        "Custom":                   None,
-    }
-    grade_sel = st.selectbox("Steel grade", list(GRADES.keys()))
-    if GRADES[grade_sel]:
-        Fy_def, Fu_def = GRADES[grade_sel]
-    else:
-        Fy_def, Fu_def = 350.0, 450.0
-
-    mc1, mc2, mc3 = st.columns(3)
-    with mc1:
-        Fy = st.number_input("Fy (MPa)", min_value=100.0, max_value=800.0,
-                              value=Fy_def, step=10.0, key="tm_Fy")
-    with mc2:
-        Fu = st.number_input("Fu (MPa)", min_value=200.0, max_value=900.0,
-                              value=Fu_def, step=10.0, key="tm_Fu")
-    with mc3:
-        Tf = st.number_input("Factored demand Tf (kN)", min_value=0.0,
-                              max_value=50000.0, value=0.0, step=10.0,
-                              help="Optional — shows utilization ratio",
-                              key="tm_Tf")
-
-    mat = Material(Fy=Fy, Fu=Fu)
-
-    if Fy > 460:
-        st.warning(
-            "Fy > 460 MPa: CSA S16 requires using Fy in place of the "
-            "(Fy+Fu)/2 shear average for block shear. "
-            "Review results carefully for high-strength steels."
-        )
-
-    st.divider()
 
     if sec_type == "Plate":
-        panel_plate(mat, Tf)
+        panel_plate(render_material)
     elif sec_type == "Single Angle":
-        panel_single_angle(mat, Tf)
+        panel_single_angle(render_material)
     elif sec_type == "Double Angle":
-        panel_double_angle(mat, Tf)
+        panel_double_angle(render_material)
     elif sec_type == "WT Section":
-        panel_wt(mat, Tf)
+        panel_wt(render_material)
     elif sec_type == "Channel (C / MC)":
-        panel_channel(mat, Tf)
+        panel_channel(render_material)
 
     st.divider()
     st.caption(

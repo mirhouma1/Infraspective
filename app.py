@@ -22,7 +22,9 @@ from flexure_diagrams import (
 # ----------------------------
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-WI_SECTION_CSV = DATA_DIR / "CISC 11th Edition (CSA S16-14) - WiSection Tables (Revised).csv"
+WI_SECTION_CSV = (
+    DATA_DIR / "CISC 11th Edition (CSA S16-14) - WiSection Tables (Revised).csv"
+)
 CLASS_BENDING_CSV = DATA_DIR / "CISC 11th Edition - Class of Sections in Bending.csv"
 
 PHI_B = 0.9
@@ -142,7 +144,9 @@ except Exception:
 # DISCLAIMER GATE
 # ----------------------------
 def require_disclaimer_acceptance() -> None:
-    st.set_page_config(page_title="Beam Flexure — CSA S16", page_icon=":wrench:", layout="wide")
+    st.set_page_config(
+        page_title="Beam Flexure — CSA S16", page_icon=":wrench:", layout="wide"
+    )
 
     if st.session_state.get("disclaimer_version") != DISCLAIMER_VERSION:
         st.session_state["accepted_disclaimer"] = False
@@ -160,10 +164,15 @@ def require_disclaimer_acceptance() -> None:
 # ============================================================
 def _norm(s: str) -> str:
     out = (
-        str(s).strip().lower()
-        .replace("(", "").replace(")", "")
-        .replace("[", "").replace("]", "")
-        .replace("/", "_").replace("-", "_")
+        str(s)
+        .strip()
+        .lower()
+        .replace("(", "")
+        .replace(")", "")
+        .replace("[", "")
+        .replace("]", "")
+        .replace("/", "_")
+        .replace("-", "_")
         .replace(" ", "_")
         .replace("^", "")
     )
@@ -174,27 +183,55 @@ def _norm(s: str) -> str:
 # NOTE: This is only for CSV column-name matching.
 # It does NOT change the symbols used in calculations/UI.
 CANON_SYNONYMS: Dict[str, List[str]] = {
-    "designation": ["designation", "Designation", "shape", "section", "name", "w_shape"],
-
+    "designation": [
+        "designation",
+        "Designation",
+        "shape",
+        "section",
+        "name",
+        "w_shape",
+    ],
     # Table-2 symbols
     "d": ["d", "D", "depth", "depth_d", "depth_d_mm", "overall_depth"],
     "b": ["b", "B", "bf", "flange_width", "flange_width_b", "flange_width_b_mm"],
-    "t": ["t", "T", "tf", "flange_thickness", "flange_thickness_t", "flange_thickness_t_mm"],
+    "t": [
+        "t",
+        "T",
+        "tf",
+        "flange_thickness",
+        "flange_thickness_t",
+        "flange_thickness_t_mm",
+    ],
     "w": ["w", "W", "tw", "web_thickness", "web_thickness_w", "web_thickness_w_mm"],
-
     # Section properties (IMPORTANT: include exact CSA headers too)
     # Note: _norm() strips parentheses + non-ascii, so "Iy (10^6 mm?)" → "iy_106_mm"
-    "Zx": ["Zx", "zx", "z_x", "plastic_modulus_zx", "plastic_modulus_zx_mm3", "zx_mm3", "zx_103_mm"],
-    "Sx": ["Sx", "sx", "s_x", "elastic_modulus_sx", "elastic_modulus_sx_mm3", "sx_mm3", "sx_103_mm"],
+    "Zx": [
+        "Zx",
+        "zx",
+        "z_x",
+        "plastic_modulus_zx",
+        "plastic_modulus_zx_mm3",
+        "zx_mm3",
+        "zx_103_mm",
+    ],
+    "Sx": [
+        "Sx",
+        "sx",
+        "s_x",
+        "elastic_modulus_sx",
+        "elastic_modulus_sx_mm3",
+        "sx_mm3",
+        "sx_103_mm",
+    ],
     "Ix": ["Ix", "ix", "i_x", "ix_106_mm4", "ix_106_mm"],
     "Zy": ["Zy", "zy", "z_y", "zy_mm3", "zy_103_mm"],
     "Sy": ["Sy", "sy", "s_y", "sy_mm3", "sy_103_mm"],
     "Iy": ["Iy", "iy", "i_y", "iy_106_mm4", "iy_106_mm"],
-    "J":  ["J", "j", "torsion_constant_j", "j_103_mm4", "j_103_mm"],
+    "J": ["J", "j", "torsion_constant_j", "j_103_mm4", "j_103_mm"],
     "Cw": ["Cw", "cw", "c_w", "warping_constant_cw", "cw_109_mm6", "cw_109_mm"],
     "rx": ["rx", "r_x", "radius_of_gyration_rx", "rx_mm"],
     "ry": ["ry", "r_y", "radius_of_gyration_ry", "ry_mm"],
-    "k":  ["k", "K", "distance_k", "distance_k_mm", "fillet_distance"],
+    "k": ["k", "K", "distance_k", "distance_k_mm", "fillet_distance"],
 }
 
 
@@ -275,7 +312,10 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     # 3) Load any additional CSVs inside data/
     if DATA_DIR.exists():
         for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
-            if p.suffix.lower() == ".csv" and p not in (WI_SECTION_CSV, CLASS_BENDING_CSV):
+            if p.suffix.lower() == ".csv" and p not in (
+                WI_SECTION_CSV,
+                CLASS_BENDING_CSV,
+            ):
                 data, csv_order = _load_csv(p)
                 merged.update(data)
                 order.extend(csv_order)
@@ -294,7 +334,8 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     order_unique.sort(key=_nat)
     # Beam Flexure page uses W-sections only — filter out HSS and other types
     order_unique = [
-        k for k in order_unique
+        k
+        for k in order_unique
         if k.upper().startswith("W") and len(k) > 1 and k[1].isdigit()
     ]
     return merged, order_unique
@@ -322,7 +363,7 @@ def to_kNm_from_Nmm(M_Nmm: float) -> float:
 def class_limits_flange(Fy: float) -> tuple:
     """Returns (Class 1, Class 2, Class 3) limits for flange."""
     r = 1.0 / math.sqrt(Fy)
-    return 145*r, 170*r, 200*r
+    return 145 * r, 170 * r, 200 * r
 
 
 def class_limits_web(Fy: float) -> tuple:
@@ -332,15 +373,18 @@ def class_limits_web(Fy: float) -> tuple:
     (1 − k·Cf/(φCy)). In pure bending Cf = 0, so the reduction term is 1.0.
     """
     r = 1.0 / math.sqrt(Fy)
-    return 1100*r, 1700*r, 1900*r
+    return 1100 * r, 1700 * r, 1900 * r
 
 
 def classify_table2_W_major(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     """Alternative classification function with cleaner output format."""
-    d = float(shape["d"]); b = float(shape["b"]); t = float(shape["t"]); w = float(shape["w"])
-    h = d - 2*t
-    lam_f = (b/2)/t
-    lam_w = h/w
+    d = float(shape["d"])
+    b = float(shape["b"])
+    t = float(shape["t"])
+    w = float(shape["w"])
+    h = d - 2 * t
+    lam_f = (b / 2) / t
+    lam_w = h / w
 
     f1, f2, f3 = class_limits_flange(Fy)
     w1, w2, w3 = class_limits_web(Fy)
@@ -351,7 +395,9 @@ def classify_table2_W_major(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     cf = c(lam_f, f1, f2, f3)
     cw = c(lam_w, w1, w2, w3)
     cs = max(cf, cw)
-    gov = "Flange & Web (tie)" if (cs == cf == cw) else ("Flange" if cs == cf else "Web")
+    gov = (
+        "Flange & Web (tie)" if (cs == cf == cw) else ("Flange" if cs == cf else "Web")
+    )
 
     return {
         "ratios": {"Flange (b/2t)": lam_f, "Web (h/w)": lam_w},
@@ -362,7 +408,7 @@ def classify_table2_W_major(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
         "element_class": {"Flange": cf, "Web": cw},
         "section_class": cs,
         "governed_by": gov,
-        "h": h
+        "h": h,
     }
 
 
@@ -446,22 +492,40 @@ def compute_se_with_steps(geom: Dict[str, float], Fy: float) -> Dict[str, Any]:
     Se = effective_section_modulus(d, Ix_eff)
 
     steps = [
-        {"label": "Given geometry (mm)", "text": f"d={d:.1f}, b={b:.1f}, t={t:.1f}, w={w:.1f}"},
-        {"label": "Clear web height", "latex": rf"h = d - 2t = {d:.1f} - 2({t:.1f}) = {h:.1f}\ \mathrm{{mm}}"},
+        {
+            "label": "Given geometry (mm)",
+            "text": f"d={d:.1f}, b={b:.1f}, t={t:.1f}, w={w:.1f}",
+        },
+        {
+            "label": "Clear web height",
+            "latex": rf"h = d - 2t = {d:.1f} - 2({t:.1f}) = {h:.1f}\ \mathrm{{mm}}",
+        },
         {
             "label": "Slenderness ratios",
-            "latex": rf"\lambda_f = \frac{{b/2}}{{t}} = \frac{{{b/2:.1f}}}{{{t:.1f}}} = {lam_f:.2f},\quad "
-                     rf"\lambda_w = \frac{{h}}{{w}} = \frac{{{h:.1f}}}{{{w:.1f}}} = {lam_w:.2f}",
+            "latex": rf"\lambda_f = \frac{{b/2}}{{t}} = \frac{{{b / 2:.1f}}}{{{t:.1f}}} = {lam_f:.2f},\quad "
+            rf"\lambda_w = \frac{{h}}{{w}} = \frac{{{h:.1f}}}{{{w:.1f}}} = {lam_w:.2f}",
         },
-        {"label": "Effective elements (simple)", "text": f"b_eff = {b_eff:.1f} mm,  h_eff = {h_eff:.1f} mm"},
+        {
+            "label": "Effective elements (simple)",
+            "text": f"b_eff = {b_eff:.1f} mm,  h_eff = {h_eff:.1f} mm",
+        },
         {"label": "Effective section properties", "text": f"Ix_eff = {Ix_eff:.3e} mm⁴"},
         {
             "label": "Effective section modulus",
-            "latex": rf"S_e = \frac{{I_{{x,eff}}}}{{d/2}} = \frac{{{Ix_eff:.3e}}}{{{d/2:.1f}}} = {Se:.3e}\ \mathrm{{mm^3}}",
+            "latex": rf"S_e = \frac{{I_{{x,eff}}}}{{d/2}} = \frac{{{Ix_eff:.3e}}}{{{d / 2:.1f}}} = {Se:.3e}\ \mathrm{{mm^3}}",
         },
     ]
 
-    return {"Se": Se, "Ix_eff": Ix_eff, "b_eff": b_eff, "h_eff": h_eff, "lam_f": lam_f, "lam_w": lam_w, "h": h, "steps": steps}
+    return {
+        "Se": Se,
+        "Ix_eff": Ix_eff,
+        "b_eff": b_eff,
+        "h_eff": h_eff,
+        "lam_f": lam_f,
+        "lam_w": lam_w,
+        "h": h,
+        "steps": steps,
+    }
 
 
 # ----------------------------
@@ -480,11 +544,15 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
     h = d - 2.0 * t
 
     lam_f = (b / 2.0) / t  # b/2t
-    lam_w = h / w          # h/w
+    lam_w = h / w  # h/w
 
     r = 1.0 / math.sqrt(Fy)
     f1, f2, f3 = 145 * r, 170 * r, 200 * r  # flange of I-section (one edge)
-    w1, w2, w3 = 1100 * r, 1700 * r, 1900 * r  # web of I-section (two edges), Cf=0 in flexure
+    w1, w2, w3 = (
+        1100 * r,
+        1700 * r,
+        1900 * r,
+    )  # web of I-section (two edges), Cf=0 in flexure
 
     def classify(lam: float, lim1: float, lim2: float, lim3: float) -> int:
         if lam <= lim1:
@@ -519,8 +587,16 @@ def table2_class_major_axis(shape: Dict[str, Any], Fy: float) -> Dict[str, Any]:
         "governing": governing,
         "ratios": {"b/2t": round(lam_f, 2), "h/w": round(lam_w, 2)},
         "limits": {
-            "flange": {"Class 1": round(f1, 2), "Class 2": round(f2, 2), "Class 3": round(f3, 2)},
-            "web": {"Class 1": round(w1, 2), "Class 2": round(w2, 2), "Class 3": round(w3, 2)},
+            "flange": {
+                "Class 1": round(f1, 2),
+                "Class 2": round(f2, 2),
+                "Class 3": round(f3, 2),
+            },
+            "web": {
+                "Class 1": round(w1, 2),
+                "Class 2": round(w2, 2),
+                "Class 3": round(w3, 2),
+            },
         },
         "coeffs": {"flange": (145, 170, 200), "web": (1100, 1700, 1900)},
         "geometry_used": geom,
@@ -553,22 +629,30 @@ def classification_steps_md(ci: Dict[str, Any], Fy: float) -> str:
     lines = []
     lines.append(f"**Material:** Fy = {Fy:g} MPa  →  √Fy = {sqrt_fy:.3f}")
     lines.append("")
-    lines.append("**1 · Flange — b/2t** (flange of I-section, supported along one edge — Table 2)")
+    lines.append(
+        "**1 · Flange — b/2t** (flange of I-section, supported along one edge — Table 2)"
+    )
     lines.append(f"- Measured: b = {b:.1f} mm, t = {t:.1f} mm")
     lines.append(f"- Ratio: b/2t = {b:.1f} / (2 × {t:.1f}) = **{lam_f:.2f}**")
     lines.append(f"- Class 1 limit: 145/√Fy = 145/{sqrt_fy:.3f} = {lim(cf1):.2f}")
     lines.append(f"- Class 2 limit: 170/√Fy = 170/{sqrt_fy:.3f} = {lim(cf2):.2f}")
     lines.append(f"- Class 3 limit: 200/√Fy = 200/{sqrt_fy:.3f} = {lim(cf3):.2f}")
-    lines.append(f"- Result: {verdict(lam_f, lim(cf1), lim(cf2), lim(cf3), ci['class_flange'])}")
+    lines.append(
+        f"- Result: {verdict(lam_f, lim(cf1), lim(cf2), lim(cf3), ci['class_flange'])}"
+    )
     lines.append("")
-    lines.append("**2 · Web — h/w** (web of I-section, supported along two edges — Table 2)")
+    lines.append(
+        "**2 · Web — h/w** (web of I-section, supported along two edges — Table 2)"
+    )
     lines.append(f"- Clear web depth: h = d − 2t = {d:.1f} − 2 × {t:.1f} = {h:.1f} mm")
     lines.append(f"- Ratio: h/w = {h:.1f} / {w:.1f} = **{lam_w:.2f}**")
     lines.append("- Pure bending (no axial): the (1 − Cf/φCy) reduction term = 1.0")
     lines.append(f"- Class 1 limit: {cw1}/√Fy = {cw1}/{sqrt_fy:.3f} = {lim(cw1):.2f}")
     lines.append(f"- Class 2 limit: {cw2}/√Fy = {cw2}/{sqrt_fy:.3f} = {lim(cw2):.2f}")
     lines.append(f"- Class 3 limit: {cw3}/√Fy = {cw3}/{sqrt_fy:.3f} = {lim(cw3):.2f}")
-    lines.append(f"- Result: {verdict(lam_w, lim(cw1), lim(cw2), lim(cw3), ci['class_web'])}")
+    lines.append(
+        f"- Result: {verdict(lam_w, lim(cw1), lim(cw2), lim(cw3), ci['class_web'])}"
+    )
     lines.append("")
     lines.append(
         f"**3 · Section Class** = max(flange = {ci['class_flange']}, web = {ci['class_web']}) "
@@ -581,7 +665,9 @@ def classification_steps_md(ci: Dict[str, Any], Fy: float) -> str:
 # LATERALLY SUPPORTED FLEXURE Mr
 # Uses Zx / Sx exactly (from tables)
 # ----------------------------
-def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int) -> Dict[str, Any]:
+def Mr_laterally_supported(
+    shape: Dict[str, Any], Fy: float, class_section: int
+) -> Dict[str, Any]:
     Zx_raw = shape.get("Zx")
     Sx_raw = shape.get("Sx")
 
@@ -593,14 +679,14 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
         mr_kNm = to_kNm_from_Nmm(Mr_Nmm)
         steps = [
             f"**Class {class_section} → plastic section — use Zx** (CSA S16 Cl. 13.5 a)",
-            f"- Plastic modulus: Zx = {Zx/1000:.0f} × 10³ mm³ = {Zx:,.0f} mm³",
+            f"- Plastic modulus: Zx = {Zx / 1000:.0f} × 10³ mm³ = {Zx:,.0f} mm³",
             "- Formula: Mr = φb · Zx · Fy",
             f"- Substitute: Mr = {PHI_B} × {Zx:,.0f} × {Fy:g}",
             f"- Mr = {Mr_Nmm:,.0f} N·mm = **{mr_kNm:,.1f} kN·m**",
         ]
         return {
             "mr_kNm": round(mr_kNm, 1),
-            "mode": f"Plastic (Zx = {Zx/1000:.0f} × 10³ mm³)",
+            "mode": f"Plastic (Zx = {Zx / 1000:.0f} × 10³ mm³)",
             "error": False,
             "steps": steps,
         }
@@ -613,14 +699,14 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
         mr_kNm = to_kNm_from_Nmm(Mr_Nmm)
         steps = [
             "**Class 3 → non-compact section — use Sx** (CSA S16 Cl. 13.5 b)",
-            f"- Elastic modulus: Sx = {Sx/1000:.0f} × 10³ mm³ = {Sx:,.0f} mm³",
+            f"- Elastic modulus: Sx = {Sx / 1000:.0f} × 10³ mm³ = {Sx:,.0f} mm³",
             "- Formula: Mr = φb · Sx · Fy",
             f"- Substitute: Mr = {PHI_B} × {Sx:,.0f} × {Fy:g}",
             f"- Mr = {Mr_Nmm:,.0f} N·mm = **{mr_kNm:,.1f} kN·m**",
         ]
         return {
             "mr_kNm": round(mr_kNm, 1),
-            "mode": f"Elastic (Sx = {Sx/1000:.0f} × 10³ mm³)",
+            "mode": f"Elastic (Sx = {Sx / 1000:.0f} × 10³ mm³)",
             "error": False,
             "steps": steps,
         }
@@ -636,7 +722,7 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
     Mr_kNm = Mr_class4(Se, Fy, PHI_B)
     steps = [
         "**Class 4 → slender section — use effective modulus Se** (CSA S16 Cl. 13.5 c)",
-        f"- Effective modulus: Se = {Se/1000:.0f} × 10³ mm³ = {Se:,.0f} mm³",
+        f"- Effective modulus: Se = {Se / 1000:.0f} × 10³ mm³ = {Se:,.0f} mm³",
         "- Formula: Mr = φb · Se · Fy",
         f"- Substitute: Mr = {PHI_B} × {Se:,.0f} × {Fy:g}",
         f"- Mr = **{Mr_kNm:,.1f} kN·m**  (see Se derivation below for how Se is built)",
@@ -644,7 +730,7 @@ def Mr_laterally_supported(shape: Dict[str, Any], Fy: float, class_section: int)
 
     return {
         "mr_kNm": round(Mr_kNm, 1),
-        "mode": f"Effective (Se = {Se/1000:.0f} × 10³ mm³)",
+        "mode": f"Effective (Se = {Se / 1000:.0f} × 10³ mm³)",
         "error": False,
         "class4_details": se_result,
         "steps": steps,
@@ -666,7 +752,7 @@ def _fmt(x: float, nd: int = 2) -> str:
 
 @dataclass
 class TraceLine:
-    kind: str      # "text" | "latex"
+    kind: str  # "text" | "latex"
     content: str
     bullet: bool = True
 
@@ -729,18 +815,22 @@ def shear_elastic_unstiffened_13_4_1_1a(
     Aw = h * w
     lam = h / w  # h/w
 
-    tb.text(f"Aw = h·w = {_fmt(h,2)}×{_fmt(w,2)} = {_fmt(Aw,2)} mm²")
-    tb.latex(rf"A_w = h\,w = ({_fmt(h,2)})( {_fmt(w,2)} ) = {_fmt(Aw,2)}\ \mathrm{{mm^2}}")
+    tb.text(f"Aw = h·w = {_fmt(h, 2)}×{_fmt(w, 2)} = {_fmt(Aw, 2)} mm²")
+    tb.latex(
+        rf"A_w = h\,w = ({_fmt(h, 2)})( {_fmt(w, 2)} ) = {_fmt(Aw, 2)}\ \mathrm{{mm^2}}"
+    )
 
-    tb.text(f"λ = h/w = {_fmt(h,2)}/{_fmt(w,2)} = {_fmt(lam,3)}")
-    tb.latex(rf"\lambda = \frac{{h}}{{w}} = \frac{{{_fmt(h,2)}}}{{{_fmt(w,2)}}} = {_fmt(lam,3)}")
+    tb.text(f"λ = h/w = {_fmt(h, 2)}/{_fmt(w, 2)} = {_fmt(lam, 3)}")
+    tb.latex(
+        rf"\lambda = \frac{{h}}{{w}} = \frac{{{_fmt(h, 2)}}}{{{_fmt(w, 2)}}} = {_fmt(lam, 3)}"
+    )
 
     sqrtFy = math.sqrt(Fy)
     lam1 = 1014.0 / sqrtFy
     lam2 = 1435.0 / sqrtFy
 
-    tb.latex(rf"\lambda_1 = \frac{{1014}}{{\sqrt{{F_y}}}} = {_fmt(lam1,3)}")
-    tb.latex(rf"\lambda_2 = \frac{{1435}}{{\sqrt{{F_y}}}} = {_fmt(lam2,3)}")
+    tb.latex(rf"\lambda_1 = \frac{{1014}}{{\sqrt{{F_y}}}} = {_fmt(lam1, 3)}")
+    tb.latex(rf"\lambda_2 = \frac{{1435}}{{\sqrt{{F_y}}}} = {_fmt(lam2, 3)}")
 
     if lam <= lam1:
         Fs = 0.66 * Fy
@@ -753,10 +843,12 @@ def shear_elastic_unstiffened_13_4_1_1a(
         branch = "13.4.1.1(a)(iii)"
 
     tb.text(f"Branch used: {branch}")
-    tb.latex(rf"F_s = {_fmt(Fs,2)}\ \mathrm{{MPa}}")
+    tb.latex(rf"F_s = {_fmt(Fs, 2)}\ \mathrm{{MPa}}")
 
     Vr_kN = (phi * Aw * Fs) / 1000.0
-    tb.latex(rf"V_r = \phi_v A_w F_s = ({phi:.2f})({_fmt(Aw,0)})({_fmt(Fs,2)})/1000 = {_fmt(Vr_kN,2)}\ \mathrm{{kN}}")
+    tb.latex(
+        rf"V_r = \phi_v A_w F_s = ({phi:.2f})({_fmt(Aw, 0)})({_fmt(Fs, 2)})/1000 = {_fmt(Vr_kN, 2)}\ \mathrm{{kN}}"
+    )
 
     return {
         "ok": True,
@@ -787,6 +879,7 @@ def shear_demand_check(Vu_kN: float, Vr_kN: float) -> Dict[str, Any]:
 # ============================================================
 E_MPA_DEFAULT = 200000.0  # MPa = N/mm²
 
+
 def omega2_from_case(case: str) -> float:
     """ω2 moment gradient factor for common loading cases."""
     m = {
@@ -797,6 +890,7 @@ def omega2_from_case(case: str) -> float:
         "cantilever_point": 1.00,
     }
     return float(m.get(case, 1.00))
+
 
 OMEGA2_CASES = [
     ("uniform_moment", "Uniform moment (ω₂ = 1.00)"),
@@ -812,9 +906,12 @@ G_MPA_DEFAULT = 77000.0  # shear modulus of steel (MPa)
 
 def omega2_general(M_max: float, M_a: float, M_b: float, M_c: float) -> float:
     """4-point ω₂ for any moment distribution (Cl. 13.6, Eq. 2):
-       ω₂ = 4·M_max / sqrt(M_max² + 4·M_a² + 7·M_b² + 4·M_c²) ≤ 2.5
-       Moments are absolute values at L/4 (M_a), L/2 (M_b), 3L/4 (M_c)."""
-    Mm = abs(M_max); Ma = abs(M_a); Mb = abs(M_b); Mc = abs(M_c)
+    ω₂ = 4·M_max / sqrt(M_max² + 4·M_a² + 7·M_b² + 4·M_c²) ≤ 2.5
+    Moments are absolute values at L/4 (M_a), L/2 (M_b), 3L/4 (M_c)."""
+    Mm = abs(M_max)
+    Ma = abs(M_a)
+    Mb = abs(M_b)
+    Mc = abs(M_c)
     denom = math.sqrt(Mm * Mm + 4.0 * Ma * Ma + 7.0 * Mb * Mb + 4.0 * Mc * Mc)
     if denom <= 0:
         return 1.0
@@ -823,16 +920,21 @@ def omega2_general(M_max: float, M_a: float, M_b: float, M_c: float) -> float:
 
 def omega2_linear(kappa: float) -> float:
     """Linear-gradient ω₂ (Cl. 13.6, Eq. 3):
-       ω₂ = 1.75 + 1.05·κ + 0.3·κ²  ≤ 2.5
-       κ = ratio of smaller to larger end moment (+ double curvature, − single curvature)."""
+    ω₂ = 1.75 + 1.05·κ + 0.3·κ²  ≤ 2.5
+    κ = ratio of smaller to larger end moment (+ double curvature, − single curvature)."""
     k = max(-1.0, min(1.0, float(kappa)))
     return min(1.75 + 1.05 * k + 0.3 * k * k, 2.5)
 
 
-def critical_elastic_moment_kNm(L_mm: float, Iy_mm4: float, J_mm4: float,
-                                Cw_mm6: float, omega2: float,
-                                E_MPa: float = E_MPA_DEFAULT,
-                                G_MPa: float = G_MPA_DEFAULT) -> float:
+def critical_elastic_moment_kNm(
+    L_mm: float,
+    Iy_mm4: float,
+    J_mm4: float,
+    Cw_mm6: float,
+    omega2: float,
+    E_MPa: float = E_MPA_DEFAULT,
+    G_MPa: float = G_MPA_DEFAULT,
+) -> float:
     """Critical elastic LTB moment Mu (Cl. 13.6, Eq. 1) in kN·m."""
     if L_mm <= 0:
         return 0.0
@@ -844,21 +946,27 @@ def critical_elastic_moment_kNm(L_mm: float, Iy_mm4: float, J_mm4: float,
 
 # ── CSA S16 Table D.1 — Serviceability deflection limits ─────────────────────
 TABLE_D1_LIMITS = [
-    ("custom",                       "Custom L / n  (use selector below)",                  None),
-    ("industrial_floor",             "Industrial — floor",                                  300),
-    ("industrial_inelastic_roof",    "Industrial — inelastic roof",                         240),
-    ("industrial_elastic_roof",      "Industrial — elastic roof",                           180),
-    ("crane_girder_heavy",           "Crane girder ≥ 225 kN  (L/800)",                      800),
-    ("crane_girder_light",           "Crane girder < 225 kN  (L/600)",                      600),
-    ("crane_lateral",                "Crane runway — lateral  (L/600)",                     600),
-    ("other_floor_crack_susceptible","Other — floors, crack-susceptible finish (L/360)",   360),
-    ("other_floor_no_crack",         "Other — floors, not susceptible (L/300)",             300),
-    ("wind_drift_building",          "Wind drift — building  (h/400)",                      400),
-    ("storey_drift_cladding",        "Storey drift — cladding  (h/500)",                    500),
+    ("custom", "Custom L / n  (use selector below)", None),
+    ("industrial_floor", "Industrial — floor", 300),
+    ("industrial_inelastic_roof", "Industrial — inelastic roof", 240),
+    ("industrial_elastic_roof", "Industrial — elastic roof", 180),
+    ("crane_girder_heavy", "Crane girder ≥ 225 kN  (L/800)", 800),
+    ("crane_girder_light", "Crane girder < 225 kN  (L/600)", 600),
+    ("crane_lateral", "Crane runway — lateral  (L/600)", 600),
+    (
+        "other_floor_crack_susceptible",
+        "Other — floors, crack-susceptible finish (L/360)",
+        360,
+    ),
+    ("other_floor_no_crack", "Other — floors, not susceptible (L/300)", 300),
+    ("wind_drift_building", "Wind drift — building  (h/400)", 400),
+    ("storey_drift_cladding", "Storey drift — cladding  (h/500)", 500),
 ]
 
 
-def residual_stress_factor(section_class: int, Fy: float, Lb_mm: float, rts_mm: float) -> float:
+def residual_stress_factor(
+    section_class: int, Fy: float, Lb_mm: float, rts_mm: float
+) -> float:
     """Residual stress / inelastic transition factor in (0,1]."""
     if rts_mm <= 0:
         return 1.0
@@ -903,13 +1011,13 @@ def Mr_LTB_core(
             return {"ok": False, "error": "Missing Zx for Class 1/2", "trace": tr}
         Zx = float(Zx_raw) * 1000.0
         Mbase = Zx * Fy
-        tr.text(f"Base: Mp = Zx×Fy = {Zx/1000:.0f}×10³ × {Fy:.1f} MPa")
+        tr.text(f"Base: Mp = Zx×Fy = {Zx / 1000:.0f}×10³ × {Fy:.1f} MPa")
     elif section_class == 3:
         if Sx_raw is None:
             return {"ok": False, "error": "Missing Sx for Class 3", "trace": tr}
         Sx = float(Sx_raw) * 1000.0
         Mbase = Sx * Fy
-        tr.text(f"Base: My = Sx×Fy = {Sx/1000:.0f}×10³ × {Fy:.1f} MPa")
+        tr.text(f"Base: My = Sx×Fy = {Sx / 1000:.0f}×10³ × {Fy:.1f} MPa")
     else:
         d = fnum(shape.get("d"), "d")
         b = fnum(shape.get("b"), "b")
@@ -918,7 +1026,7 @@ def Mr_LTB_core(
         se_result = compute_Se_CSA(d, b, t, w, Fy)
         Se = se_result["Se"]
         Mbase = Se * Fy
-        tr.text(f"Base (Class 4): Me = Se×Fy = {Se/1000:.0f}×10³ × {Fy:.1f} MPa")
+        tr.text(f"Base (Class 4): Me = Se×Fy = {Se / 1000:.0f}×10³ × {Fy:.1f} MPa")
 
     if Ix_raw is None:
         Mcap = float("inf")
@@ -938,7 +1046,7 @@ def Mr_LTB_core(
 
         E = E_MPA_DEFAULT
         Mcap = (math.pi**2) * E * Ix / (Lb_mm**2)
-        tr.text(f"Cap proxy: Mcap = π²EI/Lb² = {Mcap/1e6:.1f} kN·m")
+        tr.text(f"Cap proxy: Mcap = π²EI/Lb² = {Mcap / 1e6:.1f} kN·m")
 
     k_rs = residual_stress_factor(section_class, Fy, Lb_mm, max(rts, 1e-6))
     k_om = min(max(omega2, 0.4), 2.0)
@@ -962,7 +1070,9 @@ def Mr_LTB_core(
 # ============================================================
 # DEFLECTION CALCULATIONS (Simply Supported Beams)
 # ============================================================
-def defl_ss_udl_mm(w_kN_per_m: float, L_m: float, E_MPa: float, Ix_10e6_mm4: float) -> float:
+def defl_ss_udl_mm(
+    w_kN_per_m: float, L_m: float, E_MPa: float, Ix_10e6_mm4: float
+) -> float:
     """δmax = 5 w L^4 / (384 E I) for simply supported beam with UDL."""
     w_N_per_mm = (w_kN_per_m * 1000.0) / 1000.0  # kN/m -> N/mm
     L_mm = L_m * 1000.0
@@ -970,7 +1080,9 @@ def defl_ss_udl_mm(w_kN_per_m: float, L_m: float, E_MPa: float, Ix_10e6_mm4: flo
     return (5.0 * w_N_per_mm * (L_mm**4)) / (384.0 * E_MPa * I)
 
 
-def defl_ss_midspan_point_mm(P_kN: float, L_m: float, E_MPa: float, Ix_10e6_mm4: float) -> float:
+def defl_ss_midspan_point_mm(
+    P_kN: float, L_m: float, E_MPa: float, Ix_10e6_mm4: float
+) -> float:
     """δmax = P L^3 / (48 E I) for simply supported beam with midspan point load."""
     P_N = P_kN * 1000.0
     L_mm = L_m * 1000.0
@@ -1005,7 +1117,9 @@ input_col1, input_col2, input_col3 = st.columns([2, 1, 1])
 
 with input_col1:
     st.markdown("### Choose a W-section")
-    search_query = st.text_input("Search sections", placeholder="e.g., W410", label_visibility="collapsed")
+    search_query = st.text_input(
+        "Search sections", placeholder="e.g., W410", label_visibility="collapsed"
+    )
     if search_query:
         qq = search_query.lower().strip()
         filtered = [k for k in designations if qq in k.lower()]
@@ -1016,16 +1130,24 @@ with input_col1:
         st.warning("No sections match your search.")
         st.stop()
 
-    selected_section = st.selectbox("Select section", options=filtered, index=0, label_visibility="collapsed")
+    selected_section = st.selectbox(
+        "Select section", options=filtered, index=0, label_visibility="collapsed"
+    )
 
 with input_col2:
     st.markdown("### Yield Strength")
-    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=345.0, step=5.0)
+    Fy = st.number_input(
+        "Fy (MPa)", min_value=200.0, max_value=700.0, value=345.0, step=5.0
+    )
 
 with input_col3:
     st.markdown("### Demand Check")
     check_demand = st.checkbox("Check against Mu")
-    Mu = st.number_input("Mu (kN·m)", min_value=0.0, value=100.0, step=10.0) if check_demand else None
+    Mu = (
+        st.number_input("Mu (kN·m)", min_value=0.0, value=100.0, step=10.0)
+        if check_demand
+        else None
+    )
 
 st.markdown("---")
 
@@ -1037,19 +1159,47 @@ if selected_section:
 
     # ── Raw CSV record (mirrors Compression page's "Raw CSV Record" tab) ──
     with st.expander(f"🗃️ Raw CSV record — {selected_section}", expanded=False):
-        st.caption("All properties for this section as loaded from the CISC W-section table. "
-                   "Canonical keys (Zx, Sx, Ix, Iy, J, Cw, Sy, Zy, rx, ry, k, d, b, t, w) are "
-                   "what the calculation engine consumes; remaining keys are the original CSV headers.")
-        _canonical_keys = ("designation", "d", "b", "t", "w", "k",
-                           "Ix", "Sx", "Zx", "rx", "Iy", "Sy", "Zy", "ry", "J", "Cw")
-        _canon_rows = [(k, shape.get(k)) for k in _canonical_keys if shape.get(k) is not None]
+        st.caption(
+            "All properties for this section as loaded from the CISC W-section table. "
+            "Canonical keys (Zx, Sx, Ix, Iy, J, Cw, Sy, Zy, rx, ry, k, d, b, t, w) are "
+            "what the calculation engine consumes; remaining keys are the original CSV headers."
+        )
+        _canonical_keys = (
+            "designation",
+            "d",
+            "b",
+            "t",
+            "w",
+            "k",
+            "Ix",
+            "Sx",
+            "Zx",
+            "rx",
+            "Iy",
+            "Sy",
+            "Zy",
+            "ry",
+            "J",
+            "Cw",
+        )
+        _canon_rows = [
+            (k, shape.get(k)) for k in _canonical_keys if shape.get(k) is not None
+        ]
         if _canon_rows:
             st.markdown("**Canonical properties (used by calculations)**")
-            st.table(pd.DataFrame(_canon_rows, columns=["Property", "Value"]).set_index("Property"))
+            st.table(
+                pd.DataFrame(_canon_rows, columns=["Property", "Value"]).set_index(
+                    "Property"
+                )
+            )
         _raw_rows = [(k, v) for k, v in shape.items() if k not in _canonical_keys]
         if _raw_rows:
             st.markdown("**All other CSV columns**")
-            st.table(pd.DataFrame(_raw_rows, columns=["CSV Column", "Value"]).set_index("CSV Column"))
+            st.table(
+                pd.DataFrame(_raw_rows, columns=["CSV Column", "Value"]).set_index(
+                    "CSV Column"
+                )
+            )
         if st.checkbox("Show full record as JSON", value=False, key="raw_json_toggle"):
             st.json(shape)
 
@@ -1074,12 +1224,18 @@ if selected_section:
             "Web Thickness (w)": f"{geom['w']:.1f} mm",
             "Clear Web Height (h = d − 2t)": f"{geom['h']:.1f} mm",
         }
-        st.table(pd.DataFrame.from_dict(section_geometry_display, orient="index", columns=["Value"]))
+        st.table(
+            pd.DataFrame.from_dict(
+                section_geometry_display, orient="index", columns=["Value"]
+            )
+        )
 
     with col2:
         st.subheader("Classification Results")
         section_class = class_info["class_section"]
-        class_desc = {1: "Plastic", 2: "Compact", 3: "Non-Compact", 4: "Slender"}[section_class]
+        class_desc = {1: "Plastic", 2: "Compact", 3: "Non-Compact", 4: "Slender"}[
+            section_class
+        ]
 
         st.markdown(
             f"### Section Class: :{'green' if section_class <= 2 else 'orange' if section_class == 3 else 'red'}[**{section_class}**] ({class_desc})"
@@ -1090,9 +1246,18 @@ if selected_section:
         ratio_data = {
             "Element": ["Flange (b/2t)", "Web (h/w)"],
             "Actual": [class_info["ratios"]["b/2t"], class_info["ratios"]["h/w"]],
-            "Class 1 Limit": [class_info["limits"]["flange"]["Class 1"], class_info["limits"]["web"]["Class 1"]],
-            "Class 2 Limit": [class_info["limits"]["flange"]["Class 2"], class_info["limits"]["web"]["Class 2"]],
-            "Class 3 Limit": [class_info["limits"]["flange"]["Class 3"], class_info["limits"]["web"]["Class 3"]],
+            "Class 1 Limit": [
+                class_info["limits"]["flange"]["Class 1"],
+                class_info["limits"]["web"]["Class 1"],
+            ],
+            "Class 2 Limit": [
+                class_info["limits"]["flange"]["Class 2"],
+                class_info["limits"]["web"]["Class 2"],
+            ],
+            "Class 3 Limit": [
+                class_info["limits"]["flange"]["Class 3"],
+                class_info["limits"]["web"]["Class 3"],
+            ],
             "Element Class": [class_info["class_flange"], class_info["class_web"]],
         }
         st.table(ratio_data)
@@ -1116,7 +1281,9 @@ if selected_section:
         mr_col1, mr_col2 = st.columns(2)
 
         with mr_col1:
-            st.metric("Factored Moment Resistance (Mr)", f"{mr_info['mr_kNm']:,.1f} kN·m")
+            st.metric(
+                "Factored Moment Resistance (Mr)", f"{mr_info['mr_kNm']:,.1f} kN·m"
+            )
             st.caption(f"Mode: {mr_info['mode']}")
             st.caption(f"φb = {PHI_B}")
 
@@ -1153,11 +1320,21 @@ if selected_section:
         shear_col1, shear_col2, shear_col3 = st.columns([1, 1, 2])
 
         with shear_col1:
-            phi_v = st.number_input("φv", min_value=0.50, max_value=1.00, value=float(PHI_V_DEFAULT), step=0.05)
+            phi_v = st.number_input(
+                "φv",
+                min_value=0.50,
+                max_value=1.00,
+                value=float(PHI_V_DEFAULT),
+                step=0.05,
+            )
 
         with shear_col2:
             check_Vu = st.checkbox("Check against Vu")
-            Vu_shear = st.number_input("Vu (kN)", min_value=0.0, value=100.0, step=10.0) if check_Vu else None
+            Vu_shear = (
+                st.number_input("Vu (kN)", min_value=0.0, value=100.0, step=10.0)
+                if check_Vu
+                else None
+            )
 
         h = float(class_info["geometry_used"]["h"])
         w = float(class_info["geometry_used"]["w"])
@@ -1166,7 +1343,9 @@ if selected_section:
         a_mm = None
         if web_type.startswith("Stiffened"):
             with shear_col2:
-                a_mm = st.number_input("Stiffener spacing a (mm)", min_value=1.0, value=800.0, step=50.0)
+                a_mm = st.number_input(
+                    "Stiffener spacing a (mm)", min_value=1.0, value=800.0, step=50.0
+                )
 
         try:
             tb = TraceBuilder()
@@ -1187,10 +1366,14 @@ if selected_section:
 
             else:
                 if stiffened_web_shear_CSA13_4 is None:
-                    raise ValueError("Stiffened web function not available (main.py missing stiffened_web_shear_CSA13_4).")
+                    raise ValueError(
+                        "Stiffened web function not available (main.py missing stiffened_web_shear_CSA13_4)."
+                    )
 
                 if a_mm is None:
-                    raise ValueError("Stiffener spacing a is required for stiffened web (13.4.1.1(b)).")
+                    raise ValueError(
+                        "Stiffener spacing a is required for stiffened web (13.4.1.1(b))."
+                    )
 
                 h_over_w = h / w
                 a_over_h = float(a_mm) / h
@@ -1209,7 +1392,7 @@ if selected_section:
                 Vr_kN = float(res["Vr_kN"])
                 Fs_MPa = float(res["Fs_MPa"])
                 lam = h_over_w
-                branch = f"13.4.1.1(b) {res.get('region','')}".strip()
+                branch = f"13.4.1.1(b) {res.get('region', '')}".strip()
                 warnings = res.get("warnings", [])
                 for wmsg in warnings:
                     tb.warn(str(wmsg))
@@ -1223,8 +1406,12 @@ if selected_section:
 
             with shear_col3:
                 st.metric("Factored Shear Resistance (Vr)", f"{Vr_kN:,.1f} kN")
-                st.caption(f"Case: {web_type}  |  Branch used: {branch}  |  λ = {lam:.2f}")
-                st.caption(f"Aw = {Aw:.0f} mm²,  Fs = {Fs_MPa:.1f} MPa,  φv = {float(phi_v):.2f}")
+                st.caption(
+                    f"Case: {web_type}  |  Branch used: {branch}  |  λ = {lam:.2f}"
+                )
+                st.caption(
+                    f"Aw = {Aw:.0f} mm²,  Fs = {Fs_MPa:.1f} MPa,  φv = {float(phi_v):.2f}"
+                )
 
                 if check_Vu and Vu_shear is not None:
                     chk = shear_demand_check(float(Vu_shear), float(Vr_kN))
@@ -1242,7 +1429,11 @@ if selected_section:
                 _kv_for_plot = None
                 if web_type.startswith("Stiffened") and a_mm is not None and h > 0:
                     _aspect = float(a_mm) / float(h)
-                    _kv_for_plot = (4.0 + 5.34 / _aspect**2) if _aspect < 1.0 else (5.34 + 4.0 / _aspect**2)
+                    _kv_for_plot = (
+                        (4.0 + 5.34 / _aspect**2)
+                        if _aspect < 1.0
+                        else (5.34 + 4.0 / _aspect**2)
+                    )
                 st.markdown(
                     shear_fs_curve_svg(
                         Fy=float(Fy),
@@ -1273,7 +1464,9 @@ if selected_section:
         ltb_col1, ltb_col2, ltb_col3 = st.columns([1, 1, 2])
 
         with ltb_col1:
-            Lb_m = st.number_input("Unbraced length Lb (m)", min_value=0.1, value=3.0, step=0.5)
+            Lb_m = st.number_input(
+                "Unbraced length Lb (m)", min_value=0.1, value=3.0, step=0.5
+            )
             Lb_mm = Lb_m * 1000.0
 
         with ltb_col2:
@@ -1296,16 +1489,25 @@ if selected_section:
 
             with ltb_col3:
                 if ltb_res["ok"]:
-                    st.metric("LTB Moment Resistance (Mr,LTB)", f"{ltb_res['Mr_kNm']:,.1f} kN·m")
-                    st.caption(f"φb = {ltb_res['phi_b']}, k_rs = {ltb_res['k_rs']:.3f}, ω₂ = {ltb_res['omega2_used']:.2f}")
+                    st.metric(
+                        "LTB Moment Resistance (Mr,LTB)",
+                        f"{ltb_res['Mr_kNm']:,.1f} kN·m",
+                    )
+                    st.caption(
+                        f"φb = {ltb_res['phi_b']}, k_rs = {ltb_res['k_rs']:.3f}, ω₂ = {ltb_res['omega2_used']:.2f}"
+                    )
 
                     # Compare with laterally supported
                     Mr_lat = mr_info.get("mr_kNm")
                     if Mr_lat and not mr_info.get("error"):
-                        if ltb_res['Mr_kNm'] < Mr_lat:
-                            st.warning(f"LTB governs: {ltb_res['Mr_kNm']:.1f} < {Mr_lat:.1f} kN·m (laterally supported)")
+                        if ltb_res["Mr_kNm"] < Mr_lat:
+                            st.warning(
+                                f"LTB governs: {ltb_res['Mr_kNm']:.1f} < {Mr_lat:.1f} kN·m (laterally supported)"
+                            )
                         else:
-                            st.info(f"Laterally supported governs: {Mr_lat:.1f} ≤ {ltb_res['Mr_kNm']:.1f} kN·m")
+                            st.info(
+                                f"Laterally supported governs: {Mr_lat:.1f} ≤ {ltb_res['Mr_kNm']:.1f} kN·m"
+                            )
                 else:
                     st.warning(f"LTB error: {ltb_res.get('error', 'Unknown error')}")
 
@@ -1315,8 +1517,10 @@ if selected_section:
 
             # ── Beam elevation diagram (with brace marks + moment shape) ──
             st.markdown("**Beam Elevation Diagram**")
-            _ltb_load_type = "udl" if omega2_case in ("udl", "triangular") else (
-                "point" if omega2_case == "midspan_point" else "udl"
+            _ltb_load_type = (
+                "udl"
+                if omega2_case in ("udl", "triangular")
+                else ("point" if omega2_case == "midspan_point" else "udl")
             )
             st.markdown(
                 beam_elevation_svg(braced=False, load_type=_ltb_load_type),
@@ -1325,11 +1529,16 @@ if selected_section:
 
             # ── Mr vs Lb curve ─────────────────────────────────────────────
             try:
-                _Iy_raw = shape.get("Iy"); _J_raw = shape.get("J"); _Cw_raw = shape.get("Cw")
-                _Zx_raw = shape.get("Zx"); _Sx_raw = shape.get("Sx")
-                if all(x is not None for x in (_Iy_raw, _J_raw, _Cw_raw, _Zx_raw, _Sx_raw)):
+                _Iy_raw = shape.get("Iy")
+                _J_raw = shape.get("J")
+                _Cw_raw = shape.get("Cw")
+                _Zx_raw = shape.get("Zx")
+                _Sx_raw = shape.get("Sx")
+                if all(
+                    x is not None for x in (_Iy_raw, _J_raw, _Cw_raw, _Zx_raw, _Sx_raw)
+                ):
                     _Iy = float(_Iy_raw) * 1e6
-                    _J  = float(_J_raw)  * 1e3
+                    _J = float(_J_raw) * 1e3
                     _Cw = float(_Cw_raw) * 1e9
                     _Zx = float(_Zx_raw) * 1e3
                     _Sx = float(_Sx_raw) * 1e3
@@ -1346,45 +1555,64 @@ if selected_section:
                     while _Li <= _Lmax_plot:
                         _Mu_i = critical_elastic_moment_kNm(_Li, _Iy, _J, _Cw, omega2)
                         if _Mu_i > 0.67 * _Mref:
-                            _Mr_i = min(1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_i),
-                                        PHI_B * _Mref)
+                            _Mr_i = min(
+                                1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_i),
+                                PHI_B * _Mref,
+                            )
                         else:
                             _Mr_i = PHI_B * _Mu_i
-                        _L_pts.append(_Li); _Mr_pts.append(_Mr_i)
+                        _L_pts.append(_Li)
+                        _Mr_pts.append(_Mr_i)
                         _Li += _L_step
 
                     _Mu_now = critical_elastic_moment_kNm(Lb_mm, _Iy, _J, _Cw, omega2)
                     if _Mu_now > 0.67 * _Mref:
-                        _Mr_now = min(1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_now),
-                                      PHI_B * _Mref)
+                        _Mr_now = min(
+                            1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_now),
+                            PHI_B * _Mref,
+                        )
                     else:
                         _Mr_now = PHI_B * _Mu_now
 
-                    st.markdown("**Mr vs Unbraced Length Lb  (CSA S16 Cl. 13.6 textbook curve)**")
+                    st.markdown(
+                        "**Mr vs Unbraced Length Lb  (CSA S16 Cl. 13.6 textbook curve)**"
+                    )
                     st.markdown(
                         ltb_curve_svg(
-                            L_list=_L_pts, Mr_list=_Mr_pts,
-                            phiMp=PHI_B * _Mp_kNm, phiMy=PHI_B * _My_kNm,
+                            L_list=_L_pts,
+                            Mr_list=_Mr_pts,
+                            phiMp=PHI_B * _Mp_kNm,
+                            phiMy=PHI_B * _My_kNm,
                             section_class=_cls,
-                            L_current_mm=Lb_mm, Mr_current=_Mr_now,
+                            L_current_mm=Lb_mm,
+                            Mr_current=_Mr_now,
                         ),
                         unsafe_allow_html=True,
                     )
-                    st.caption(f"Mu (current) = {_Mu_now:,.1f} kN·m  |  "
-                               f"Mr (curve, current) = {_Mr_now:,.1f} kN·m  |  "
-                               f"ω₂ = {omega2:.2f}")
+                    st.caption(
+                        f"Mu (current) = {_Mu_now:,.1f} kN·m  |  "
+                        f"Mr (curve, current) = {_Mr_now:,.1f} kN·m  |  "
+                        f"ω₂ = {omega2:.2f}"
+                    )
                 else:
-                    st.info("Mr-vs-Lb curve unavailable — Iy, J, Cw, Zx or Sx missing for this section.")
+                    st.info(
+                        "Mr-vs-Lb curve unavailable — Iy, J, Cw, Zx or Sx missing for this section."
+                    )
             except Exception as _e:
                 st.info(f"Mr-vs-Lb curve unavailable: {_e}")
 
             # ── Advanced ω₂ formulas (Cl. 13.6 Eq. 2 & Eq. 3) ──────────────
-            with st.expander("Advanced ω₂ — general 4-point or linear-gradient formula", expanded=False):
+            with st.expander(
+                "Advanced ω₂ — general 4-point or linear-gradient formula",
+                expanded=False,
+            ):
                 _adv_mode = st.radio(
                     "ω₂ formula",
-                    ["Preset case (above)",
-                     "Linear gradient — Eq. 3:  ω₂ = 1.75 + 1.05κ + 0.3κ²",
-                     "General 4-point — Eq. 2:  ω₂ = 4·M_max / √(M²_max + 4M²_a + 7M²_b + 4M²_c)"],
+                    [
+                        "Preset case (above)",
+                        "Linear gradient — Eq. 3:  ω₂ = 1.75 + 1.05κ + 0.3κ²",
+                        "General 4-point — Eq. 2:  ω₂ = 4·M_max / √(M²_max + 4M²_a + 7M²_b + 4M²_c)",
+                    ],
                     index=0,
                     horizontal=False,
                     key="adv_omega2_mode",
@@ -1393,7 +1621,11 @@ if selected_section:
                 if _adv_mode.startswith("Linear"):
                     _kappa = st.slider(
                         "κ = M_small / M_large  (+ double curvature, − single curvature)",
-                        min_value=-1.0, max_value=1.0, value=0.0, step=0.05, key="kappa_input",
+                        min_value=-1.0,
+                        max_value=1.0,
+                        value=0.0,
+                        step=0.05,
+                        key="kappa_input",
                     )
                     _omega2_alt = omega2_linear(_kappa)
                     st.latex(r"\omega_2 = 1.75 + 1.05\,\kappa + 0.3\,\kappa^2 \le 2.5")
@@ -1401,48 +1633,93 @@ if selected_section:
                 elif _adv_mode.startswith("General"):
                     _c1, _c2, _c3, _c4 = st.columns(4)
                     with _c1:
-                        _Mmax = st.number_input("M_max", min_value=0.0, value=100.0, step=10.0, key="Mmax_in")
+                        _Mmax = st.number_input(
+                            "M_max",
+                            min_value=0.0,
+                            value=100.0,
+                            step=10.0,
+                            key="Mmax_in",
+                        )
                     with _c2:
-                        _Ma   = st.number_input("M_a (¼·L)", min_value=0.0, value=50.0, step=10.0, key="Ma_in")
+                        _Ma = st.number_input(
+                            "M_a (¼·L)",
+                            min_value=0.0,
+                            value=50.0,
+                            step=10.0,
+                            key="Ma_in",
+                        )
                     with _c3:
-                        _Mb   = st.number_input("M_b (½·L)", min_value=0.0, value=80.0, step=10.0, key="Mb_in")
+                        _Mb = st.number_input(
+                            "M_b (½·L)",
+                            min_value=0.0,
+                            value=80.0,
+                            step=10.0,
+                            key="Mb_in",
+                        )
                     with _c4:
-                        _Mc   = st.number_input("M_c (¾·L)", min_value=0.0, value=50.0, step=10.0, key="Mc_in")
+                        _Mc = st.number_input(
+                            "M_c (¾·L)",
+                            min_value=0.0,
+                            value=50.0,
+                            step=10.0,
+                            key="Mc_in",
+                        )
                     _omega2_alt = omega2_general(_Mmax, _Ma, _Mb, _Mc)
-                    st.latex(r"\omega_2 = \frac{4\,M_{max}}{\sqrt{M_{max}^2 + 4M_a^2 + 7M_b^2 + 4M_c^2}} \le 2.5")
+                    st.latex(
+                        r"\omega_2 = \frac{4\,M_{max}}{\sqrt{M_{max}^2 + 4M_a^2 + 7M_b^2 + 4M_c^2}} \le 2.5"
+                    )
                     st.write(f"ω₂ = {_omega2_alt:.3f}")
 
                 if _omega2_alt is not None:
                     try:
-                        _Iy_raw = shape.get("Iy"); _J_raw = shape.get("J"); _Cw_raw = shape.get("Cw")
-                        _Zx_raw = shape.get("Zx"); _Sx_raw = shape.get("Sx")
-                        if all(x is not None for x in (_Iy_raw, _J_raw, _Cw_raw, _Zx_raw, _Sx_raw)):
+                        _Iy_raw = shape.get("Iy")
+                        _J_raw = shape.get("J")
+                        _Cw_raw = shape.get("Cw")
+                        _Zx_raw = shape.get("Zx")
+                        _Sx_raw = shape.get("Sx")
+                        if all(
+                            x is not None
+                            for x in (_Iy_raw, _J_raw, _Cw_raw, _Zx_raw, _Sx_raw)
+                        ):
                             _Iy = float(_Iy_raw) * 1e6
-                            _J  = float(_J_raw)  * 1e3
+                            _J = float(_J_raw) * 1e3
                             _Cw = float(_Cw_raw) * 1e9
                             _Zx = float(_Zx_raw) * 1e3
                             _Sx = float(_Sx_raw) * 1e3
                             _cls = int(class_info["class_section"])
                             _Mp = _Zx * float(Fy) / 1e6
                             _My = _Sx * float(Fy) / 1e6
-                            _Mu_alt = critical_elastic_moment_kNm(Lb_mm, _Iy, _J, _Cw, _omega2_alt)
+                            _Mu_alt = critical_elastic_moment_kNm(
+                                Lb_mm, _Iy, _J, _Cw, _omega2_alt
+                            )
                             _Mref = _Mp if _cls <= 2 else _My
                             if _Mu_alt > 0.67 * _Mref:
-                                _Mr_alt = min(1.15 * PHI_B * _Mref * (1.0 - 0.28 * _Mref / _Mu_alt),
-                                              PHI_B * _Mref)
+                                _Mr_alt = min(
+                                    1.15
+                                    * PHI_B
+                                    * _Mref
+                                    * (1.0 - 0.28 * _Mref / _Mu_alt),
+                                    PHI_B * _Mref,
+                                )
                                 _branch = "Inelastic LTB:  Mr = 1.15·φ·M_ref·(1 − 0.28·M_ref/Mu) ≤ φ·M_ref"
                             else:
                                 _Mr_alt = PHI_B * _Mu_alt
                                 _branch = "Elastic LTB:  Mr = φ·Mu"
                             st.write(f"**Mu (Cl. 13.6 Eq. 1)** = {_Mu_alt:,.1f} kN·m")
-                            st.write(f"**Mr (Cl. 13.6)** = {_Mr_alt:,.1f} kN·m   _({_branch})_")
+                            st.write(
+                                f"**Mr (Cl. 13.6)** = {_Mr_alt:,.1f} kN·m   _({_branch})_"
+                            )
                             if ltb_res.get("ok"):
                                 _delta = _Mr_alt - float(ltb_res["Mr_kNm"])
-                                st.caption(f"Difference vs preset-ω₂ result above: "
-                                           f"{_delta:+,.1f} kN·m "
-                                           f"({100.0*_delta/max(float(ltb_res['Mr_kNm']),1e-6):+.1f}%)")
+                                st.caption(
+                                    f"Difference vs preset-ω₂ result above: "
+                                    f"{_delta:+,.1f} kN·m "
+                                    f"({100.0 * _delta / max(float(ltb_res['Mr_kNm']), 1e-6):+.1f}%)"
+                                )
                         else:
-                            st.info("Iy / J / Cw / Zx / Sx missing — alternate Mr cannot be computed.")
+                            st.info(
+                                "Iy / J / Cw / Zx / Sx missing — alternate Mr cannot be computed."
+                            )
                     except Exception as _e2:
                         st.info(f"Alt-ω₂ Mr unavailable: {_e2}")
 
@@ -1473,18 +1750,26 @@ if selected_section:
                     format_func=lambda x: dict(DEFLECTION_CASES)[x],
                     index=0,
                 )
-                L_defl = st.number_input("Span L (m)", min_value=0.5, value=6.0, step=0.5)
+                L_defl = st.number_input(
+                    "Span L (m)", min_value=0.5, value=6.0, step=0.5
+                )
 
             with defl_col2:
                 if defl_case == "udl":
-                    w_load = st.number_input("w (kN/m)", min_value=0.1, value=10.0, step=1.0)
+                    w_load = st.number_input(
+                        "w (kN/m)", min_value=0.1, value=10.0, step=1.0
+                    )
                 else:
-                    P_load = st.number_input("P (kN)", min_value=0.1, value=50.0, step=5.0)
+                    P_load = st.number_input(
+                        "P (kN)", min_value=0.1, value=50.0, step=5.0
+                    )
 
                 _td1_key = st.selectbox(
                     "Deflection limit  (CSA S16 Table D.1)",
                     options=[k for k, _, _ in TABLE_D1_LIMITS],
-                    format_func=lambda k: dict((kk, ll) for kk, ll, _ in TABLE_D1_LIMITS)[k],
+                    format_func=lambda k: dict(
+                        (kk, ll) for kk, ll, _ in TABLE_D1_LIMITS
+                    )[k],
                     index=0,
                 )
                 _td1_div = dict((kk, dv) for kk, _, dv in TABLE_D1_LIMITS).get(_td1_key)
@@ -1515,44 +1800,62 @@ if selected_section:
 
                 with defl_col3:
                     st.metric("Maximum Deflection (δmax)", f"{delta_mm:.2f} mm")
-                    st.caption(f"Load: {load_desc}, Span: {L_defl:.1f} m, Ix = {Ix_val:.1f} × 10⁶ mm⁴")
+                    st.caption(
+                        f"Load: {load_desc}, Span: {L_defl:.1f} m, Ix = {Ix_val:.1f} × 10⁶ mm⁴"
+                    )
 
                     if delta_mm <= delta_limit:
-                        st.success(f"✅ **PASS** — δ = {delta_mm:.2f} mm ≤ L/{defl_limit_ratio} = {delta_limit:.2f} mm")
+                        st.success(
+                            f"✅ **PASS** — δ = {delta_mm:.2f} mm ≤ L/{defl_limit_ratio} = {delta_limit:.2f} mm"
+                        )
                     else:
-                        st.error(f"❌ **FAIL** — δ = {delta_mm:.2f} mm > L/{defl_limit_ratio} = {delta_limit:.2f} mm")
+                        st.error(
+                            f"❌ **FAIL** — δ = {delta_mm:.2f} mm > L/{defl_limit_ratio} = {delta_limit:.2f} mm"
+                        )
 
                     st.caption(f"Utilization: {ratio:.1%}")
 
                 with st.expander("📐 Show calculation steps", expanded=True):
                     if defl_case == "udl":
-                        st.markdown("\n".join([
-                            "**Mid-span deflection — UDL, simply supported**",
-                            "- Formula: δ = 5 · w · L⁴ / (384 · E · I)",
-                            f"- Inputs (consistent units): w = {w_load:.2f} N/mm "
-                            f"(= {w_load:.2f} kN/m), L = {L_mm:,.0f} mm, "
-                            f"E = {E:,.0f} MPa, I = {Ix_val*1e6:,.0f} mm⁴",
-                            f"- Substitute: δ = 5 × {w_load:.2f} × ({L_mm:,.0f})⁴ / "
-                            f"(384 × {E:,.0f} × {Ix_val*1e6:,.0f})",
-                            f"- δmax = **{delta_mm:.2f} mm**",
-                        ]))
+                        st.markdown(
+                            "\n".join(
+                                [
+                                    "**Mid-span deflection — UDL, simply supported**",
+                                    "- Formula: δ = 5 · w · L⁴ / (384 · E · I)",
+                                    f"- Inputs (consistent units): w = {w_load:.2f} N/mm "
+                                    f"(= {w_load:.2f} kN/m), L = {L_mm:,.0f} mm, "
+                                    f"E = {E:,.0f} MPa, I = {Ix_val * 1e6:,.0f} mm⁴",
+                                    f"- Substitute: δ = 5 × {w_load:.2f} × ({L_mm:,.0f})⁴ / "
+                                    f"(384 × {E:,.0f} × {Ix_val * 1e6:,.0f})",
+                                    f"- δmax = **{delta_mm:.2f} mm**",
+                                ]
+                            )
+                        )
                     else:
-                        st.markdown("\n".join([
-                            "**Mid-span deflection — central point load, simply supported**",
-                            "- Formula: δ = P · L³ / (48 · E · I)",
-                            f"- Inputs (consistent units): P = {P_load*1000:,.0f} N "
-                            f"(= {P_load:.1f} kN), L = {L_mm:,.0f} mm, "
-                            f"E = {E:,.0f} MPa, I = {Ix_val*1e6:,.0f} mm⁴",
-                            f"- Substitute: δ = {P_load*1000:,.0f} × ({L_mm:,.0f})³ / "
-                            f"(48 × {E:,.0f} × {Ix_val*1e6:,.0f})",
-                            f"- δmax = **{delta_mm:.2f} mm**",
-                        ]))
-                    st.markdown("\n".join([
-                        f"- Allowable limit: L/{defl_limit_ratio} = {L_mm:,.0f} mm / {defl_limit_ratio} "
-                        f"= {delta_limit:.2f} mm",
-                        f"- Utilization: δ ÷ (L/{defl_limit_ratio}) = {delta_mm:.2f} ÷ {delta_limit:.2f} "
-                        f"= {ratio:.1%}",
-                    ]))
+                        st.markdown(
+                            "\n".join(
+                                [
+                                    "**Mid-span deflection — central point load, simply supported**",
+                                    "- Formula: δ = P · L³ / (48 · E · I)",
+                                    f"- Inputs (consistent units): P = {P_load * 1000:,.0f} N "
+                                    f"(= {P_load:.1f} kN), L = {L_mm:,.0f} mm, "
+                                    f"E = {E:,.0f} MPa, I = {Ix_val * 1e6:,.0f} mm⁴",
+                                    f"- Substitute: δ = {P_load * 1000:,.0f} × ({L_mm:,.0f})³ / "
+                                    f"(48 × {E:,.0f} × {Ix_val * 1e6:,.0f})",
+                                    f"- δmax = **{delta_mm:.2f} mm**",
+                                ]
+                            )
+                        )
+                    st.markdown(
+                        "\n".join(
+                            [
+                                f"- Allowable limit: L/{defl_limit_ratio} = {L_mm:,.0f} mm / {defl_limit_ratio} "
+                                f"= {delta_limit:.2f} mm",
+                                f"- Utilization: δ ÷ (L/{defl_limit_ratio}) = {delta_mm:.2f} ÷ {delta_limit:.2f} "
+                                f"= {ratio:.1%}",
+                            ]
+                        )
+                    )
 
             except Exception as e:
                 st.error(f"Deflection calculation error: {e}")
@@ -1560,7 +1863,9 @@ if selected_section:
     st.divider()
 
     if class_info["class_section"] == 4:
-        with st.expander("Class 4 – Effective Section Modulus (Se) derivation", expanded=False):
+        with st.expander(
+            "Class 4 – Effective Section Modulus (Se) derivation", expanded=False
+        ):
             se_info = class_info.get("se_info")
             if not se_info or se_info.get("Se") is None:
                 st.warning("Se derivation not available.")

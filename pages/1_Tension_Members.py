@@ -10,8 +10,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+#numpy is the numerical python library 
+#pandas is the data analysis library
+#streamlit is the web app framework
+#streamlit.components.v1 is Streamlit components: embeds the generated SVG as HTML.
 
 import re as _re
+#re is the regular expression library
+
+# FOOTNOTE: _theme.py acts as the single source of truth for global UI aesthetics, isolating custom HTML/CSS injections, color tokens, and layout configurations from functional application logic.
 
 try:
     from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
@@ -21,10 +28,21 @@ except ImportError:
     def render_footer(): pass
     def gate_disclaimer(): pass
     def render_page_header(title, subtitle=""): pass
-
+# 
 
 def _nat_key(s):
     return [int(c) if c.isdigit() else c.lower() for c in _re.split(r"(\d+)", str(s))]
+
+#String: A string is just text. If Python sees letters, words, sentences, or symbols inside quotation marks, it treats them as a string.
+#_re.split(): A function from Python's Regular Expressions (re) module that splits a string every time it matches a specific pattern.
+    
+#if c.isdigit(): Checks if the current chunk consists entirely of numeric digits.
+
+#int(c): If the chunk is numeric, this converts it from a string (e.g., "12") into an actual integer (12). This ensures mathematical sorting.
+
+#else c.lower(): If the chunk is text (letters/symbols), it converts it to lowercase. This enforces a case-insensitive sort, ensuring that "beam-1" and "Beam-1" are treated equally instead of uppercase letters automatically jumping to the front due to their ASCII character values.
+#split: Use split() when one string actually contains multiple pieces of information, and you want Python to treat each piece separately.
+
 
 try:
     from connection_diagram import generate_connection_svg
@@ -32,13 +50,35 @@ try:
 except ImportError:
     HAS_SVG = False
 
+try:
+    from section_diagrams import single_angle_diagram
+    HAS_SECTION_DIAGRAMS = True
+except ImportError:
+    HAS_SECTION_DIAGRAMS = False
+    
+try:
+    from section_diagrams import double_angle_diagram
+    HAS_SECTION_DIAGRAMS = True
+except ImportError:
+    HAS_SECTION_DIAGRAMS = False
+
+# The function above tries to load the SVG generation module. If it's unavailable,the app continues without SVG support.
+
+
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 PHI       = 0.90
 PHI_U     = 0.75
 MAX_SLEND = 300
 
+# As per CSA S16 section 10.4.2 - Maximum slenderness ratio shall not exceed 300.
+
+
 DATA_DIR   = Path(__file__).resolve().parent.parent / "data"
 ANGLE_FILE = DATA_DIR / "Angle Properties Table.xlsx"
+# 1_Tension_Members.py → pages → project → data goes up two parent folders, then enters the "data" folder to access the datasets.
+#********Check why the other tables aren't here.*****
+
 
 BOLT_DIA: Dict[str, float] = {
     "M16": 16.0, "M20": 20.0, "M22": 22.0, "M24": 24.0,
@@ -49,6 +89,9 @@ STD_HOLE: Dict[str, float] = {
     "M27": 30.0, "M30": 33.0, "M36": 39.0,
 }
 
+#The strings store texts in a sequence.
+
+
 SECTION_TYPES = [
     "Plate",
     "Single Angle",
@@ -56,6 +99,7 @@ SECTION_TYPES = [
     "WT Section",
     "Channel (C / MC)",
 ]
+
 
 UT_DEFAULTS = {
     "Plate":            1.0,
@@ -65,11 +109,17 @@ UT_DEFAULTS = {
     "Channel (C / MC)": 0.85,
 }
 
+
 # ── Data classes ──────────────────────────────────────────────────────────────
 @dataclass
 class Material:
     Fy: float
     Fu: float
+
+#data class stores data material e.g.  Fy - # Yield strength, Fu - # Ultimate tensile strength. 
+# Float is a decimal number. 
+
+
 
 @dataclass
 class SectionProps:
@@ -80,7 +130,7 @@ class SectionProps:
     b_flange:    float = 0.0
     d_depth:     float = 0.0
     info:        Dict[str, str] = field(default_factory=dict)
-
+#
 @dataclass
 class BoltPattern:
     n_lines:        int
@@ -97,20 +147,38 @@ class Calc:
     steps: List[str]
     note:  str = ""
 
+    
 # ── Data loaders ──────────────────────────────────────────────────────────────
+
+
 def _parse_multi_table_csv(text: str, area_col: str = "Area_mm2") -> pd.DataFrame:
     """Parse a CSV that contains multiple sub-tables separated by blank lines."""
     frames: List[pd.DataFrame] = []
     current_header: Optional[List[str]] = None
-    current_rows:   List[str] = []
+#frames: This is a list that will store multiple DataFrames. Each DataFrame represents a table extracted from the CSV file.
+#list is a collection of items.
+#pd. is the pandas library.
+#Optional[List[str]] means that current_header can either be a list of strings or None
 
+    current_rows:   List[str] = []
+#list[str] means a list of strings. current_rows is a list that will store the rows of data from the CSV file as strings.
+
+   
     for raw_line in text.splitlines():
         line = raw_line.strip()
+
+    # raw_line is the original line from the CSV file, including any leading or trailing whitespace. 
+   # line = raw_line.strip() removes any leading or trailing whitespace from raw_line, ensuring that the line is clean and ready for processing.
+        
         if not line or line.startswith("#"):
             if current_header and current_rows:
                 buf = "\n".join([",".join(current_header)] + current_rows)
+                #buf is a string that combines the header and the rows of the current table into a single string.
+            
                 try:
                     frames.append(pd.read_csv(io.StringIO(buf)))
+
+# frames.append(pd.read_csv(io.StringIO(buf))) reads the combined header and rows into a DataFrame using pd.read_csv(). The io.StringIO(buf) converts the string buf into a file-like object that pd.read_csv() can read.
                 except Exception:
                     pass
                 current_rows = []
@@ -751,6 +819,49 @@ def panel_single_angle(render_material) -> None:
         )
         components.html(svg, height=340)
 
+    if HAS_SECTION_DIAGRAMS:
+        st.subheader("Member Detail - Three Views")
+        svg3 = single_angle_diagram(
+            leg_conn=w_conn,
+            leg_out=(leg2 if conn_leg == "Leg 1" else leg1),
+            t=t,
+            n_lines=bp.n_lines,
+            bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch,
+            gauge=bp.gauge,
+            edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans,
+            hole_dia=hole_dia,
+            show_net_fracture=True,
+            zig_zag="zig" in gov_path["description"].lower(),
+            show_block_shear=True,
+            section_label=chosen,
+        )
+        components.html(svg3, height=780, scrolling=True)
+
+    if HAS_SECTION_DIAGRAMS:
+        st.subheader("Member Detail - Three Views")
+        gusset_t = st.number_input("Gusset plate thickness (mm)",
+                                min_value=3.0, max_value=50.0,
+                                value=10.0, step=1.0, key="da_gt")
+        svg3 = double_angle_diagram(
+            leg_conn=w_conn,
+            leg_out=(legs[1] if "Leg 1" in conn_leg else legs[0]),
+            t=t,
+            gusset_t=float(gusset_t),
+            n_lines=bp.n_lines,
+            bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch,
+            gauge=bp.gauge,
+            edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans,
+            hole_dia=hole_dia,
+            show_net_fracture=True,
+            zig_zag="zig" in gov_path["description"].lower(),
+            show_block_shear=True,
+            section_label=chosen,
+        )
+        components.html(svg3, height=820, scrolling=True)
 
 def panel_double_angle(render_material) -> None:
     st.subheader("Section — Double Angle (Back-to-Back)")

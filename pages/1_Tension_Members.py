@@ -35,7 +35,7 @@ def _nat_key(s):
 
 #String: A string is just text. If Python sees letters, words, sentences, or symbols inside quotation marks, it treats them as a string.
 #_re.split(): A function from Python's Regular Expressions (re) module that splits a string every time it matches a specific pattern.
-    
+
 #if c.isdigit(): Checks if the current chunk consists entirely of numeric digits.
 
 #int(c): If the chunk is numeric, this converts it from a string (e.g., "12") into an actual integer (12). This ensures mathematical sorting.
@@ -55,12 +55,24 @@ try:
     HAS_SECTION_DIAGRAMS = True
 except ImportError:
     HAS_SECTION_DIAGRAMS = False
-    
+
 try:
     from section_diagrams import double_angle_diagram
     HAS_SECTION_DIAGRAMS = True
 except ImportError:
     HAS_SECTION_DIAGRAMS = False
+
+try:
+    from section_diagrams import wt_diagram
+    HAS_WT_DIAGRAM = True
+except ImportError:
+    HAS_WT_DIAGRAM = False
+
+try:
+    from section_diagrams import channel_diagram
+    HAS_CH_DIAGRAM = True
+except ImportError:
+    HAS_CH_DIAGRAM = False
 
 # The function above tries to load the SVG generation module. If it's unavailable,the app continues without SVG support.
 
@@ -131,6 +143,7 @@ class SectionProps:
     d_depth:     float = 0.0
     info:        Dict[str, str] = field(default_factory=dict)
 #
+
 @dataclass
 class BoltPattern:
     n_lines:        int
@@ -147,7 +160,9 @@ class Calc:
     steps: List[str]
     note:  str = ""
 
-    
+    table: object = None
+
+
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
 
@@ -163,18 +178,18 @@ def _parse_multi_table_csv(text: str, area_col: str = "Area_mm2") -> pd.DataFram
     current_rows:   List[str] = []
 #list[str] means a list of strings. current_rows is a list that will store the rows of data from the CSV file as strings.
 
-   
+
     for raw_line in text.splitlines():
         line = raw_line.strip()
 
     # raw_line is the original line from the CSV file, including any leading or trailing whitespace. 
    # line = raw_line.strip() removes any leading or trailing whitespace from raw_line, ensuring that the line is clean and ready for processing.
-        
+
         if not line or line.startswith("#"):
             if current_header and current_rows:
                 buf = "\n".join([",".join(current_header)] + current_rows)
                 #buf is a string that combines the header and the rows of the current table into a single string.
-            
+
                 try:
                     frames.append(pd.read_csv(io.StringIO(buf)))
 
@@ -390,6 +405,21 @@ def shear_lag(
     return 0.75, "2 transverse lines => U = 0.75 (Cl. 12.3.3.2c-ii)"
 
 
+
+# ── Calc Gross Yield - Limit-state calculations ──────────────────────────────────────────────────
+def calc_gross_yield(Ag: float, Fy: float) -> Calc:
+    Tr = PHI * Ag * Fy / 1000.0
+    return Calc(
+        "Gross Section Yielding (Cl. 13.2a-i)", Tr,
+        [
+            "**Gross Section Yielding — CSA S16 Cl. 13.2 a) i)**",
+            "- Formula: Tr = φ · Ag · Fy",
+            f"- Substitute: Tr = {PHI} × {Ag:,.1f} mm² × {Fy:.1f} MPa ÷ 1000",
+            f"- Result: **{Tr:,.1f} kN**",
+        ],
+    )
+
+
 # ── Net area paths (Cl. 12.3.1) ──────────────────────────────────────────────
 def net_paths(
     width:     float,
@@ -431,34 +461,43 @@ def net_paths(
     return [p for p in paths if p["An_mm2"] > 0]
 
 
-# ── Limit-state calculations ──────────────────────────────────────────────────
-def calc_gross_yield(Ag: float, Fy: float) -> Calc:
-    Tr = PHI * Ag * Fy / 1000.0
-    return Calc(
-        "Gross Section Yielding (Cl. 13.2a-i)", Tr,
-        [
-            "**Gross Section Yielding — CSA S16 Cl. 13.2 a) i)**",
-            "- Formula: Tr = φ · Ag · Fy",
-            f"- Substitute: Tr = {PHI} × {Ag:,.1f} mm² × {Fy:.1f} MPa ÷ 1000",
-            f"- Result: **{Tr:,.1f} kN**",
-        ],
-    )
+#Net Fracture Calculation
+def calc_net_fracture_paths(paths, U, Fu, area_mult=1.0, area_label="", table=None):
+    results = []
+    for p in paths:
+        An_i = p["An_mm2"] * area_mult
+        Ane_i = U * An_i
+        Tr_i = PHI_U * Ane_i * Fu / 1000.0
+        results.append((p, An_i, Ane_i, Tr_i))
 
+    gov = min(results, key=lambda r: r[3])
 
-def calc_net_fracture(An: float, U: float, Fu: float) -> Calc:
-    Ane = U * An
-    Tr  = PHI_U * Ane * Fu / 1000.0
-    return Calc(
-        "Net Section Fracture (Cl. 13.2a-iii)", Tr,
-        [
-            "**Net Section Fracture — CSA S16 Cl. 13.2 a) iii)**",
-            "- Shear-lag effective net area (Cl. 12.3.3): Ane = U · An",
-            f"- Substitute: Ane = {U:.2f} × {An:,.1f} mm² = **{Ane:,.1f} mm²**",
-            "- Formula: Tr = φu · Ane · Fu",
-            f"- Substitute: Tr = {PHI_U} × {Ane:,.1f} mm² × {Fu:.1f} MPa ÷ 1000",
-            f"- Result: **{Tr:,.1f} kN**",
-        ],
-    )
+    steps = [
+        "**Net Section Fracture - CSA S16 Cl. 13.2 a) iii)**",
+        "- Formula: Tr = phi_u x Ane x Fu, where Ane = U x An (Cl. 12.3.3)",
+        f"- Shear lag factor: U = {U:.2f}",
+    ]
+    if area_label:
+        steps.append(f"- {area_label}")
+
+    n = 0
+    for p, An_i, Ane_i, Tr_i in results:
+        n = n + 1
+        tag = "  <-- GOVERNS" if p is gov[0] else ""
+        steps.append("---")
+        steps.append(f"**Path {n}: {p['description']}{tag}**")
+        if p["stagger_term"] > 0:
+            steps.append(f"- Net width: wn = {p['wn_mm']:,.1f} mm (incl. stagger s2/4g = {p['stagger_term']:,.2f} mm)")
+        else:
+            steps.append(f"- Net width: wn = {p['wn_mm']:,.1f} mm")
+        steps.append(f"- Net area: An = {An_i:,.1f} mm2")
+        steps.append(f"- Effective: Ane = {U:.2f} x {An_i:,.1f} = {Ane_i:,.1f} mm2")
+        steps.append(f"- Tr = {PHI_U} x {Ane_i:,.1f} x {Fu:.1f} / 1000 = **{Tr_i:,.1f} kN**")
+
+    steps.append("---")
+    steps.append(f"- Governing path: **{gov[0]['description']}** with Tr = **{gov[3]:,.1f} kN**")
+    return Calc("Net Section Fracture (Cl. 13.2a-iii)", gov[3], steps, table=table)
+
 
 
 def calc_block_shear(
@@ -498,7 +537,6 @@ def calc_pin(An: float, Fy: float) -> Calc:
         ],
     )
 
-
 def block_shear_areas(
     bolt:  BoltPattern,
     t:     float,
@@ -508,8 +546,71 @@ def block_shear_areas(
     nrows = bolt.bolts_per_line
     Lv    = bolt.edge_end + (nrows - 1) * bolt.pitch
     Agv   = Lv * t
+    #Lv is the total length of the shear plane in the vertical direction.
+
     Ant   = max(0.0, bolt.edge_trans - 0.5 * d_eff) * t
     return Ant, Agv
+
+#An is the area of the tension part of the block shear failure surface.
+
+
+def block_shear_paths(bolt, t, d_eff):
+    """All candidate block shear patterns. Returns list of dicts."""
+    Lv = bolt.edge_end + (bolt.bolts_per_line - 1) * bolt.pitch
+    Agv = Lv * t
+    pats = []
+    nl = bolt.n_lines
+    w_tens_A = bolt.edge_trans + (nl - 1) * bolt.gauge - (nl - 0.5) * d_eff
+    pats.append({
+        "key": "A",
+        "Ant": max(0.0, w_tens_A) * t,
+        "Agv": Agv,
+        "planes": 1,
+        "description": "A: shear on far line, tension to free edge",
+    })
+    if nl >= 2:
+        pats.append({
+            "key": "B",
+            "Ant": max(0.0, bolt.edge_trans - 0.5 * d_eff) * t,
+            "Agv": Agv,
+            "planes": 1,
+            "description": "B: shear on edge line, tension to free edge",
+        })
+        pats.append({
+            "key": "C",
+            "Ant": max(0.0, (nl - 1) * bolt.gauge - (nl - 1) * d_eff) * t,
+            "Agv": Agv,
+            "planes": 2,
+            "description": "C: shear on both outer lines, tension between lines",
+        })
+    return pats
+
+
+def calc_block_shear_paths(pats, Fy, Fu, Ut, area_mult=1.0, area_label=""):
+    shear_avg = (Fy + Fu) / 2.0
+    results = []
+    for p in pats:
+        Ant_i = p["Ant"] * area_mult
+        Agv_i = p["Agv"] * p["planes"] * area_mult
+        Tr_i = PHI_U * (Ut * Ant_i * Fu + 0.6 * Agv_i * shear_avg) / 1000.0
+        results.append((p, Ant_i, Agv_i, Tr_i))
+    gov = min(results, key=lambda r: r[3])
+    steps = [
+        "**Block Shear - CSA S16 Cl. 13.11**",
+        "- Formula: Tr = phi_u x [Ut x Ant x Fu + 0.6 x Agv x (Fy+Fu)/2]",
+        f"- Ut = {Ut:.2f}",
+    ]
+    if area_label:
+        steps.append(f"- {area_label}")
+    for p, Ant_i, Agv_i, Tr_i in results:
+        tag = "  <-- GOVERNS" if p is gov[0] else ""
+        steps.append("---")
+        steps.append(f"**Pattern {p['description']}{tag}**")
+        steps.append(f"- Ant = {Ant_i:,.1f} mm2  |  Agv = {Agv_i:,.1f} mm2 ({p['planes']} plane(s))")
+        steps.append(f"- Tr = **{Tr_i:,.1f} kN**")
+    steps.append("---")
+    steps.append(f"- Governing: **{gov[0]['description']}** with Tr = **{gov[3]:,.1f} kN**")
+    return Calc("Block Shear (Cl. 13.11)", gov[3], steps), gov[0]["key"]
 
 
 # ── UI helpers ────────────────────────────────────────────────────────────────
@@ -521,7 +622,9 @@ def _bolt_hole_inputs(key_prefix: str) -> Tuple[str, float, float]:
     with c2:
         d_hole_nom = STD_HOLE.get(bolt_size, BOLT_DIA[bolt_size] + 2.0)
         hole_dia   = st.number_input("Hole diameter (mm)", min_value=0.0,
+                                     #st is the streamlit library[
                                      value=float(d_hole_nom), step=1.0,
+  # value=float(d_hole_nom) sets the default value of the number input to the nominal hole diameter calculated earlier.                                   
                                      key=f"{key_prefix}_hd")
     with c3:
         allowance = st.number_input("Hole allowance (mm)", min_value=0.0,
@@ -564,8 +667,23 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str) -> None:
     gov  = min(vals, key=vals.__getitem__)
     Tr   = vals[gov]
 
+    st.divider()
+    st.subheader("Calculations — Shown Work")
+
+    for c in calcs:
+        with st.expander(f" Tr Calculation Steps — {c.name.split('(')[0].strip()}", expanded=True):
+            st.markdown("\n".join(c.steps))
+            if c.table is not None:
+
+                st.dataframe(c.table, use_container_width=True)
+            if c.note:
+                st.info(c.note)
+
+
     st.subheader("Results")
-    cols = st.columns(len(calcs) + 1)
+    cols = st.columns(len(calcs))
+    #st.columns(len(calcs)): This creates a list of column objects. The number of columns is determined by the length of the calcs list.
+
     for i, c in enumerate(calcs):
         cols[i].metric(
             c.name.split("(")[0].strip(),
@@ -573,7 +691,6 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str) -> None:
             delta="<-- governs" if c.name == gov else None,
             delta_color="inverse",
         )
-    cols[-1].metric("Governing Tr", f"{Tr:,.1f} kN")
 
     if Tf > 0:
         util = Tf / Tr
@@ -584,13 +701,6 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str) -> None:
         else:
             st.error(f"FAIL   {lbl}")
 
-    st.divider()
-    st.subheader("Calculations — Shown Work")
-    for c in calcs:
-        with st.expander(f"📐 Show calculation steps — {c.name.split('(')[0].strip()}", expanded=True):
-            st.markdown("\n".join(c.steps))
-            if c.note:
-                st.info(c.note)
 
 
 # ── Section panels ────────────────────────────────────────────────────────────
@@ -604,9 +714,25 @@ def render_material():
         "G480W  (Fy=480, Fu=590)": (480.0, 590.0),
         "Custom":                   None,
     }
-    grade_sel = st.selectbox("Steel grade", list(GRADES.keys()))
+
+    def _sync_grade():
+        vals = GRADES.get(st.session_state["tm_grade"])
+        if vals:
+            st.session_state["tm_Fy"] = vals[0]
+            st.session_state["tm_Fu"] = vals[1]
+
+    grade_sel = st.selectbox("Steel grade", list(GRADES.keys()),
+                             key="tm_grade", on_change=_sync_grade)
+ # on_change=_sync_grade: This parameter specifies a callback function that will be executed whenever the value of the selectbox changes. In this case, the callback function is _sync_grade, which is defined elsewhere in the code.   
+
     if GRADES[grade_sel]:
+#GRADES[grade_sel]: This accesses the value associated with the key grade_sel in the GRADES dictionary. If the value is not None, the code inside the if block will be executed.
+#grade_sel: This is a variable that holds the selected grade from the selectbox. It is used as the key to look up the corresponding value in the GRADES dictionary.
+
         Fy_def, Fu_def = GRADES[grade_sel]
+#Fy_def and Fu_def are variables that will store the yield strength and ultimate tensile strength values, respectively, for the selected steel grade.
+#GRADES[grade_sel] is the value associated with the selected steel grade in the GRADES dictionary. This value is a tuple containing the yield strength and ultimate tensile strength values.
+
     else:
         Fy_def, Fu_def = 350.0, 450.0
 
@@ -619,7 +745,8 @@ def render_material():
                               value=Fu_def, step=10.0, key="tm_Fu")
     with mc3:
         Tf = st.number_input("Factored demand Tf (kN)", min_value=0.0,
-                              max_value=50000.0, value=0.0, step=10.0,
+
+                             max_value=50000.0, value=0.0, step=10.0,
                               help="Optional — shows utilization ratio",
                               key="tm_Tf")
 
@@ -672,7 +799,6 @@ def panel_plate(render_material) -> None:
     slend = (L_m / r_min) if r_min > 0 and L_m > 0 else 0.0
 
     st.divider()
-
     paths = net_paths(width, bp, hole_dia, allowance, thick)
     if not paths:
         st.error("No feasible net fracture path. Check bolt layout vs plate width.")
@@ -680,12 +806,15 @@ def panel_plate(render_material) -> None:
     gov_path = min(paths, key=lambda p: p["An_mm2"])
     An = gov_path["An_mm2"]
 
+
     calcs = [calc_gross_yield(Ag, mat.Fy)]
     if pin_conn:
         calcs.append(calc_pin(An, mat.Fy))
-    calcs.append(calc_net_fracture(An, U, mat.Fu))
-    Ant, Agv = block_shear_areas(bp, thick, d_eff)
-    calcs.append(calc_block_shear(Ant, Agv, mat.Fy, mat.Fu, Ut, n_shear_planes=1))
+    calcs.append(calc_net_fracture_paths(paths, U, mat.Fu))
+
+    bs_pats = block_shear_paths(bp, thick, d_eff)
+    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+    calcs.append(bs_calc)
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -779,10 +908,11 @@ def panel_single_angle(render_material) -> None:
 
     calcs = [
         calc_gross_yield(Ag, mat.Fy),
-        calc_net_fracture(An, U, mat.Fu),
+        calc_net_fracture_paths(paths, U, mat.Fu),
     ]
-    Ant, Agv = block_shear_areas(bp, t, d_eff)
-    calcs.append(calc_block_shear(Ant, Agv, mat.Fy, mat.Fu, Ut, n_shear_planes=2))
+    bs_pats = block_shear_paths(bp, t, d_eff)
+    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+    calcs.append(bs_calc)
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -806,18 +936,6 @@ def panel_single_angle(render_material) -> None:
 
     _show_results(calcs, Tf, "Single Angle")
 
-    if HAS_SVG:
-        st.subheader("Connection Diagram")
-        svg = generate_connection_svg(
-            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t,
-            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
-            section_label=chosen,
-            governing_path_n_holes=gov_path["n_holes"],
-            zig_zag="zig" in gov_path["description"].lower(),
-        )
-        components.html(svg, height=340)
 
     if HAS_SECTION_DIAGRAMS:
         st.subheader("Member Detail - Three Views")
@@ -835,33 +953,11 @@ def panel_single_angle(render_material) -> None:
             show_net_fracture=True,
             zig_zag="zig" in gov_path["description"].lower(),
             show_block_shear=True,
+            governing_bs=bs_gov,
             section_label=chosen,
         )
-        components.html(svg3, height=780, scrolling=True)
+        components.html(svg3, height=1250, scrolling=True)
 
-    if HAS_SECTION_DIAGRAMS:
-        st.subheader("Member Detail - Three Views")
-        gusset_t = st.number_input("Gusset plate thickness (mm)",
-                                min_value=3.0, max_value=50.0,
-                                value=10.0, step=1.0, key="da_gt")
-        svg3 = double_angle_diagram(
-            leg_conn=w_conn,
-            leg_out=(legs[1] if "Leg 1" in conn_leg else legs[0]),
-            t=t,
-            gusset_t=float(gusset_t),
-            n_lines=bp.n_lines,
-            bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch,
-            gauge=bp.gauge,
-            edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans,
-            hole_dia=hole_dia,
-            show_net_fracture=True,
-            zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
-            section_label=chosen,
-        )
-        components.html(svg3, height=820, scrolling=True)
 
 def panel_double_angle(render_material) -> None:
     st.subheader("Section — Double Angle (Back-to-Back)")
@@ -947,21 +1043,31 @@ def panel_double_angle(render_material) -> None:
     gov_path = min(paths_one, key=lambda p: p["An_mm2"])
     An_pair  = gov_path["An_mm2"] * 2.0
 
+    df_p = pd.DataFrame([{
+        "Path":          p["description"],
+        "An per angle":  round(p["An_mm2"], 1),
+        "An pair (mm2)": round(p["An_mm2"] * 2, 1),
+        "Ane pair (mm2)":round(U * p["An_mm2"] * 2, 1),
+    } for p in paths_one])
+
     calcs = [
         calc_gross_yield(Ag, mat.Fy),
-        calc_net_fracture(An_pair, U, mat.Fu),
-    ]
-    Ant_one, Agv_one = block_shear_areas(bp, t, d_eff)
-    calcs.append(calc_block_shear(Ant_one * 2, Agv_one * 2, mat.Fy, mat.Fu, Ut, n_shear_planes=1))
+        calc_net_fracture_paths(paths_one, U, mat.Fu, area_mult=2.0,
+    area_label="Areas doubled: pair of angles (2x per-leg An)",
+    table=df_p),
+     ]
+
+    #Table of net fracture paths ^
+
+    bs_pats = block_shear_paths(bp, t, d_eff)
+    bs_calc, bs_gov = calc_block_shear_paths(
+        bs_pats, mat.Fy, mat.Fu, Ut, area_mult=2.0,
+        area_label="Areas doubled: pair of angles (2x per-angle Ant and Agv)")
+    calcs.append(bs_calc)
 
     with st.expander("Net fracture paths (per angle leg)", expanded=False):
         st.info(f"Shear lag: {U_note}")
-        df_p = pd.DataFrame([{
-            "Path":          p["description"],
-            "An per angle":  round(p["An_mm2"], 1),
-            "An pair (mm2)": round(p["An_mm2"] * 2, 1),
-            "Ane pair (mm2)":round(U * p["An_mm2"] * 2, 1),
-        } for p in paths_one])
+
         st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
@@ -974,18 +1080,32 @@ def panel_double_angle(render_material) -> None:
 
     _show_results(calcs, Tf, "Double Angle")
 
-    if HAS_SVG:
-        st.subheader("Connection Diagram")
-        svg = generate_connection_svg(
-            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t,
-            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
-            section_label=chosen_label,
-            governing_path_n_holes=gov_path["n_holes"],
+
+    if HAS_SECTION_DIAGRAMS:
+        st.subheader("Member Detail - Three Views")
+        gusset_t = st.number_input("Gusset plate thickness (mm)",
+                                   min_value=3.0, max_value=50.0,
+                                   value=10.0, step=1.0, key="da_gt")
+        svg3 = double_angle_diagram(
+            leg_conn=w_conn,
+            leg_out=(legs[1] if "Leg 1" in conn_leg else legs[0]),
+            t=t,
+            gusset_t=float(gusset_t),
+            n_lines=bp.n_lines,
+            bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch,
+            gauge=bp.gauge,
+            edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans,
+            hole_dia=hole_dia,
+            show_net_fracture=True,
             zig_zag="zig" in gov_path["description"].lower(),
+            show_block_shear=True,
+            governing_bs=bs_gov,
+            section_label=chosen,
         )
-        components.html(svg, height=340)
+        components.html(svg3, height=1350, scrolling=True)
+
 
 
 def panel_wt(render_material) -> None:
@@ -1052,10 +1172,11 @@ def panel_wt(render_material) -> None:
 
     calcs = [
         calc_gross_yield(Ag, mat.Fy),
-        calc_net_fracture(An, U, mat.Fu),
+        calc_net_fracture_paths(paths, U, mat.Fu),
     ]
-    Ant, Agv = block_shear_areas(bp, t_conn, d_eff)
-    calcs.append(calc_block_shear(Ant, Agv, mat.Fy, mat.Fu, Ut, n_shear_planes=1))
+    bs_pats = block_shear_paths(bp, t_conn, d_eff)
+    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+    calcs.append(bs_calc)
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -1077,7 +1198,29 @@ def panel_wt(render_material) -> None:
 
     _show_results(calcs, Tf, "WT Section")
 
-    if HAS_SVG:
+    if HAS_WT_DIAGRAM:
+        st.subheader("Member Detail - Three Views")
+        svg3 = wt_diagram(
+            b_flange=b_fl,
+            d_depth=d_dep,
+            t_flange=t_fl,
+            t_stem=t_st,
+            connected=connected_el,
+            n_lines=bp.n_lines,
+            bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch,
+            gauge=bp.gauge,
+            edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans,
+            hole_dia=hole_dia,
+            show_net_fracture=True,
+            zig_zag="zig" in gov_path["description"].lower(),
+            show_block_shear=True,
+            governing_bs=bs_gov,
+            section_label=f"{chosen} ({conn_el})",
+        )
+        components.html(svg3, height=1300, scrolling=True)
+    elif HAS_SVG:
         st.subheader("Connection Diagram")
         svg = generate_connection_svg(
             n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
@@ -1151,10 +1294,12 @@ def panel_channel(render_material) -> None:
 
     calcs = [
         calc_gross_yield(Ag, mat.Fy),
-        calc_net_fracture(An, U, mat.Fu),
+        calc_net_fracture_paths(paths, U, mat.Fu),
+
     ]
-    Ant, Agv = block_shear_areas(bp, t_conn, d_eff)
-    calcs.append(calc_block_shear(Ant, Agv, mat.Fy, mat.Fu, Ut, n_shear_planes=1))
+    bs_pats = block_shear_paths(bp, t_conn, d_eff)
+    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+    calcs.append(bs_calc)
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -1176,7 +1321,28 @@ def panel_channel(render_material) -> None:
 
     _show_results(calcs, Tf, "Channel (C / MC)")
 
-    if HAS_SVG:
+    if HAS_CH_DIAGRAM:
+        st.subheader("Member Detail - Three Views")
+        svg3 = channel_diagram(
+            b_flange=b_fl,
+            d_depth=d_dep,
+            t_flange=t_fl,
+            t_web=t_web,
+            n_lines=bp.n_lines,
+            bolts_per_line=bp.bolts_per_line,
+            pitch=bp.pitch,
+            gauge=bp.gauge,
+            edge_end=bp.edge_end,
+            edge_trans=bp.edge_trans,
+            hole_dia=hole_dia,
+            show_net_fracture=True,
+            zig_zag="zig" in gov_path["description"].lower(),
+            show_block_shear=True,
+            governing_bs=bs_gov,
+            section_label=chosen,
+        )
+        components.html(svg3, height=1400, scrolling=True)
+    elif HAS_SVG:
         st.subheader("Connection Diagram")
         svg = generate_connection_svg(
             n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,

@@ -348,6 +348,9 @@ def load_angle_table() -> pd.DataFrame:
     d    = find_col(["d (mm)", "Leg2", "Leg 2", "d"])
     t    = find_col(["t (mm)", "Thickness", "thk", "t"])
     area = find_col(["Area (mm2)", "Area (mm)", "Area", "Ag"])
+    rx   = find_col(["rx (mm)", "rx"])
+    ry   = find_col(["ry (mm)", "ry"])
+    rz   = find_col(["rz (mm)", "rz"])
 
     if None in (des, b, d, t):
         return pd.DataFrame()
@@ -358,6 +361,9 @@ def load_angle_table() -> pd.DataFrame:
         "leg2":        pd.to_numeric(df[d], errors="coerce"),
         "t":           pd.to_numeric(df[t], errors="coerce"),
         "Ag":          pd.to_numeric(df[area], errors="coerce") if area else np.nan,
+        "rx":          pd.to_numeric(df[rx], errors="coerce") if rx else np.nan,
+        "ry":          pd.to_numeric(df[ry], errors="coerce") if ry else np.nan,
+        "rz":          pd.to_numeric(df[rz], errors="coerce") if rz else np.nan,
     })
     mask = out["Ag"].isna()
     out.loc[mask, "Ag"] = (
@@ -866,12 +872,20 @@ def panel_single_angle(render_material) -> None:
     leg1   = float(row["leg1"])
     leg2   = float(row["leg2"])
 
+    rx_v = float(row["rx"]) if "rx" in row and pd.notna(row["rx"]) else None
+    ry_v = float(row["ry"]) if "ry" in row and pd.notna(row["ry"]) else None
+    rz_v = float(row["rz"]) if "rz" in row and pd.notna(row["rz"]) else None
+
     with st.expander("Section properties", expanded=True):
         cc = st.columns(4)
         cc[0].metric("Leg 1 (mm)", f"{leg1:.1f}")
         cc[1].metric("Leg 2 (mm)", f"{leg2:.1f}")
         cc[2].metric("t (mm)", f"{t:.1f}")
         cc[3].metric("Ag (mm2)", f"{Ag:,.0f}")
+        cc2 = st.columns(4)
+        cc2[0].metric("rx (mm)", f"{rx_v:.1f}" if rx_v else "n/a")
+        cc2[1].metric("ry (mm)", f"{ry_v:.1f}" if ry_v else "n/a")
+        cc2[2].metric("rz min (mm)", f"{rz_v:.1f}" if rz_v else "n/a")
 
     mat, Tf = render_material()
 
@@ -893,8 +907,12 @@ def panel_single_angle(render_material) -> None:
     with c3:
         L_m = st.number_input("Unbraced length L (mm)", min_value=0.0,
                               value=0.0, step=100.0, key="sa_L")
-    r_col = next((c for c in df.columns if "r" in c.lower()), None)
-    r_min = float(row[r_col]) if r_col else (min(leg1, leg2) / math.sqrt(12))
+    if rz_v:
+        r_min = rz_v
+    elif rx_v and ry_v:
+        r_min = min(rx_v, ry_v)
+    else:
+        r_min = min(leg1, leg2) / math.sqrt(12)
     slend = (L_m / r_min) if r_min > 0 and L_m > 0 else 0.0
 
     st.divider()
@@ -1007,6 +1025,12 @@ def panel_double_angle(render_material) -> None:
         cc[0].metric("Leg 1 (mm)", f"{legs[0]:.0f}")
         cc[1].metric("Leg 2 (mm)", f"{legs[1]:.0f}")
         cc[2].metric("Ag combined (mm2)", f"{Ag:,.0f}")
+        cc2 = st.columns(3)
+        rx_da = float(row["rx"]) if "rx" in row and pd.notna(row["rx"]) else None
+        ry0_da = float(row["ry_s0"]) if "ry_s0" in row and pd.notna(row["ry_s0"]) else None
+        cc2[0].metric("t (mm)", f"{t:.1f}")
+        cc2[1].metric("rx (mm)", f"{rx_da:.1f}" if rx_da else "n/a")
+        cc2[2].metric("ry, s=0 (mm)", f"{ry0_da:.1f}" if ry0_da else "n/a")
 
     mat, Tf = render_material()
 
@@ -1135,6 +1159,9 @@ def panel_wt(render_material) -> None:
         cc[2].metric("b (mm)", f"{b_fl:.1f}")
         cc[3].metric("t flange (mm)", f"{t_fl:.1f}")
         cc[4].metric("w stem (mm)", f"{t_st:.1f}")
+        cc2 = st.columns(5)
+        cc2[0].metric("rx (mm)", f"{rx:.1f}")
+        cc2[1].metric("ry (mm)", f"{ry:.1f}")
 
     mat, Tf = render_material()
 
@@ -1261,6 +1288,9 @@ def panel_channel(render_material) -> None:
         cc[2].metric("b (mm)", f"{b_fl:.1f}")
         cc[3].metric("t flange (mm)", f"{t_fl:.1f}")
         cc[4].metric("w web (mm)", f"{t_web:.1f}")
+        cc2 = st.columns(5)
+        cc2[0].metric("rx (mm)", f"{rx:.1f}" if rx > 0 else "n/a")
+        cc2[1].metric("ry (mm)", f"{ry:.1f}" if ry > 0 else "n/a")
 
     mat, Tf = render_material()
 

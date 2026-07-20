@@ -207,10 +207,15 @@ def main() -> None:
     out_wb = openpyxl.Workbook()
     ws = out_wb.active
     ws.title = "Angles"
-    ws.append(["Designation", "b (mm)", "d (mm)", "t (mm)", "Area (mm2)"])
+    ws.append(["Designation", "b (mm)", "d (mm)", "t (mm)", "Area (mm2)",
+               "rx (mm)", "ry (mm)", "rz (mm)"])
     for r in ang_rows:
+        rz_cands = [v for v in (_f(r.get("Rxp")), _f(r.get("Ryp")),
+                                _f(r.get("Rx")), _f(r.get("Ry"))) if v]
         ws.append([r["Ds_m"], _f(r.get("B")), _f(r.get("D")),
-                   _f(r.get("T")), _f(r.get("A_Th"))])
+                   _f(r.get("T")), _f(r.get("A_Th")),
+                   _f(r.get("Rx")), _f(r.get("Ry")),
+                   min(rz_cands) if rz_cands else None])
     out_wb.save(DATA / "Angle Properties Table.xlsx")
     print(f"  wrote {'Angle Properties Table.xlsx':45s} {len(ang_rows):4d} rows")
 

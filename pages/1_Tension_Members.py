@@ -1399,15 +1399,15 @@ def _bolt_pattern_inputs(key_prefix: str) -> BoltPattern:
     )
 
 
-def _show_results(calcs: List[Calc], Tf: float, section_type: str) -> None:
+def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: bool = True) -> None:
     vals = {c.name: c.value for c in calcs}
     gov  = min(vals, key=vals.__getitem__)
     Tr   = vals[gov]
 
     st.divider()
-    st.subheader("Calculations — Shown Work")
+    if show_steps: st.subheader("Calculations — Shown Work")
 
-    for c in calcs:
+    for c in (calcs if show_steps else []):
         with st.expander(f" Tr Calculation Steps — {c.name.split('(')[0].strip()}", expanded=True):
             st.markdown("\n".join(c.steps))
             if c.table is not None:
@@ -1592,6 +1592,8 @@ def panel_plate(render_material) -> None:
         components.html(svg, height=340)
 
 
+#Panel Single Angle
+
 def panel_single_angle(render_material) -> None:
     st.subheader("Section — Single Angle")
     df = load_angle_table()
@@ -1612,6 +1614,8 @@ def panel_single_angle(render_material) -> None:
 
     with st.expander("Section properties", expanded=True):
         cc = st.columns(4)
+    #cc is a list of column objects.
+        
         cc[0].metric("Leg 1 (mm)", f"{leg1:.1f}")
         cc[1].metric("Leg 2 (mm)", f"{leg2:.1f}")
         cc[2].metric("t (mm)", f"{t:.1f}")
@@ -1671,9 +1675,23 @@ def panel_single_angle(render_material) -> None:
 calc_gross_yield(Ag, mat.Fy),
         calc_net_fracture_paths(paths, U, mat.Fu),
     ]
-    bs_pats = block_shear_paths(bp, t, d_eff)
+    el = resolve_connected_element("Single Angle", "leg",
+                                   {"leg_conn": w_conn, "t": t})
+    bs_pats = detect_block_shear_paths(bp, el, d_eff)
+
     bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
     calcs.append(bs_calc)
+
+    geom = dict(
+        w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+        pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+        edge_trans=bp.edge_trans, hole_dia=hole_dia,
+    )
+    from path_thumbnails import render_net_paths, render_block_patterns
+    render_net_paths(paths, geom, U=U, Fu=mat.Fu,
+                     gov_desc=gov_path["description"])
+    render_block_patterns(bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                          gov_key=bs_gov)
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -1698,8 +1716,10 @@ calc_gross_yield(Ag, mat.Fy),
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Single Angle")
+    _show_results(calcs, Tf, "Single Angle", show_steps=False)
+    
 
+    #Single Angle Diagram
 
     if HAS_SECTION_DIAGRAMS:
         st.subheader("Member Detail - Three Views")
@@ -1714,9 +1734,9 @@ calc_gross_yield(Ag, mat.Fy),
             edge_end=bp.edge_end,
             edge_trans=bp.edge_trans,
             hole_dia=hole_dia,
-            show_net_fracture=True,
+            show_net_fracture=False,
             zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
+            show_block_shear=False,
             governing_bs=bs_gov,
             section_label=chosen,
         )
@@ -1806,15 +1826,12 @@ def panel_double_angle(render_material) -> None:
 
     st.divider()
 
-    paths_one = gross_section_net_paths(
-        Ag=Ag / 2.0,  # Gross area of one angle
-        bolt=bp,
-        hole_dia=hole_dia,
-        allowance=allowance,
-        t=t,
-        connected_parts=1,
+    grid = build_bolt_grid(bp)
+    paths_one = detect_net_section_paths(
+        Ag=Ag / 2.0, t=t, d_eff=d_eff, bolts=grid,
+        connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
     )
-
+    
     if not paths_one:
         st.error("No feasible net fracture path.")
         return
@@ -1858,10 +1875,16 @@ def panel_double_angle(render_material) -> None:
                                        {"leg_conn": w_conn, "t": t})
     bs_pats = detect_block_shear_paths(bp, el, d_eff)
 
-    bs_calc, bs_gov = calc_block_shear_paths(
-        bs_pats, mat.Fy, mat.Fu, Ut, area_mult=2.0,
-        area_label="Areas doubled: pair of angles (2x per-angle Ant and Agv)")
-    calcs.append(bs_calc)
+    geom = dict(
+        w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+        pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+        edge_trans=bp.edge_trans, hole_dia=hole_dia,
+    )
+    from path_thumbnails import render_net_paths, render_block_patterns
+    render_net_paths(paths_one, geom, U=U, Fu=mat.Fu, area_mult=2.0,
+                     gov_desc=gov_path["description"])
+    render_block_patterns(bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                          area_mult=2.0, gov_key=bs_gov)
 
     with st.expander("Net fracture paths (per angle leg)", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -1876,9 +1899,9 @@ def panel_double_angle(render_material) -> None:
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Double Angle")
+    _show_results(calcs, Tf, "Double Angle", show_steps=False)
 
-
+    
     if HAS_SECTION_DIAGRAMS:
         st.subheader("Member Detail - Three Views")
         gusset_t = st.number_input("Gusset plate thickness (mm)",
@@ -1896,9 +1919,9 @@ def panel_double_angle(render_material) -> None:
             edge_end=bp.edge_end,
             edge_trans=bp.edge_trans,
             hole_dia=hole_dia,
-            show_net_fracture=True,
+            show_net_fracture=False,
             zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
+            show_block_shear=False,
             governing_bs=bs_gov,
             section_label=chosen,
         )

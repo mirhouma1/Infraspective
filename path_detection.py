@@ -210,6 +210,7 @@ def detect_net_section_paths(
         cand = {
             "area_basis": "gross_section",
             "description": "%s: %s" % (path_type, route),
+            "selected": [(p.line, p.row) for p in selected],
             "n_holes": n_holes,
             "n_staggers": sum(1 for seg in segments if seg["s_mm"] > 0),
             "stagger_segments": segments,

@@ -1,4 +1,9 @@
 from __future__ import annotations
+from path_detection import build_bolt_grid
+from path_detection import detect_net_section_paths
+from path_detection import detect_block_shear_paths
+from path_detection import resolve_connected_element
+
 
 import io
 import math
@@ -2185,15 +2190,16 @@ def main() -> None:
     elif sec_type == "Channel (C / MC)":
         panel_channel(render_material)
 
-    st.divider()
-    st.subheader("Raw Datasets (CISC SST12.1)")
-    st.caption("Full property tables used by this page's calculations.")
-    for label, loader in [
-        ("Single Angles (L)", load_angle_table),
-        ("Double Angles (2L)", load_double_angle_table),
-        ("WT Sections", load_wt_table),
-        ("Channels (C / MC)", load_channel_table),
-    ]:
+    DATASET_BY_TYPE = {
+        "Single Angle":     ("Single Angles (L)", load_angle_table),
+        "Double Angle":     ("Double Angles (2L)", load_double_angle_table),
+        "WT Section":       ("WT Sections", load_wt_table),
+        "Channel (C / MC)": ("Channels (C / MC)", load_channel_table),
+    }
+    if sec_type in DATASET_BY_TYPE:
+        label, loader = DATASET_BY_TYPE[sec_type]
+        st.divider()
+        st.subheader("Raw Dataset (CISC SST12.1)")
         with st.expander(f"{label} — raw dataset", expanded=False):
             try:
                 df_raw = loader()

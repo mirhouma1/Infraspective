@@ -1646,14 +1646,15 @@ def panel_single_angle(render_material) -> None:
 
     st.divider()
 
-    paths = gross_section_net_paths(
-        Ag=Ag,
-        bolt=bp,
-        hole_dia=hole_dia,
-        allowance=allowance,
-        t=t,
-        connected_parts=1,
+    from path_detection import (build_bolt_grid, detect_net_section_paths,
+                                detect_block_shear_paths, resolve_connected_element)
+
+    grid = build_bolt_grid(bp)
+    paths = detect_net_section_paths(
+        Ag=Ag, t=t, d_eff=d_eff, bolts=grid,
+        connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
     )
+
     
     if not paths:
         st.error("No feasible net fracture path.")
@@ -1848,7 +1849,10 @@ def panel_double_angle(render_material) -> None:
 
     #Table of net fracture paths ^
 
-    bs_pats = block_shear_paths(bp, t, d_eff)
+    el = resolve_connected_element("Single Angle", "leg",
+                                       {"leg_conn": w_conn, "t": t})
+    bs_pats = detect_block_shear_paths(bp, el, d_eff)
+
     bs_calc, bs_gov = calc_block_shear_paths(
         bs_pats, mat.Fy, mat.Fu, Ut, area_mult=2.0,
         area_label="Areas doubled: pair of angles (2x per-angle Ant and Agv)")

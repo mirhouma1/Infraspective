@@ -6,6 +6,8 @@ from path_detection import resolve_connected_element
 
 
 import io
+#import io is the input/output library
+
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,8 +95,7 @@ MAX_SLEND = 300
 
 DATA_DIR   = Path(__file__).resolve().parent.parent / "data"
 ANGLE_FILE = DATA_DIR / "Angle Properties Table.xlsx"
-# 1_Tension_Members.py → pages → project → data goes up two parent folders, then enters the "data" folder to access the datasets.
-#********Check why the other tables aren't here.*****
+# you may have to remove all of this********************
 
 
 BOLT_DIA: Dict[str, float] = {
@@ -105,7 +106,7 @@ STD_HOLE: Dict[str, float] = {
     "M16": 18.0, "M20": 22.0, "M22": 24.0, "M24": 26.0,
     "M27": 30.0, "M30": 33.0, "M36": 39.0,
 }
-
+#Verify and site the table***********
 #The strings store texts in a sequence.
 
 
@@ -126,6 +127,7 @@ UT_DEFAULTS = {
     "Channel (C / MC)": 0.85,
 }
 
+#Site table********
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 @dataclass
@@ -172,6 +174,9 @@ class Calc:
 
 
 def _parse_multi_table_csv(text: str, area_col: str = "Area_mm2") -> pd.DataFrame:
+# What other dimensions need to be added  with area_mm2?********
+
+    
     """Parse a CSV that contains multiple sub-tables separated by blank lines."""
     frames: List[pd.DataFrame] = []
     current_header: Optional[List[str]] = None
@@ -378,7 +383,7 @@ def load_angle_table() -> pd.DataFrame:
     return out.dropna(subset=["leg1", "leg2", "t"]).reset_index(drop=True)
 
 
-# ── Shear lag factor (CSA S16-14 Cl. 12.3.3.2) ───────────────────────────────
+# ── Shear lag factor (CSA S16-14 Cl. 12.3.3.2) - 1. The numerical U value 2. A sentence explaining why that value was selected ───────────────────────────────
 def shear_lag(
             section_type:  str,
             n_bolt_rows:   int,
@@ -386,6 +391,9 @@ def shear_lag(
             b_flange:      float = 0,
             d_depth:       float = 0,
         ) -> Tuple[float, str]:
+
+    #Tuple is a collection of items
+    
             """Returns (U, explanation_string)."""
             if section_type in ("Single Angle", "Double Angle") or connected_el == "one_leg":
                 if n_bolt_rows >= 4:
@@ -431,7 +439,6 @@ def calc_gross_yield(Ag: float, Fy: float) -> Calc:
     )
 
 
-# ── Net area paths (Cl. 12.3.1) ──────────────────────────────────────────────
     # ── Net area paths (Cl. 12.3.1) ──────────────────────────────────────────────
 def net_paths(
     width: float,
@@ -474,7 +481,8 @@ def net_paths(
             ),
         })
 
-    # Zig-zag paths
+    # Zig-zag paths>>>>>>>>>
+    
     if bolt.bolts_per_line >= 2 and bolt.n_lines >= 2:
         for n_holes in range(2, bolt.n_lines + 1):
             n_staggers = n_holes - 1
@@ -1716,7 +1724,7 @@ calc_gross_yield(Ag, mat.Fy),
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Single Angle", show_steps=False)
+    _show_results(calcs, Tf, "Single Angle", show_steps=True)
     
 
     #Single Angle Diagram
@@ -1734,9 +1742,9 @@ calc_gross_yield(Ag, mat.Fy),
             edge_end=bp.edge_end,
             edge_trans=bp.edge_trans,
             hole_dia=hole_dia,
-            show_net_fracture=False,
+            show_net_fracture=True,
             zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=False,
+            show_block_shear=True,
             governing_bs=bs_gov,
             section_label=chosen,
         )
@@ -1899,7 +1907,7 @@ def panel_double_angle(render_material) -> None:
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Double Angle", show_steps=False)
+    _show_results(calcs, Tf, "Double Angle", show_steps=True)
 
     
     if HAS_SECTION_DIAGRAMS:
@@ -1919,10 +1927,10 @@ def panel_double_angle(render_material) -> None:
             edge_end=bp.edge_end,
             edge_trans=bp.edge_trans,
             hole_dia=hole_dia,
-            show_net_fracture=False,
+            show_net_fracture=True,
             zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=False,
-            governing_bs=bs_gov,
+            show_block_shear=True,
+            governing_bs= bs_gov,
             section_label=chosen,
         )
         components.html(svg3, height=1350, scrolling=True)

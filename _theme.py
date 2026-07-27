@@ -14,7 +14,7 @@ _LOGO_PATH = Path(__file__).parent / "static" / "logo_mark.png"
 
 def _logo_b64() -> str:
     for p in (
-        Path(__file__).parent / "static" / "logo_mark_tight.png",
+        Path(__file__).parent / "static" / "logo_mark.png",
         Path(__file__).parent / "static" / "logo_mark.png",
         Path(__file__).parent / "static" / "logo.png",
         Path(__file__).parent / "static" / "logo.jpg",

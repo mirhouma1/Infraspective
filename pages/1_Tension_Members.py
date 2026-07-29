@@ -1610,7 +1610,26 @@ def panel_plate(render_material) -> None:
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Plate")
+    geom = dict(
+        w_conn=width, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+        pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+        edge_trans=bp.edge_trans, hole_dia=hole_dia,
+        section_label="Flat Plate",
+    )
+    from path_thumbnails import render_net_paths, render_block_patterns
+
+    _show_results(
+        calcs, Tf, "Plate",
+        show_steps=True,
+        diagrams={
+            "Net Section Fracture": lambda: render_net_paths(
+                paths, geom, U=U, Fu=mat.Fu,
+                gov_desc=gov_path["description"]),
+            "Block Shear": lambda: render_block_patterns(
+                bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                gov_key=bs_gov),
+        },
+    )
 
     if HAS_SVG:
         st.subheader("Connection Diagram")
@@ -2074,7 +2093,26 @@ def panel_wt(render_material) -> None:
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "WT Section")
+    geom = dict(
+        w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+        pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+        edge_trans=bp.edge_trans, hole_dia=hole_dia,
+        section_label=f"WT Section - connected {connected_el}",
+    )
+    from path_thumbnails import render_net_paths, render_block_patterns
+
+    _show_results(
+        calcs, Tf, "WT Section",
+        show_steps=True,
+        diagrams={
+            "Net Section Fracture": lambda: render_net_paths(
+                paths, geom, U=U, Fu=mat.Fu,
+                gov_desc=gov_path["description"]),
+            "Block Shear": lambda: render_block_patterns(
+                bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                gov_key=bs_gov),
+        },
+    )
 
     if HAS_WT_DIAGRAM:
         st.subheader("Member Detail - Three Views")
@@ -2200,7 +2238,26 @@ def panel_channel(render_material) -> None:
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Channel (C / MC)")
+    geom = dict(
+        w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+        pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
+        edge_trans=bp.edge_trans, hole_dia=hole_dia,
+        section_label="Channel - connected web",
+    )
+    from path_thumbnails import render_net_paths, render_block_patterns
+
+    _show_results(
+        calcs, Tf, "Channel (C / MC)",
+        show_steps=True,
+        diagrams={
+            "Net Section Fracture": lambda: render_net_paths(
+                paths, geom, U=U, Fu=mat.Fu,
+                gov_desc=gov_path["description"]),
+            "Block Shear": lambda: render_block_patterns(
+                bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                gov_key=bs_gov),
+        },
+    )
 
     if HAS_CH_DIAGRAM:
         st.subheader("Member Detail - Three Views")

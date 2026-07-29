@@ -113,6 +113,17 @@ def net_thumb(cand: Dict, geom: Dict, governs: bool = False) -> str:
     svg += _holes(geom, ML, MT, sx, sy)
 
     sel: List[Tuple[int, int]] = cand.get("selected", [])
+    if not sel:
+        # Plate-style candidates carry counts, not bolt coordinates.
+        # Synthesize the equivalent path: straight = across one row;
+        # zig-zag = alternating rows across the lines it cuts.
+        n_holes = int(cand.get("n_holes", 0))
+        n_holes = min(n_holes, int(geom.get("n_lines", 1)))
+        if n_holes >= 1:
+            if int(cand.get("n_staggers", 0)) > 0:
+                sel = [(ln, ln % 2) for ln in range(n_holes)]
+            else:
+                sel = [(ln, 0) for ln in range(n_holes)]
     if sel:
         sel = sorted(sel, key=lambda lr: lr[0])          # by line, left to right
         pts = [_xy(geom, ML, MT, sx, sy, ln, rw) for ln, rw in sel]
@@ -173,6 +184,15 @@ def block_thumb(cand: Dict, geom: Dict, governs: bool = False) -> str:
     svg, W, H, ML, MT, sx, sy, Lm = _shell(geom, title)
 
     kind, lines = _parse_key(key)
+    # Plate-style patterns use keys A/B/C; translate them to the same
+    # geometry the angle patterns use (NEAR/BETWEEN + 0-based line indexes).
+    n_lines_g = int(geom.get("n_lines", 1))
+    if kind == "A":            # shear on far line, tension to free edge
+        kind, lines = "NEAR", [n_lines_g - 1]
+    elif kind == "B":          # shear on edge line, tension to free edge
+        kind, lines = "NEAR", [0]
+    elif kind == "C":          # shear on both outer lines, tension between
+        kind, lines = "BETWEEN", [0, n_lines_g - 1]
     rows = int(geom["bolts_per_line"])
     x_of = lambda ln: ML + (geom["edge_trans"] + ln * geom["gauge"]) * sx
     y_top = MT
@@ -451,6 +471,14 @@ def _net_card(p, geom, U, Fu, phi_u, area_mult, governs):
     ))
 
     segments = p.get("stagger_segments", [])
+    if not segments and stag_len > 0:
+        # Plate-style candidates: rebuild the s²/4g pieces from counts.
+        n_st = int(p.get("n_staggers", 0))
+        s_mm = float(p.get("pitch_mm", geom.get("pitch", 0.0)))
+        g_mm = float(p.get("gauge_mm", geom.get("gauge", 0.0)))
+        if n_st > 0 and g_mm > 0:
+            add = s_mm ** 2 / (4.0 * g_mm)
+            segments = [dict(s_mm=s_mm, g_mm=g_mm, addition_mm=add)] * n_st
     if segments:
         pieces = []
         for seg in segments:

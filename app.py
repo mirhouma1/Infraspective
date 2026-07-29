@@ -1,5 +1,4 @@
 # app.py
-import csv
 import math
 import re
 from pathlib import Path
@@ -20,12 +19,7 @@ from flexure_diagrams import (
 # ----------------------------
 # CONFIG
 # ----------------------------
-DATA_DIR = Path(__file__).resolve().parent / "data"
-
-WI_SECTION_CSV = (
-    DATA_DIR / "CISC 11th Edition (CSA S16-14) - WiSection Tables (Revised).csv"
-)
-CLASS_BENDING_CSV = DATA_DIR / "CISC 11th Edition - Class of Sections in Bending.csv"
+import sst12  # direct reader for the CISC SST12.1 workbook
 
 PHI_B = 0.9
 PHI_V_DEFAULT = 0.9
@@ -265,60 +259,19 @@ def _canonicalize_record(rec: Dict[str, Any]) -> Dict[str, Any]:
                 out[sym] = v
 
     return out
-
-
-def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    out: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-
-    # Try UTF-8 first; fall back to latin-1 for files with non-UTF-8 characters
-    try:
-        fh = path.open("r", encoding="utf-8", newline="")
-        fh.read(512)
-        fh.seek(0)
-    except UnicodeDecodeError:
-        fh = path.open("r", encoding="latin-1", newline="")
-
-    with fh as f:
-        reader = csv.DictReader(f)
-        for rec in reader:
-            rec2 = _canonicalize_record(rec)
-            des = rec2.get("designation")
-            if des:
-                key = str(des).strip()
-                out[key] = rec2
-                order.append(key)
-
-    return out, order
-
-
 @st.cache_data(ttl=60)
 def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     merged: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
 
-    # 1) Load the WI Section CSV if it exists
-    if WI_SECTION_CSV.exists():
-        data, csv_order = _load_csv(WI_SECTION_CSV)
-        merged.update(data)
-        order.extend(csv_order)
-
-    # 2) Load the Class Bending CSV if it exists
-    if CLASS_BENDING_CSV.exists():
-        data, csv_order = _load_csv(CLASS_BENDING_CSV)
-        merged.update(data)
-        order.extend(csv_order)
-
-    # 3) Load any additional CSVs inside data/
-    if DATA_DIR.exists():
-        for p in sorted(DATA_DIR.iterdir(), key=lambda x: x.name.lower()):
-            if p.suffix.lower() == ".csv" and p not in (
-                WI_SECTION_CSV,
-                CLASS_BENDING_CSV,
-            ):
-                data, csv_order = _load_csv(p)
-                merged.update(data)
-                order.extend(csv_order)
+    # Read W + HSS section records directly from the SST12.1 workbook
+    for rec in sst12.shared_records():
+        rec2 = _canonicalize_record(rec)
+        des = rec2.get("designation")
+        if des:
+            key = str(des).strip()
+            merged[key] = rec2
+            order.append(key)
 
     # Remove duplicates while preserving order, then sort ascending (natural)
     seen: set[str] = set()
@@ -1112,7 +1065,7 @@ st.title(APP_TITLE)
 
 shapes, designations = load_shapes()
 if not shapes:
-    st.error("No section data found. Add CSV files to the data/ folder.")
+    st.error("No section data found. Add the CISC SST12.1 workbook to attached_assets/.")
     st.stop()
 
 st.markdown("---")

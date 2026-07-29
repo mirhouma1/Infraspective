@@ -1,4 +1,4 @@
-- [SST12.1 data pipeline](sst12-data-pipeline.md) — steel-section CSVs are generated; shared pipeline needs BARE headers (flexure alias gap), tension pipeline needs exact _mm names.
-- [Compression/Beam-Column loader gate](compression-loader-gate.md) — both pages glob all data CSVs; must skip tension double-angle rows (Ag/ry_s0 unaliased) or the default section errors on load.
+- [SST12.1 data pipeline](sst12-data-pipeline.md) — pages read the SST12.1 xlsx directly via root sst12.py; shared pipeline needs BARE property names (flexure alias gap), tension pipeline needs exact _mm names.
+- [Compression/Beam-Column loader gate](compression-loader-gate.md) — pages now consume shared W+HSS records only; the A/rx/ry gate remains as a safety net against unbuildable rows.
 - [Beta gate & branding](beta-gate-ui.md) — logo blending is CSS-only (multiply on light bg, button-card on dark sidebar); only Tension unlocked; timeout/lock/logging wiring.
 - [Flexure Class 4 & pyarrow noise](flexure-class4-and-noise.md) — Class 4 Se λ_r must equal Class 3 classification limits (flange 200, web 1700 ÷√Fy); flexure dataframe pyarrow traceback is harmless log noise.

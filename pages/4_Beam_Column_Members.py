@@ -1,5 +1,4 @@
 from __future__ import annotations
-import csv
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,7 +10,9 @@ from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclai
 # CONFIG
 # ============================================================
 APP_TITLE = "Beam-Column Check (CSA S16)"
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import sst12
 
 PHI = 0.9     # resistance factor for tension, compression, flexure
 N_CSA = 1.34  # CSA S16 column curve exponent (hot-rolled)
@@ -112,43 +113,23 @@ def _canonicalize(rec: Dict[str, Any]) -> Dict[str, Any]:
         if v is not None:
             out[sym] = v
     return out
-
-
-def _load_csv(path: Path) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    shapes: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-    try:
-        fh = path.open("r", encoding="utf-8", newline="")
-        fh.read(512); fh.seek(0)
-    except UnicodeDecodeError:
-        fh = path.open("r", encoding="latin-1", newline="")
-    with fh as f:
-        for rec in csv.DictReader(f):
-            c = _canonicalize(rec)
-            des = c.get("designation")
-            if des:
-                # Only keep sections this page can build (needs Area/rx/ry).
-                # Filters out tension-only shapes (e.g. double angles with Ag/ry_s0
-                # headers) that are globbed from data/ but would error on selection.
-                if (_flt(c.get("Area")) is None
-                        or _flt(c.get("rx")) is None
-                        or _flt(c.get("ry")) is None):
-                    continue
-                key = str(des).strip()
-                shapes[key] = c
-                order.append(key)
-    return shapes, order
-
-
 @st.cache_data(ttl=120)
 def load_all_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     merged: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
-    if DATA_DIR.exists():
-        for p in sorted(DATA_DIR.glob("*.csv"), key=lambda x: x.name.lower()):
-            data, csv_order = _load_csv(p)
-            merged.update(data)
-            order.extend(csv_order)
+    # Read W + HSS section records directly from the SST12.1 workbook
+    for rec in sst12.shared_records():
+        c = _canonicalize(rec)
+        des = c.get("designation")
+        if des:
+            # Only keep sections this page can build (needs Area/rx/ry).
+            if (_flt(c.get("Area")) is None
+                    or _flt(c.get("rx")) is None
+                    or _flt(c.get("ry")) is None):
+                continue
+            key = str(des).strip()
+            merged[key] = c
+            order.append(key)
     seen: set = set()
     uniq = [k for k in order if not (k in seen or seen.add(k))]
     import re as _re
@@ -399,7 +380,7 @@ st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads
 
 shapes, order = load_all_shapes()
 if not shapes:
-    st.error(f"No section data found. Add CSV files to: {DATA_DIR}")
+    st.error("No section data found. Add the CISC SST12.1 workbook to attached_assets/.")
     st.stop()
 
 st.markdown("---")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,10 +9,12 @@ import streamlit as st
 from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
 
 # ─────────────────────────────────────────────────────────────
-# DATA DIR  (pages/ is one level below root where data/ lives)
+# SECTION DATA  (read directly from the SST12.1 workbook at repo root)
 # ─────────────────────────────────────────────────────────────
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import sst12
 
 # ─────────────────────────────────────────────────────────────
 # UTILS
@@ -110,33 +111,19 @@ def load_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     shapes: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
 
-    if not DATA_DIR.exists():
-        return {}, []
-
-    for p in sorted(DATA_DIR.glob("*.csv"), key=lambda x: x.name.lower()):
-        try:
-            fh = p.open("r", encoding="utf-8", newline="")
-            fh.read(256)
-            fh.seek(0)
-        except UnicodeDecodeError:
-            fh = p.open("r", encoding="latin-1", newline="")
-
-        with fh as f:
-            reader = csv.DictReader(f)
-            for rec in reader:
-                r2 = _canonicalize(rec)
-                des = r2.get("designation")
-                if not des or not str(des).strip():
-                    continue
-                # Only keep sections this page can actually build (needs A/rx/ry).
-                # Filters out tension-only shapes (e.g. double angles with Ag/ry_s0
-                # headers) that are globbed from data/ but would error on selection.
-                if (_to_float(r2.get("A")) is None
-                        or _to_float(r2.get("rx")) is None
-                        or _to_float(r2.get("ry")) is None):
-                    continue
-                shapes[des] = r2
-                order.append(des)
+    # Read W + HSS section records directly from the SST12.1 workbook
+    for rec in sst12.shared_records():
+        r2 = _canonicalize(rec)
+        des = r2.get("designation")
+        if not des or not str(des).strip():
+            continue
+        # Only keep sections this page can actually build (needs A/rx/ry).
+        if (_to_float(r2.get("A")) is None
+                or _to_float(r2.get("rx")) is None
+                or _to_float(r2.get("ry")) is None):
+            continue
+        shapes[des] = r2
+        order.append(des)
 
     seen: set = set()
     order2 = []
@@ -1118,7 +1105,7 @@ st.markdown("*Structural steel column capacity per CSA S16:19 — Clauses 11, 13
 
 shapes, designations = load_shapes()
 if not shapes or not designations:
-    st.error("No CSV section tables found in `data/` directory.")
+    st.error("No section data found. Add the CISC SST12.1 workbook to `attached_assets/`.")
     st.stop()
 
 # ── Material & curve in sidebar ───────────────────────────────

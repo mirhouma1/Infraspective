@@ -84,7 +84,6 @@ except ImportError:
 # The function above tries to load the SVG generation module. If it's unavailable,the app continues without SVG support.
 
 
-
 # ── Constants ─────────────────────────────────────────────────────────────────
 PHI       = 0.90
 PHI_U     = 0.75
@@ -93,9 +92,10 @@ MAX_SLEND = 300
 # As per CSA S16 section 10.4.2 - Maximum slenderness ratio shall not exceed 300.
 
 
-DATA_DIR   = Path(__file__).resolve().parent.parent / "data"
-ANGLE_FILE = DATA_DIR / "Angle Properties Table.xlsx"
-# you may have to remove all of this********************
+# Section data is read directly from the CISC SST12.1 workbook (repo root module)
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import sst12
 
 
 BOLT_DIA: Dict[str, float] = {
@@ -139,7 +139,6 @@ class Material:
 # Float is a decimal number. 
 
 
-
 @dataclass
 class SectionProps:
     designation: str
@@ -168,81 +167,12 @@ class Calc:
     note:  str = ""
 
     table: object = None
-
-
-# ── Data loaders ──────────────────────────────────────────────────────────────
-
-
-def _parse_multi_table_csv(text: str, area_col: str = "Area_mm2") -> pd.DataFrame:
-# What other dimensions need to be added  with area_mm2?********
-
-    
-    """Parse a CSV that contains multiple sub-tables separated by blank lines."""
-    frames: List[pd.DataFrame] = []
-    current_header: Optional[List[str]] = None
-#frames: This is a list that will store multiple DataFrames. Each DataFrame represents a table extracted from the CSV file.
-#list is a collection of items.
-#pd. is the pandas library.
-#Optional[List[str]] means that current_header can either be a list of strings or None
-
-    current_rows:   List[str] = []
-#list[str] means a list of strings. current_rows is a list that will store the rows of data from the CSV file as strings.
-
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-
-    # raw_line is the original line from the CSV file, including any leading or trailing whitespace. 
-            # line = raw_line.strip() removes any leading or trailing whitespace from raw_line, ensuring that the line is clean and ready for processing.
-
-        if not line or line.startswith("#"):
-            if current_header and current_rows:
-                buf = "\n".join([",".join(current_header)] + current_rows)
-                #buf is a string that combines the header and the rows of the current table into a single string.
-
-                try:
-                    frames.append(pd.read_csv(io.StringIO(buf)))
-
-# frames.append(pd.read_csv(io.StringIO(buf))) reads the combined header and rows into a DataFrame using pd.read_csv(). The io.StringIO(buf) converts the string buf into a file-like object that pd.read_csv() can read.
-                except Exception:
-                    pass
-                current_rows = []
-                current_header = None
-            continue
-        if line.startswith("Designation,"):
-            if current_header and current_rows:
-                buf = "\n".join([",".join(current_header)] + current_rows)
-                try:
-                    frames.append(pd.read_csv(io.StringIO(buf)))
-                except Exception:
-                    pass
-                current_rows = []
-            current_header = line.split(",")
-        elif current_header:
-            current_rows.append(line)
-
-    if current_header and current_rows:
-        buf = "\n".join([",".join(current_header)] + current_rows)
-        try:
-            frames.append(pd.read_csv(io.StringIO(buf)))
-        except Exception:
-            pass
-
-    if not frames:
-        return pd.DataFrame()
-    combined = pd.concat(frames, ignore_index=True)
-    combined.columns = [c.strip() for c in combined.columns]
-    return combined
-
-
 @st.cache_data
 def load_double_angle_table() -> pd.DataFrame:
-    path = DATA_DIR / "Double Angle Properties.csv"
-    if not path.exists():
+    rows = sst12.load_all_tables()["double_angles"]
+    if not rows:
         return pd.DataFrame()
-    df = _parse_multi_table_csv(path.read_text())
-    if df.empty:
-        return df
+    df = pd.DataFrame(rows)
     df = df.rename(columns={"Designation": "designation", "Area_mm2": "Ag",
                                 "rx_mm": "rx", "ry_s0_mm": "ry_s0"})
     for c in ["designation", "Ag"]:
@@ -263,13 +193,10 @@ def load_double_angle_table() -> pd.DataFrame:
 
 @st.cache_data
 def load_wt_table() -> pd.DataFrame:
-    path = DATA_DIR / "Structural Tees WT Properties.csv"
-    if not path.exists():
+    rows = sst12.load_all_tables()["wt"]
+    if not rows:
         return pd.DataFrame()
-    lines = [l for l in path.read_text().splitlines()
-                if not l.strip().lstrip('"').startswith("#")]
-    df = pd.read_csv(io.StringIO("\n".join(lines)))
-    df.columns = [c.strip() for c in df.columns]
+    df = pd.DataFrame(rows)
     df = df.rename(columns={"Designation": "designation"})
     need = ["designation", "Area_mm2", "t_mm", "w_mm", "b_mm", "d_mm", "rx_mm", "ry_mm"]
     for c in need:
@@ -282,54 +209,10 @@ def load_wt_table() -> pd.DataFrame:
 
 @st.cache_data
 def load_channel_table() -> pd.DataFrame:
-    path = DATA_DIR / "Channel Sections Properties.csv"
-    if not path.exists():
+    rows = sst12.load_all_tables()["channels"]
+    if not rows:
         return pd.DataFrame()
-    frames: List[pd.DataFrame] = []
-    current_header: Optional[List[str]] = None
-    current_rows:   List[str] = []
-
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            if current_header and current_rows:
-                buf = "\n".join([",".join(current_header)] + current_rows)
-                try:
-                    df = pd.read_csv(io.StringIO(buf))
-                    if "Area_mm2" in df.columns:
-                        frames.append(df)
-                except Exception:
-                    pass
-                current_rows = []
-                current_header = None
-            continue
-        if line.startswith("Designation,"):
-            if current_header and current_rows:
-                buf = "\n".join([",".join(current_header)] + current_rows)
-                try:
-                    df = pd.read_csv(io.StringIO(buf))
-                    if "Area_mm2" in df.columns:
-                        frames.append(df)
-                except Exception:
-                    pass
-                current_rows = []
-            current_header = line.split(",")
-        elif current_header:
-            current_rows.append(line)
-
-    if current_header and current_rows:
-        buf = "\n".join([",".join(current_header)] + current_rows)
-        try:
-            df = pd.read_csv(io.StringIO(buf))
-            if "Area_mm2" in df.columns:
-                frames.append(df)
-        except Exception:
-            pass
-
-    if not frames:
-        return pd.DataFrame()
-    combined = pd.concat(frames, ignore_index=True)
-    combined.columns = [c.strip() for c in combined.columns]
+    combined = pd.DataFrame(rows)
     combined = combined.rename(columns={"Designation": "designation"})
     for c in ["Area_mm2", "t_mm", "w_mm", "d_mm", "b_mm", "rx_mm", "ry_mm"]:
         if c in combined.columns:
@@ -339,10 +222,11 @@ def load_channel_table() -> pd.DataFrame:
 
 @st.cache_data
 def load_angle_table() -> pd.DataFrame:
-    """Load the single angle table from the xlsx file."""
-    if not ANGLE_FILE.exists():
+    """Load the single angle table directly from the SST12.1 workbook."""
+    rows = sst12.load_all_tables()["single_angles"]
+    if not rows:
         return pd.DataFrame()
-    df = pd.read_excel(ANGLE_FILE, engine="openpyxl")
+    df = pd.DataFrame(rows)
     df.columns = [str(c).strip() for c in df.columns]
 
     def find_col(names: List[str]) -> Optional[str]:
@@ -424,7 +308,6 @@ def shear_lag(
             return 0.75, "2 transverse lines => U = 0.75 (Cl. 12.3.3.2c-ii)"
     
     
-
 # ── Calc Gross Yield - Limit-state calculations ──────────────────────────────────────────────────
 def calc_gross_yield(Ag: float, Fy: float) -> Calc:
     Tr = PHI * Ag * Fy / 1000.0
@@ -987,7 +870,6 @@ def block_shear_paths(
         return pats
 
 
-
 def calc_block_shear_paths(
     pats,
     Fy,
@@ -1473,7 +1355,6 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
             st.error(f"FAIL   {lbl}")
 
 
-
 # ── Section panels ────────────────────────────────────────────────────────────
 def render_material():
     st.divider()
@@ -1673,7 +1554,7 @@ def panel_single_angle(render_material) -> None:
     st.subheader("Section — Single Angle")
     df = load_angle_table()
     if df.empty:
-        st.warning("Angle Properties Table.xlsx not found in data/ folder.")
+        st.warning("Single angle data not found in the SST12.1 workbook (attached_assets/).")
         return
 
     chosen = st.selectbox("Angle designation", sorted(df["designation"].tolist(), key=_nat_key), key="sa_des")
@@ -1833,8 +1714,7 @@ def panel_double_angle(render_material) -> None:
     df = load_double_angle_table()
     if df.empty:
         st.warning(
-            "Double_Angle_Properties.csv not found in data/ folder. "
-            "Add the CSV to enable this section type."
+            "Double angle data not found in the SST12.1 workbook (attached_assets/)."
         )
         return
 
@@ -2023,14 +1903,12 @@ def panel_double_angle(render_material) -> None:
         components.html(svg3, height=1350, scrolling=True)
 
 
-
 def panel_wt(render_material) -> None:
     st.subheader("Section — WT (Structural Tee)")
     df = load_wt_table()
     if df.empty:
         st.warning(
-            "Structural_Tees_WT_Properties.csv not found in data/ folder. "
-            "Add the CSV to enable this section type."
+            "WT tee data not found in the SST12.1 workbook (attached_assets/)."
         )
         return
 
@@ -2200,8 +2078,7 @@ def panel_channel(render_material) -> None:
     df = load_channel_table()
     if df.empty:
         st.warning(
-            "Channel_Sections_Properties.csv not found in data/ folder. "
-            "Add the CSV to enable this section type."
+            "Channel data not found in the SST12.1 workbook (attached_assets/)."
         )
         return
 

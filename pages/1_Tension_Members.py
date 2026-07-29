@@ -468,6 +468,9 @@ def net_paths(
             "width_mm": width,
             "d_eff_mm": d_eff,
             "t_mm": t,
+            "Ag_mm2": width * t,
+            "hole_deduction_mm2": n_holes * d_eff * t,
+            "stagger_area_mm2": 0.0,
             "An_mm2": wn * t,
             "wn_mm": wn,
             "n_holes": n_holes,
@@ -504,6 +507,9 @@ def net_paths(
                 "width_mm": width,
                 "d_eff_mm": d_eff,
                 "t_mm": t,
+                "Ag_mm2": width * t,
+                "hole_deduction_mm2": n_holes * d_eff * t,
+                "stagger_area_mm2": stagger * t,
                 "An_mm2": An,
                 "wn_mm": wn,
                 "n_holes": n_holes,
@@ -1407,7 +1413,8 @@ def _bolt_pattern_inputs(key_prefix: str) -> BoltPattern:
     )
 
 
-def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: bool = True) -> None:
+def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: bool = True,
+                  diagrams: Optional[Dict[str, object]] = None) -> None:
     vals = {c.name: c.value for c in calcs}
     gov  = min(vals, key=vals.__getitem__)
     Tr   = vals[gov]
@@ -1431,6 +1438,10 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
                 delta="<-- governs" if c.name == gov else None,
                 delta_color="inverse",
             )
+        if diagrams:
+            for key, render_fn in diagrams.items():
+                if key.lower() in c.name.lower():
+                    render_fn()
 
     if Tf > 0:
         util = Tf / Tr
@@ -1697,12 +1708,15 @@ calc_gross_yield(Ag, mat.Fy),
         Tf,
         "Single Angle",
         show_steps=True,
+        diagrams={
+            "Net Section Fracture": lambda: render_net_paths(
+                paths, geom, U=U, Fu=mat.Fu,
+                gov_desc=gov_path["description"]),
+            "Block Shear": lambda: render_block_patterns(
+                bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                gov_key=bs_gov),
+        },
     )
-    
-    render_net_paths(paths, geom, U=U, Fu=mat.Fu,
-                     gov_desc=gov_path["description"])
-    render_block_patterns(bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
-                          gov_key=bs_gov)
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -1887,6 +1901,7 @@ def panel_double_angle(render_material) -> None:
     bs_pats = detect_block_shear_paths(bp, el, d_eff)
 
     bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+    calcs.append(bs_calc)
 
     geom = dict(
         w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
@@ -1895,12 +1910,17 @@ def panel_double_angle(render_material) -> None:
     )
     from path_thumbnails import render_net_paths, render_block_patterns
 
-    _show_results(calcs, Tf, "Double Angle", show_steps=True)
-
-    render_net_paths(paths_one, geom, U=U, Fu=mat.Fu, area_mult=2.0,
-                     gov_desc=gov_path["description"])
-    render_block_patterns(bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
-                          area_mult=2.0, gov_key=bs_gov)
+    _show_results(
+        calcs, Tf, "Double Angle", show_steps=True,
+        diagrams={
+            "Net Section Fracture": lambda: render_net_paths(
+                paths_one, geom, U=U, Fu=mat.Fu, area_mult=2.0,
+                gov_desc=gov_path["description"]),
+            "Block Shear": lambda: render_block_patterns(
+                bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
+                area_mult=2.0, gov_key=bs_gov),
+        },
+    )
 
     with st.expander("Net fracture paths (per angle leg)", expanded=False):
         st.info(f"Shear lag: {U_note}")

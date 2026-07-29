@@ -1474,7 +1474,7 @@ def render_material():
 #GRADES[grade_sel]: This accesses the value associated with the key grade_sel in the GRADES dictionary. If the value is not None, the code inside the if block will be executed.
 #grade_sel: This is a variable that holds the selected grade from the selectbox. It is used as the key to look up the corresponding value in the GRADES dictionary.
 
-        Fy_def, Fu_def = GRADES[grade_sel]
+        Fy_def, Fu_def = GRADES[grade_sel]  # ty:ignore[not-iterable]
 #Fy_def and Fu_def are variables that will store the yield strength and ultimate tensile strength values, respectively, for the selected steel grade.
 #GRADES[grade_sel] is the value associated with the selected steel grade in the GRADES dictionary. This value is a tuple containing the yield strength and ultimate tensile strength values.
 
@@ -1696,6 +1696,14 @@ calc_gross_yield(Ag, mat.Fy),
         edge_trans=bp.edge_trans, hole_dia=hole_dia,
     )
     from path_thumbnails import render_net_paths, render_block_patterns
+
+    _show_results(
+        calcs,
+        Tf,
+        "Single Angle",
+        show_steps=True,
+    )
+    
     render_net_paths(paths, geom, U=U, Fu=mat.Fu,
                      gov_desc=gov_path["description"])
     render_block_patterns(bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
@@ -1724,7 +1732,7 @@ calc_gross_yield(Ag, mat.Fy),
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Single Angle", show_steps=True)
+    _show_results(calcs, Tf, "Single Angle", show_steps=False)
     
 
     #Single Angle Diagram
@@ -1882,6 +1890,8 @@ def panel_double_angle(render_material) -> None:
     el = resolve_connected_element("Single Angle", "leg",
                                        {"leg_conn": w_conn, "t": t})
     bs_pats = detect_block_shear_paths(bp, el, d_eff)
+
+    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
 
     geom = dict(
         w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,

@@ -1425,13 +1425,14 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
     for c in calcs:
         title = c.name.split("(")[0].strip()
         gov_tag = "  <-- GOVERNS" if c.name == gov else ""
+        has_diagram = bool(diagrams and any(k.lower() in c.name.lower() for k in diagrams))
         with st.expander(f"{title} — Tr = {c.value:,.1f} kN{gov_tag}", expanded=True):
-            if show_steps:
+            if show_steps and not has_diagram:
                 st.markdown("\n".join(c.steps))
-                if c.table is not None:
-                    st.dataframe(c.table, use_container_width=True)
-                if c.note:
-                    st.info(c.note)
+            if c.table is not None:
+                st.dataframe(c.table, use_container_width=True)
+            if c.note:
+                st.info(c.note)
             st.metric(
                 title,
                 f"{c.value:,.1f} kN",

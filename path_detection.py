@@ -166,7 +166,6 @@ def detect_net_section_paths(
     for ln in line_numbers:
         by_line[ln].sort(key=lambda p: p.y)
 
-    # Each line contributes either no hole (None) or exactly one hole.
     choices = [[None] + by_line[ln] for ln in line_numbers]
     detected: Dict[Tuple, Dict] = {}
 
@@ -176,7 +175,6 @@ def detect_net_section_paths(
             continue
         selected.sort(key=lambda p: p.x)
 
-        # Reject candidates that skip a hole the tear would physically cross.
         sel_lines = set(p.line for p in selected)
         y_lo = min(p.y for p in selected)
         y_hi = max(p.y for p in selected)
@@ -193,11 +191,10 @@ def detect_net_section_paths(
         if not skipped_ok:
             continue
 
-
         segments = []
         stagger_len = 0.0
         ok = True
-        
+
         for a, b in zip(selected, selected[1:]):
             g = b.x - a.x
             s = abs(b.y - a.y)
@@ -214,35 +211,24 @@ def detect_net_section_paths(
         n_holes = len(selected)
         hole_ded = connected_parts * n_holes * d_eff * t
         stag_area = connected_parts * stagger_len * t
-        
+
         An_raw = Ag - hole_ded + stag_area
         was_clamped = An_raw > Ag
         An = min(An_raw, Ag)
 
         if An <= 0:
             continue
-#was_clamped = An_raw > Ag  # Check if the calculated An exceeds Ag
 
-    path_key = tuple(
-    (p.line, p.x, p.y)
-    for p in selected)
-
-    detected[key] = {
-        "An_raw_mm2": An_raw,
-        "An_mm2": An,
-        "governed_by_Ag": was_clamped,
-    }
-    
-
-    line_sig = tuple(p.line for p in selected)
-    stag_sig = tuple(round(abs(b.y - a.y), 6)
+        line_sig = tuple(p.line for p in selected)
+        stag_sig = tuple(round(abs(b.y - a.y), 6)
                          for a, b in zip(selected, selected[1:]))
-    signature = (line_sig, stag_sig)
+        signature = (line_sig, stag_sig)
 
-    path_type = "Straight" if stagger_len == 0 else "Zig-zag"
-    route = " - ".join("L%d/R%d" % (p.line + 1, p.row + 1) for p in selected)
+        path_type = "Straight" if stagger_len == 0 else "Zig-zag"
+        route = " - ".join("L%d/R%d" % (p.line + 1, p.row + 1)
+                           for p in selected)
 
-    cand = {
+        cand = {
             "area_basis": "gross_section",
             "description": "%s: %s" % (path_type, route),
             "selected": [(p.line, p.row) for p in selected],
@@ -254,14 +240,17 @@ def detect_net_section_paths(
             "hole_deduction_mm2": hole_ded,
             "connected_parts": connected_parts,
             "Ag_mm2": Ag,
+            "An_raw_mm2": An_raw,
             "An_mm2": An,
+            "governed_by_Ag": was_clamped,
             "d_eff_mm": d_eff,
             "t_mm": t,
             "pitch_mm": pitch_mm,
             "gauge_mm": gauge_mm,
         }
-    cur = detected.get(signature)
-    if cur is None or An < cur["An_mm2"]:
+
+        cur = detected.get(signature)
+        if cur is None or An < cur["An_mm2"]:
             detected[signature] = cand
 
     out = sorted(detected.values(), key=lambda c: c["An_mm2"])

@@ -1,0 +1,320 @@
+Here’s a consolidated prompt you can hand directly to the Replit Agent. I’ve organized it by priority so it can implement the changes systematically.
+
+⸻
+
+Infraspective UI/UX & Beta Release Refinement
+
+Objective
+
+Refine the application’s UI/UX to achieve a polished, professional engineering aesthetic suitable for a commercial beta release. The objective is not to redesign the application, but to improve consistency, visual hierarchy, usability, and legal compliance while preserving the existing engineering workflow.
+
+⸻
+
+1. Landing / User Agreement Screen
+
+Logo Integration
+
+The logo itself looks correct.
+
+However, the presentation does not.
+
+Current issue:
+
+* The logo appears as if it was simply placed inside a white rectangle.
+* It does not visually blend into the application.
+
+Update the logo container so that it integrates naturally into whatever background is being used.
+
+Possible improvements include:
+
+* subtle glass effect
+* translucent panel
+* frosted appearance
+* soft gradients
+* reduced hard borders
+* softer shadows
+* background blending
+
+The logo should feel like it belongs to the application rather than sitting on top of it.
+
+Do not modify the logo artwork.
+
+Only redesign how it is displayed.
+
+⸻
+
+2. User Agreement
+
+Keep the agreement concise, professional and legally clear.
+
+⸻
+
+Beta Software
+
+State that:
+
+* This application is Beta software.
+* It may contain bugs.
+* It may contain errors.
+* Features may be incomplete.
+* Calculations may contain inaccuracies.
+
+⸻
+
+Professional Verification
+
+Replace Alberta-specific wording.
+
+Do not reference:
+
+* APEGA
+* PEO
+* EGBC
+* Engineers and Geoscientists Alberta
+* Engineering and Geoscience Professions Act
+
+Instead state generally:
+
+This software is a calculation aid only.
+
+It does not replace professional engineering judgement.
+
+All outputs must be independently verified by a licensed Professional Engineer in Canada before being relied upon for project use.
+
+Stress clearly:
+
+* manual verification is mandatory
+* user assumes responsibility for verification
+* outputs are not to be relied upon directly
+
+⸻
+
+Data Usage
+
+Do not say users are required to provide technical feedback.
+
+Instead state that by using the application the user grants permission for Infraspective to collect anonymous application usage information, interaction patterns and technical input parameters for:
+
+* improving calculations
+* improving software performance
+* fixing bugs
+* improving usability
+
+No requirement to submit written feedback.
+
+⸻
+
+Limitation of Liability
+
+Keep this section.
+
+Emphasize:
+
+* Beta software
+* bugs
+* incomplete functionality
+* user assumes risk
+* independent verification required
+
+⸻
+
+Indemnity
+
+Current wording is acceptable.
+
+⸻
+
+Governing Law
+
+Do not hardcode Alberta.
+
+Instead use wording similar to:
+
+This Agreement shall be governed by the applicable laws of Canada together with the applicable laws of the jurisdiction in which the User resides or uses the software where legally required.
+
+Avoid making the agreement Alberta-only.
+
+⸻
+
+Severability
+
+Current wording is acceptable.
+
+⸻
+
+Verification Acknowledgement
+
+Keep.
+
+⸻
+
+3. Session Timeout
+
+Implement automatic timeout.
+
+Requirements:
+
+If the application is inactive for 10 minutes:
+
+* terminate the session
+* clear temporary calculation state
+* return the user to the User Agreement page
+* require agreement again before entering
+
+This is an inactivity timeout only.
+
+⸻
+
+4. Navigation Drawer
+
+The current sidebar is functional but visually weak.
+
+Improve the overall design.
+
+Goals:
+
+* cleaner spacing
+* improved typography
+* better visual hierarchy
+* smoother hover/selection states
+* modern professional appearance
+* feels like engineering software rather than a Streamlit demo
+
+Do not completely redesign the navigation.
+
+Improve aesthetics while preserving functionality.
+
+⸻
+
+5. Default Calculator
+
+Default page after entering the application should be:
+
+Tension Member Design
+
+Do not display:
+
+CSA S16 • Structural Suite
+
+beneath the logo.
+
+Instead place:
+
+CSA S16
+
+as a subtle subtitle underneath the page title:
+
+Tension Member Design
+CSA S16
+
+This provides better hierarchy.
+
+⸻
+
+6. Remove Streamlit Warning
+
+Remove the Streamlit message:
+
+Widget with key ...
+created with a default value...
+
+This warning should never appear in production.
+
+Correct the session_state implementation causing the warning.
+
+⸻
+
+7. Calculation Order
+
+For Block Shear calculations:
+
+Current order is incorrect.
+
+Required order:
+
+Detailed calculation steps
+
+↓
+
+Calculation results
+
+↓
+
+Summary tables
+
+↓
+
+Connection diagram
+
+Move the Block Shear table and result summary below the calculation derivation.
+
+⸻
+
+8. Block Shear Connection Diagram
+
+Current block shear connection diagram is incomplete.
+
+Complete the visualization.
+
+The diagram should clearly show:
+
+* failure path
+* shear planes
+* tension plane
+* dimensions used in calculations
+* bolt locations
+* labels matching the equations
+
+The diagram should directly correspond to the displayed calculation.
+
+⸻
+
+9. Reference Tables
+
+At the bottom of the application include references used by the software.
+
+State clearly that calculations reference:
+
+CSA S16
+
+and that structural section properties are obtained from:
+
+CISC Structural Steel Tables (SST-12)
+
+Where appropriate also mention:
+
+* CISC Handbook of Steel Construction, 11th Edition
+
+Clarify that:
+
+* CSA S16 governs calculations.
+* CISC SST-12 provides section properties.
+
+⸻
+
+10. Overall UI Polish
+
+Apply a final polish across the application.
+
+Focus on:
+
+* cleaner spacing
+* consistent corner radii
+* softer shadows
+* improved typography
+* consistent margins
+* improved alignment
+* consistent button styling
+* smoother visual hierarchy
+
+The application should feel like a professional commercial engineering product rather than a prototype.
+
+Do not change the engineering workflow or calculations.
+
+Focus only on presentation, usability and professionalism.
+
+⸻
+
+Final Goal
+
+The completed application should look and feel like polished engineering software suitable for a public beta release while maintaining the existing calculation engine and engineering logic unchanged.

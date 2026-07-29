@@ -1507,13 +1507,21 @@ def render_material():
     else:
         Fy_def, Fu_def = 350.0, 450.0
 
+    # Seed session state once, then let the key drive the widgets.
+    # (Passing value= together with a key that callbacks also write causes the
+    # Streamlit "widget created with a default value" warning.)
+    if "tm_Fy" not in st.session_state:
+        st.session_state["tm_Fy"] = Fy_def
+    if "tm_Fu" not in st.session_state:
+        st.session_state["tm_Fu"] = Fu_def
+
     mc1, mc2, mc3 = st.columns(3)
     with mc1:
         Fy = st.number_input("Fy (MPa)", min_value=100.0, max_value=800.0,
-                                    value=Fy_def, step=10.0, key="tm_Fy")
+                                    step=10.0, key="tm_Fy")
     with mc2:
         Fu = st.number_input("Fu (MPa)", min_value=200.0, max_value=900.0,
-                                    value=Fu_def, step=10.0, key="tm_Fu")
+                                    step=10.0, key="tm_Fu")
     with mc3:
         Tf = st.number_input("Factored demand Tf (kN)", min_value=0.0,
 
@@ -2359,11 +2367,19 @@ def main() -> None:
     apply_theme()
     render_sidebar_logo()
     render_footer()
-    if not st.session_state.get("accepted_disclaimer", False):
-        st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
-        st.stop()
+    gate_disclaimer()
+    try:
+        from activity import log_page_view
+        log_page_view("Tension Members")
+    except Exception:
+        pass
 
-    st.title("CSA S16 — Tension Member Design")
+    st.title("Tension Member Design")
+    st.markdown(
+        '<div style="font-size:0.9rem;font-weight:600;color:#64748B;'
+        'letter-spacing:0.08em;margin:-0.6rem 0 0.8rem;">CSA S16</div>',
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Gross yielding (Cl. 13.2a-i)  |  Net fracture with shear lag (Cl. 12.3.3)  |  "
         "Block shear (Cl. 13.11)  |  Slenderness (Cl. 10.4.2)  |  All dimensions mm, forces kN"
@@ -2372,6 +2388,15 @@ def main() -> None:
 
     st.subheader("1. Section Type")
     sec_type = st.selectbox("Member cross-section type", SECTION_TYPES)
+
+    try:
+        from activity import log_event
+        _k = f"_act_calc_{sec_type}"
+        if not st.session_state.get(_k):
+            st.session_state[_k] = True
+            log_event("calc_opened", calculator="tension", section_type=sec_type)
+    except Exception:
+        pass
 
     if sec_type == "Plate":
         panel_plate(render_material)
@@ -2436,9 +2461,14 @@ def main() -> None:
                 st.warning(f"Could not load dataset: {e}")
 
     st.divider()
+    st.subheader("References")
+    st.markdown(
+        "- **CSA S16** — governs all calculations "
+        "(Cl. 10.4, 12.2, 12.3, 13.2, 13.11)\n"
+        "- **CISC SST-12** — source of all section properties\n"
+        "- **CISC Handbook of Steel Construction, 11th Edition**\n"
+    )
     st.caption(
-        "Reference: CSA S16-14 Cl. 10.4, 12.2, 12.3, 13.2, 13.11  |  "
-        "CISC Handbook of Steel Construction, 11th Ed. "
         "Always verify minimum edge distances and pitch meet CSA S16 detailing requirements."
     )
 

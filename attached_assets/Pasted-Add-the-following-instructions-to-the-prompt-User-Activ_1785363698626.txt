@@ -1,0 +1,101 @@
+Add the following instructions to the prompt:
+
+User Activity Monitoring
+
+Set up a basic activity monitoring system for the Beta release.
+
+For now, the application will remain open access and users will not be required to create an account or log in.
+
+The system should still record anonymous usage information such as:
+
+* session start and end time
+* session duration
+* calculator opened
+* pages or sections visited
+* calculations initiated
+* calculation success or failure
+* errors encountered
+* device type or screen size where available
+* general interaction activity within the application
+
+Do not collect unnecessary personal information.
+
+Structure the monitoring system so that user accounts and authenticated activity tracking can be added later without rebuilding the application architecture.
+
+The future version will require users to log in, but login functionality is not required for the current Beta release.
+
+Sidebar Logo
+
+The logo placement inside the sidebar currently looks disconnected and visually awkward.
+
+Redesign the logo container so that the logo blends naturally into the sidebar background.
+
+Requirements:
+
+* no obvious white image rectangle
+* no harsh border around the logo
+* no appearance that the logo was pasted onto the sidebar
+* use transparency, background matching, subtle blending or another suitable treatment
+* preserve the logo artwork itself
+* keep the logo clear and readable
+
+The sidebar logo should feel like an integrated part of the navigation panel.
+
+Sidebar Subtitle
+
+Directly below the logo, display only:
+
+STRUCTURAL SUITE
+
+Remove:
+
+CSA S16
+
+Do not display “CSA S16 · Structural Suite.”
+
+The platform may later include calculators governed by other standards, so the sidebar branding must remain general.
+
+Sidebar Calculator Order
+
+Display the calculators in this exact order:
+
+1. Tension Members
+2. Beam Flexure
+3. Compression
+4. Beam-Column Members
+5. Bolted Connections
+6. Welded Connections
+
+Tension Members must appear at the top and must be the default selected calculator when the application opens.
+
+Beta Access Restrictions
+
+For the deployed Beta release, only the Tension Members calculator is currently available.
+
+The following calculators must remain visible in the sidebar but temporarily locked:
+
+* Beam Flexure
+* Compression
+* Beam-Column Members
+* Bolted Connections
+* Welded Connections
+
+Locked calculators should:
+
+* appear visually disabled
+* display a small lock indicator
+* not open when selected
+* show a brief message such as Coming soon or Temporarily unavailable in Beta
+* not expose unfinished calculator pages or functionality
+
+Do not remove these calculators from the sidebar. Keeping them visible shows the planned scope of the Structural Suite.
+
+Default Page
+
+After the user accepts the User Access Agreement, automatically open:
+
+Tension Member Design
+
+The user should not have to select it manually.
+
+Do not alter the existing Tension Member calculation logic.

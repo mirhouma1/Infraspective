@@ -321,9 +321,9 @@ def svg_detailing(D: float, D_min: float, D_max: float,
 apply_theme()
 render_sidebar_logo()
 render_footer()
-if not st.session_state.get("accepted_disclaimer", False):
-    st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
-    st.stop()
+gate_disclaimer()
+from _theme import beta_lock_page
+beta_lock_page("Welded Connections")
 
 st.title("CSA S16 — Welded Connection Solver")
 st.caption(

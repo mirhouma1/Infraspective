@@ -31,24 +31,24 @@ PHI_B = 0.9
 PHI_V_DEFAULT = 0.9
 
 APP_TITLE = "CSA S16 - Beam Flexure Calculator"
-DISCLAIMER_VERSION = "2026-01-01_v2"
+DISCLAIMER_VERSION = "2026-07-29_v3"
 
 DISCLAIMER_MD = """
 # INFRASPECTIVE – USER ACCESS AGREEMENT
 
 ---
 
-**1. BETA EVALUATION & OPTIMIZATION**
+**1. BETA SOFTWARE NOTICE**
 
-Infraspective provides this application for testing and optimization purposes. By using the App, you agree to provide technical feedback and usage data to assist in the refinement of the calculation engine.
+Infraspective provides this application for evaluation and optimization purposes. The App is Beta software: features may be incomplete, may change without notice, and may contain errors, including incorrect calculations. By using the App, you acknowledge these limitations and agree that anonymous usage data may be collected to assist in the refinement of the calculation engine.
 
 ---
 
 **2. PROFESSIONAL VERIFICATION**
 
-This tool is a calculation aid and does not replace professional engineering judgment. Under the Engineering and Geoscience Professions Act (Alberta), the User is responsible for the independent verification of all outputs.
+This tool is a calculation aid and does not replace professional engineering judgment. The User is responsible for the independent verification of all outputs in accordance with the laws and professional-practice requirements of their jurisdiction.
 
-All results must be validated by a licensed Professional Engineer (P.Eng) prior to any project application.
+All results must be validated by a licensed Professional Engineer in Canada prior to any project application.
 
 The User agrees not to rely on any App output for any project purpose unless and until that output has been independently verified.
 
@@ -58,9 +58,9 @@ Use of this App does not create an engineer-client relationship between the User
 
 ---
 
-**3. DATA USAGE**
+**3. DATA USAGE & CONSENT**
 
-In exchange for access to the Beta platform, Infraspective collects technical input parameters and interaction patterns. This data is used exclusively to optimize the software's logic and performance. Personal information is managed in accordance with the Alberta Personal Information Protection Act (PIPA).
+By using the App, you consent to the collection of anonymous usage data, including technical input parameters, feature usage, session activity, and error reports. No personal information is collected. This data is used exclusively to optimize the software's logic, reliability, and performance during the Beta period. Providing feedback is welcome but not required.
 
 ---
 
@@ -88,7 +88,7 @@ The User agrees to indemnify, defend, and hold harmless Infraspective from any a
 
 **6. GOVERNING LAW & JURISDICTION**
 
-This agreement is governed by the laws of the Province of Alberta and the federal laws of Canada applicable therein. Any dispute shall be resolved exclusively in the courts of Calgary, Alberta.
+This agreement is governed by the federal laws of Canada and the laws of the Canadian province or territory in which the User resides or practises. Any dispute shall be resolved exclusively in the courts of that jurisdiction.
 
 ---
 
@@ -152,9 +152,9 @@ def require_disclaimer_acceptance() -> None:
         st.session_state["accepted_disclaimer"] = False
         st.session_state["disclaimer_version"] = DISCLAIMER_VERSION
 
-    if not st.session_state.get("accepted_disclaimer", False):
-        disclaimer_page()
-        st.stop()
+    # gate_disclaimer also enforces the 10-minute inactivity timeout
+    from _theme import gate_disclaimer
+    gate_disclaimer()
 
 
 # ============================================================
@@ -1103,6 +1103,10 @@ require_disclaimer_acceptance()
 apply_theme()
 render_sidebar_logo()
 render_footer()
+
+# Beta: Beam Flexure is locked — only Tension Members is available.
+from _theme import beta_lock_page
+beta_lock_page("Beam Flexure")
 
 st.title(APP_TITLE)
 

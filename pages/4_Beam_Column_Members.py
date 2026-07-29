@@ -391,9 +391,9 @@ def Ce_euler(E_MPa: float, I_mm4: float, L_mm: float) -> float:
 apply_theme()
 render_sidebar_logo()
 render_footer()
-if not st.session_state.get("accepted_disclaimer", False):
-    st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
-    st.stop()
+gate_disclaimer()
+from _theme import beta_lock_page
+beta_lock_page("Beam-Column Members")
 st.title(APP_TITLE)
 st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads in kN / kN·m, geometry in mm")
 

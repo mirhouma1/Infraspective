@@ -1110,9 +1110,9 @@ def render_report(
 apply_theme()
 render_sidebar_logo()
 render_footer()
-if not st.session_state.get("accepted_disclaimer", False):
-    st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
-    st.stop()
+gate_disclaimer()
+from _theme import beta_lock_page
+beta_lock_page("Compression")
 st.title("CSA S16 — Compression Member Design Check")
 st.markdown("*Structural steel column capacity per CSA S16:19 — Clauses 11, 13.3.1, 13.3.2, 13.3.3*")
 

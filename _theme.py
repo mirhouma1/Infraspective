@@ -15,13 +15,22 @@ _LOGO_PATH = Path(__file__).parent / "static" / "logo_mark.png"
 def _logo_b64() -> str:
     for p in (
         Path(__file__).parent / "static" / "logo_mark.png",
-        Path(__file__).parent / "static" / "logo_mark.png",
         Path(__file__).parent / "static" / "logo.png",
         Path(__file__).parent / "static" / "logo.jpg",
     ):
         if p.exists():
             with open(p, "rb") as f:
                 return base64.b64encode(f.read()).decode()
+    return ""
+
+
+def _wordmark_src() -> str:
+    """New brand wordmark (JPEG) as a data-URI; blended into the UI via CSS
+    (mix-blend-mode) so its light background disappears — no white box."""
+    p = Path(__file__).parent / "static" / "logo_wordmark.jpg"
+    if p.exists():
+        with open(p, "rb") as f:
+            return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
     return ""
 
 
@@ -44,6 +53,7 @@ GREY_MID    = "#64748B"
 _CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
 
 /* ═══ GLOBAL TYPE + BASE ═════════════════════════════════════════════════ */
 html, body, [class*="css"], .stApp,
@@ -92,33 +102,35 @@ button, input, select, textarea, .stMarkdown {
     margin: 0 !important;
 }
 
-/* ── Single brand mark — full-colour metallic logo on a light nameplate ── */
+/* ── Brand wordmark — original artwork, edges feathered into the sidebar ──
+   The logo keeps its true colours; a soft radial mask fades its edges out
+   so it melts into the blue gradient with no hard rectangle. */
 .ins-logo {
     text-align: center;
-    padding: 14px 12px 4px;
-    margin: 6px 4px 2px;
-}
-.ins-logo .ins-plate {
-    display: block;
-    background: linear-gradient(180deg,#FFFFFF 0%,#EDF2FB 100%);
-    border: 1px solid rgba(219,234,254,0.85);
-    border-radius: 16px;
-    padding: 16px 18px;
-    box-shadow: 0 12px 30px rgba(6,12,34,0.40),
-                inset 0 1px 0 rgba(255,255,255,0.95);
-    transition: transform .25s ease, box-shadow .25s ease;
-}
-.ins-logo .ins-plate:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 16px 38px rgba(6,12,34,0.48),
-                inset 0 1px 0 rgba(255,255,255,0.95);
+    padding: 14px 10px 0;
+    margin: 4px 4px 0;
 }
 .ins-logo img {
     width: 100%;
-    max-width: 220px;
+    max-width: 235px;
     height: auto;
     display: block;
     margin: 0 auto;
+    border-radius: 18px;
+    border: 1px solid rgba(147,197,253,0.35);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.06),
+                0 10px 26px rgba(6,12,34,0.55),
+                0 0 22px rgba(37,99,235,0.35),
+                inset 0 1px 0 rgba(255,255,255,0.4);
+    transition: transform .22s ease, box-shadow .22s ease;
+    cursor: pointer;
+}
+.ins-logo img:hover {
+    transform: translateY(-2px) scale(1.015);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.10),
+                0 14px 32px rgba(6,12,34,0.6),
+                0 0 34px rgba(96,165,250,0.55),
+                inset 0 1px 0 rgba(255,255,255,0.5);
 }
 .ins-tagline {
     text-align: center;
@@ -189,6 +201,39 @@ button, input, select, textarea, .stMarkdown {
     color: #FFFFFF !important;
 }
 [data-testid="stSidebar"] svg { fill: #93C5FD !important; }
+
+/* ── Locked (coming-soon) calculators ── */
+.ins-nav-locked {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 0.62rem 0.85rem;
+    margin: 3px 4px;
+    border-radius: 11px;
+    color: #5B6B85 !important;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: not-allowed;
+    border: 1px dashed rgba(91,107,133,0.35);
+    background: rgba(15,23,42,0.25);
+}
+.ins-nav-locked .lock-ic {
+    font-family: 'Material Symbols Outlined';
+    font-size: 1.05rem;
+    color: #5B6B85 !important;
+}
+.ins-nav-locked .lk-label { flex: 1; color: #5B6B85 !important; }
+.ins-nav-locked .lk-soon {
+    font-size: 0.55rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #7FA9F0 !important;
+    background: rgba(37,99,235,0.18);
+    border: 1px solid rgba(37,99,235,0.35);
+    padding: 2px 7px;
+    border-radius: 10px;
+}
 
 /* ═══ TOP HEADER BAR — clean & minimal ══════════════════════════════════ */
 [data-testid="stHeader"] {
@@ -471,15 +516,23 @@ input:focus,
     text-align: center;
     padding: 1.6rem 1rem 1rem;
 }
-.dis-logo-block .dis-plate {
-    display: inline-block;
-    background: linear-gradient(180deg,#FFFFFF 0%,#EFF3FA 100%);
-    border: 1px solid #DBEAFE;
-    border-radius: 18px;
-    padding: 1.4rem 2rem;
-    box-shadow: 0 14px 40px rgba(15,23,42,0.12);
+/* Wordmark dissolved into the light page — multiply melts the logo's own
+   light plate into the background so only the lettering appears, with a
+   soft feathered edge. Smooth, printed-on look; no card, no box. */
+.dis-logo-block img {
+    max-width: 400px;
+    width: 76vw;
+    margin: 0 auto;
+    display: block;
+    mix-blend-mode: multiply;
+    -webkit-mask-image: radial-gradient(ellipse 92% 88% at 50% 50%,
+        #000 60%, rgba(0,0,0,0.5) 80%, transparent 99%);
+    mask-image: radial-gradient(ellipse 92% 88% at 50% 50%,
+        #000 60%, rgba(0,0,0,0.5) 80%, transparent 99%);
+    filter: contrast(1.05) drop-shadow(0 12px 28px rgba(37,99,235,0.10));
+    transition: transform .25s ease;
 }
-.dis-logo-block img { max-width: 340px; width: 70vw; margin: 0 auto; display: block; }
+.dis-logo-block img:hover { transform: translateY(-2px); }
 .dis-beta {
     display: inline-block;
     background: linear-gradient(135deg,#1E40AF,#2563EB);
@@ -538,7 +591,7 @@ input:focus,
         line-height: 1.3;
     }
     .dis-box { padding: 1.1rem 1.1rem; font-size: 0.83rem; }
-    .dis-logo-block .dis-plate { padding: 1rem 1.2rem; }
+    .dis-logo-block img { max-width: 300px; }
     /* keep the mobile toggle prominent */
     [data-testid="collapsedControl"],
     [data-testid="stSidebarCollapsedControl"] {
@@ -557,34 +610,47 @@ def apply_theme() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-# Sidebar navigation — single source of truth (label + material icon).
+# Sidebar navigation — single source of truth.
+# (path, label, material icon, unlocked?)  Only Tension Members is live in Beta.
 _NAV = [
-    ("app.py",                         "Beam Flexure",         ":material/architecture:"),
-    ("pages/1_Tension_Members.py",     "Tension Members",      ":material/open_in_full:"),
-    ("pages/2_Compression.py",         "Compression",          ":material/compress:"),
-    ("pages/4_Beam_Column_Members.py", "Beam-Column Members",  ":material/view_column:"),
-    ("pages/5_Bolted_Connections.py",  "Bolted Connections",   ":material/build:"),
-    ("pages/6_Welded_Connections.py",  "Welded Connections",   ":material/local_fire_department:"),
+    ("pages/1_Tension_Members.py",     "Tension Members",      ":material/open_in_full:",           True),
+    ("app.py",                         "Beam Flexure",         ":material/architecture:",           False),
+    ("pages/2_Compression.py",         "Compression",          ":material/compress:",               False),
+    ("pages/4_Beam_Column_Members.py", "Beam-Column Members",  ":material/view_column:",            False),
+    ("pages/5_Bolted_Connections.py",  "Bolted Connections",   ":material/build:",                  False),
+    ("pages/6_Welded_Connections.py",  "Welded Connections",   ":material/local_fire_department:",  False),
 ]
 
 
 def render_sidebar_logo() -> None:
-    """Display the single brand logo + icon navigation at the top of the sidebar."""
-    b64 = _logo_b64()
-    if b64:
+    """Brand wordmark (blended, no plate) + navigation. Locked calculators are
+    shown greyed-out with a lock icon so users see what's coming."""
+    src = _wordmark_src()
+    if not src:
+        b64 = _logo_b64()
+        src = f"data:image/png;base64,{b64}" if b64 else ""
+    if src:
         st.sidebar.markdown(
             f'<div class="ins-logo">'
-            f'<span class="ins-plate">'
-            f'<img src="data:image/png;base64,{b64}" alt="Infraspective Solutions"/>'
-            f'</span>'
+            f'<img src="{src}" alt="Infraspective Solutions"/>'
             f'</div>'
-            f'<div class="ins-tagline">CSA S16 · Structural Suite</div>'
+            f'<div class="ins-tagline">Structural Suite</div>'
             f'<div class="ins-sidebar-divider"></div>',
             unsafe_allow_html=True,
         )
     st.sidebar.markdown('<p class="ins-nav-label">Calculators</p>', unsafe_allow_html=True)
-    for path, label, icon in _NAV:
-        st.sidebar.page_link(path, label=label, icon=icon)
+    for path, label, icon, unlocked in _NAV:
+        if unlocked:
+            st.sidebar.page_link(path, label=label, icon=icon)
+        else:
+            st.sidebar.markdown(
+                f'<div class="ins-nav-locked" title="Coming soon">'
+                f'<span class="material-symbols-outlined lock-ic">lock</span>'
+                f'<span class="lk-label">{label}</span>'
+                f'<span class="lk-soon">Soon</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
 
 def render_footer() -> None:
@@ -645,12 +711,25 @@ def disclaimer_page() -> None:
 
     apply_theme()
 
-    b64 = _logo_b64()
+    # The agreement stands alone: hide the sidebar (and its expand control)
+    # until the user has accepted.
+    st.markdown(
+        """<style>
+        [data-testid="stSidebar"] { display: none !important; }
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stExpandSidebarButton"] { display: none !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+    src = _wordmark_src()
+    if not src:
+        b64 = _logo_b64()
+        src = f"data:image/png;base64,{b64}" if b64 else ""
     logo_img = (
-        f'<div class="dis-plate">'
-        f'<img src="data:image/png;base64,{b64}" alt="Infraspective Solutions"/>'
-        f'</div>'
-        if b64 else
+        f'<img src="{src}" alt="Infraspective Solutions"/>'
+        if src else
         '<div style="font-size:1.8rem;font-weight:900;color:#0F172A;letter-spacing:0.06em">'
         'INFRASPECTIVE<br><span style="color:#2563EB">SOLUTIONS</span></div>'
     )
@@ -692,7 +771,16 @@ def disclaimer_page() -> None:
                      disabled=not accept, use_container_width=True,
                      key="_dis_enter"):
             st.session_state["accepted_disclaimer"] = True
-            st.rerun()
+            try:
+                from activity import log_event
+                log_event("agreement_accepted")
+            except Exception:
+                pass
+            # Beta: Tension Members is the only unlocked calculator — open it.
+            try:
+                st.switch_page("pages/1_Tension_Members.py")
+            except Exception:
+                st.rerun()
     if not accept:
         st.caption("You must read and accept the agreement to continue.")
 
@@ -735,12 +823,63 @@ def disclaimer_page() -> None:
     )
 
 
+INACTIVITY_TIMEOUT_S = 10 * 60  # 10 minutes
+
+
+def _enforce_inactivity_timeout() -> None:
+    """If more than INACTIVITY_TIMEOUT_S has passed since the last interaction,
+    clear all session state (inputs, results, acceptance) so the user is
+    returned to the agreement page."""
+    import time
+    now = time.time()
+    last = st.session_state.get("_last_activity_ts")
+    if (
+        st.session_state.get("accepted_disclaimer", False)
+        and last is not None
+        and (now - last) > INACTIVITY_TIMEOUT_S
+    ):
+        try:
+            from activity import log_event
+            log_event("session_timeout")
+        except Exception:
+            pass
+        st.session_state.clear()
+    st.session_state["_last_activity_ts"] = now
+
+
+def beta_lock_page(label: str) -> None:
+    """Coming-soon panel for calculators that are locked during Beta.
+    Call after gate_disclaimer(); halts the page."""
+    st.markdown(
+        f"""<div style="max-width:640px;margin:8vh auto 0;text-align:center;
+              background:linear-gradient(135deg,#FFFFFF 0%,#F1F5F9 100%);
+              border:1px solid #E2E8F0;border-radius:18px;
+              box-shadow:0 12px 32px rgba(15,23,42,0.10);padding:2.6rem 2rem;">
+          <div style="font-size:2rem;">🔒</div>
+          <div style="font-size:1.25rem;font-weight:800;color:#0F172A;margin-top:.4rem;">
+            {label}</div>
+          <div style="font-size:0.85rem;color:#475569;margin-top:.6rem;line-height:1.6;">
+            This calculator is <b>coming soon</b>. During the Beta, only
+            <b>Tension Members</b> is available.</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c2:
+        st.write("")
+        if st.button("Open Tension Members", type="primary",
+                     use_container_width=True, key="_lock_go_tension"):
+            st.switch_page("pages/1_Tension_Members.py")
+    st.stop()
+
+
 def gate_disclaimer() -> None:
     """
     Page-level disclaimer gate.  Call at the top of every page (after apply_theme).
-    If the user has not yet accepted the disclaimer, shows the full disclaimer UI
-    and halts the page with st.stop().
+    Enforces the 10-minute inactivity timeout, then shows the agreement page
+    if the user has not (or no longer) accepted it.
     """
+    _enforce_inactivity_timeout()
     if not st.session_state.get("accepted_disclaimer", False):
         disclaimer_page()
         st.stop()

@@ -460,9 +460,9 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
 apply_theme()
 render_sidebar_logo()
 render_footer()
-if not st.session_state.get("accepted_disclaimer", False):
-    st.error("Access restricted. Please open the Home page and accept the User Access Agreement before continuing.")
-    st.stop()
+gate_disclaimer()
+from _theme import beta_lock_page
+beta_lock_page("Bolted Connections")
 st.title("CSA S16 — Bolted Connection Solver")
 st.caption("Chapter 6 Part 1 · Failure modes: Vr, Br, Tr(bolt), Tr(gross), Tr(net), Vr(block shear), Vs · Prying integrated · 4 diagrams")
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 #
 # ASCII only. Straight quotes only.
 
+import math
 from typing import Dict, List, Tuple
 
 # ---- styles ---------------------------------------------------------------
@@ -131,7 +132,40 @@ def net_thumb(cand: Dict, geom: Dict, governs: bool = False) -> str:
         left = (ML, pts[0][1])
         right = (ML + geom["w_conn"] * sx, pts[-1][1])
         chain = [left] + pts + [right]
-        d = " ".join(f"{x:.1f},{y:.1f}" for x, y in chain)
+
+        # The tear must pass ONLY through the holes it actually cuts.
+        # Where a segment would graze a hole that is NOT on the path,
+        # detour the line around that hole so the difference is visible.
+        rr = max(2.0, min(7.0, geom["hole_dia"] / 2 * sx))
+        sel_set = set(sel)
+        others = [
+            _xy(geom, ML, MT, sx, sy, ln, rw)
+            for ln in range(int(geom["n_lines"]))
+            for rw in range(int(geom["bolts_per_line"]))
+            if (ln, rw) not in sel_set
+        ]
+        out_pts: List[Tuple[float, float]] = [chain[0]]
+        for (x1, y1), (x2, y2) in zip(chain, chain[1:]):
+            seg_len = math.hypot(x2 - x1, y2 - y1)
+            hits = []
+            if seg_len > 1e-6:
+                for hx, hy in others:
+                    # perpendicular distance from hole centre to segment
+                    u = ((hx - x1) * (x2 - x1) + (hy - y1) * (y2 - y1)) / seg_len ** 2
+                    if 0.05 < u < 0.95:
+                        px, py = x1 + u * (x2 - x1), y1 + u * (y2 - y1)
+                        if math.hypot(hx - px, hy - py) <= rr * 1.1:
+                            hits.append((u, hx, hy, px, py))
+            for u, hx, hy, px, py in sorted(hits):
+                # arc the tear over the uncut hole (offset above it)
+                nx, ny = -(y2 - y1) / seg_len, (x2 - x1) / seg_len
+                off = rr * 1.9
+                ux, uy = (x2 - x1) / seg_len, (y2 - y1) / seg_len
+                out_pts.append((px - ux * rr * 1.5, py - uy * rr * 1.5))
+                out_pts.append((px + nx * off, py + ny * off))
+                out_pts.append((px + ux * rr * 1.5, py + uy * rr * 1.5))
+            out_pts.append((x2, y2))
+        d = " ".join(f"{x:.1f},{y:.1f}" for x, y in out_pts)
         svg.append(f'<polyline points="{d}" {FRAC}/>')
 
     # case-relevant dimensions: gauge g between lines cut by the path,

@@ -1894,6 +1894,9 @@ def panel_double_angle(render_material) -> None:
         edge_trans=bp.edge_trans, hole_dia=hole_dia,
     )
     from path_thumbnails import render_net_paths, render_block_patterns
+
+    _show_results(calcs, Tf, "Double Angle", show_steps=True)
+
     render_net_paths(paths_one, geom, U=U, Fu=mat.Fu, area_mult=2.0,
                      gov_desc=gov_path["description"])
     render_block_patterns(bs_pats, geom, Fy=mat.Fy, Fu=mat.Fu, Ut=Ut,
@@ -1911,8 +1914,6 @@ def panel_double_angle(render_material) -> None:
                 st.error(f"L/r = {slend:.0f} > 300 — exceeds maximum slenderness")
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
-
-    _show_results(calcs, Tf, "Double Angle", show_steps=True)
 
     
     if HAS_SECTION_DIAGRAMS:

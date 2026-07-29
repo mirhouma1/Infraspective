@@ -601,32 +601,27 @@ def _block_card(p, geom, Fy, Fu, Ut, phi_u, area_mult, governs):
     )
 
 
-def _render_html_cards(html: str, fallback_height: int) -> None:
-    import streamlit as st
+def _render_card(card_html: str, height: int) -> None:
+    # components.html renders in an isolated iframe with NO sanitization,
+    # so the inline SVG diagrams always survive (st.html strips them on
+    # some clients). One frame per candidate card.
+    import streamlit.components.v1 as components
 
-    full_html = _CARD_CSS + f'<div class="tm-path-stack">{html}</div>'
-    # st.html renders in the main document and sizes itself automatically.
-    # Keep a components fallback for older Streamlit releases.
-    if hasattr(st, "html"):
-        st.html(full_html)
-    else:
-        import streamlit.components.v1 as components
-        components.html(full_html, height=fallback_height, scrolling=False)
+    full_html = _CARD_CSS + f'<div class="tm-path-stack">{card_html}</div>'
+    components.html(full_html, height=height, scrolling=True)
 
 
 def render_net_paths(paths, geom, *, U, Fu, phi_u=PHI_U, area_mult=1.0,
                      gov_desc=None):
-    cards = []
     for p in paths:
         governs = p.get("description") == gov_desc
-        cards.append(_net_card(p, geom, U, Fu, phi_u, area_mult, governs))
-    _render_html_cards("".join(cards), max(520, 610 * len(cards)))
+        card = _net_card(p, geom, U, Fu, phi_u, area_mult, governs)
+        _render_card(card, 780)
 
 
 def render_block_patterns(bs_pats, geom, *, Fy, Fu, Ut, phi_u=PHI_U,
                           area_mult=1.0, gov_key=None):
-    cards = []
     for p in bs_pats:
         governs = p.get("key") == gov_key
-        cards.append(_block_card(p, geom, Fy, Fu, Ut, phi_u, area_mult, governs))
-    _render_html_cards("".join(cards), max(520, 610 * len(cards)))
+        card = _block_card(p, geom, Fy, Fu, Ut, phi_u, area_mult, governs)
+        _render_card(card, 780)

@@ -1741,8 +1741,6 @@ calc_gross_yield(Ag, mat.Fy),
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    _show_results(calcs, Tf, "Single Angle", show_steps=False)
-    
 
     #Single Angle Diagram
 

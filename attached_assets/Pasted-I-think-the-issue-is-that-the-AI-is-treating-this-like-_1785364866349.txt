@@ -1,0 +1,184 @@
+I think the issue is that the AI is treating this like a collection of separate UI elements instead of a polished engineering application. It keeps “placing” things instead of integrating them into a design system.
+
+I’d give it something like this:
+
+⸻
+
+UI/UX Refinement Instructions (Read Carefully)
+
+This is not a request to simply reposition components. The goal is to make the application feel like a polished commercial engineering product rather than a collection of widgets.
+
+1. Plate Connection Diagram
+
+The Plate connection diagram is incomplete.
+
+Currently it only displays the elevation view of the connection.
+
+It must instead behave exactly like the other connection diagrams.
+
+Below the elevation view, display the actual plate drawing including:
+
+* Front view
+* Side view
+* End view (when applicable)
+
+Include all major dimensions such as:
+
+* Plate width
+* Plate length
+* Plate thickness
+* Edge distances
+* Bolt spacing
+* Bolt gauge
+* Hole diameter
+* Overall dimensions
+
+The bottom drawings should update dynamically as the user changes dimensions.
+
+The diagram should clearly communicate the geometry of the member, not just the bolt pattern.
+
+Every connection diagram in the software should follow the same visual standard.
+
+⸻
+
+2. Logo Integration
+
+Do not simply paste the logo image onto the page.
+
+The logo should feel like it belongs to the interface.
+
+The surrounding UI should be designed around the logo.
+
+Examples:
+
+* matching rounded container
+* subtle gradients
+* soft shadows
+* border glow
+* padding
+* background tint that matches the application theme
+
+The logo should appear as part of the interface—not like a PNG sitting on top of the page.
+
+This applies to:
+
+* Landing page
+* User Access Agreement
+* Header
+* Future home page
+
+The logo should visually blend into the design language.
+
+⸻
+
+3. Sidebar Logo
+
+The sidebar currently looks like the logo image was simply dropped onto a dark background.
+
+Redesign this section.
+
+The logo area should become a proper navigation header.
+
+Examples:
+
+* dedicated header section
+* matching background treatment
+* spacing above and below
+* subtle divider
+* glow matching the application colors
+* smooth transition into the sidebar
+
+It should feel like a premium software product.
+
+Do not simply display the raw logo image.
+
+⸻
+
+4. Remove Streamlit Debug Message
+
+This message should never appear to users:
+
+The widget with key “tm_Fy” was created with a default value…
+
+This is an internal Streamlit warning.
+
+Find the root cause.
+
+Fix the Session State logic so this warning never appears.
+
+Production users should never see framework warnings.
+
+⸻
+
+5. Overall Visual Polish
+
+Go through the entire application and remove anything that looks like a default Streamlit application.
+
+The goal is that a user should not immediately recognize this as a Streamlit app.
+
+Improve:
+
+* spacing
+* padding
+* typography
+* alignment
+* visual hierarchy
+* borders
+* shadows
+* hover animations
+* transitions
+* section separation
+* mobile responsiveness
+
+Everything should feel cohesive and intentionally designed.
+
+⸻
+
+6. Consistent Design System
+
+Every page should follow the same design language.
+
+Maintain consistency across:
+
+* logo treatment
+* cards
+* buttons
+* section headers
+* diagrams
+* colors
+* shadows
+* rounded corners
+* spacing
+* typography
+
+Nothing should look like it came from a different application.
+
+⸻
+
+7. Engineering Drawing Quality
+
+The engineering drawings should resemble professional structural engineering documentation.
+
+Use consistent:
+
+* line weights
+* dimension styles
+* arrows
+* labels
+* spacing
+* fonts
+* scaling
+
+The drawings should look suitable for an engineering report rather than simple illustrations.
+
+⸻
+
+8. Think Like a Product Designer
+
+Do not make the minimum change necessary.
+
+Evaluate each screen as if you were preparing this software for commercial release.
+
+Whenever something looks unfinished, disconnected, or visually inconsistent, redesign it so it feels intentional and premium.
+
+The objective is that users immediately feel they are using professional engineering software rather than a prototype.

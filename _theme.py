@@ -516,23 +516,34 @@ input:focus,
     text-align: center;
     padding: 1.6rem 1rem 1rem;
 }
-/* Wordmark dissolved into the light page — multiply melts the logo's own
-   light plate into the background so only the lettering appears, with a
-   soft feathered edge. Smooth, printed-on look; no card, no box. */
+/* Wordmark as a smooth button-card: the image sits inside a rounded,
+   softly bordered plate whose gradient matches the page background.
+   mix-blend-mode: multiply melts the logo's own white plate into the
+   card so the artwork looks printed onto the button, not pasted on. */
 .dis-logo-block img {
-    max-width: 400px;
-    width: 76vw;
+    max-width: 420px;
+    width: 78vw;
     margin: 0 auto;
     display: block;
+    box-sizing: border-box;
+    padding: 1.1rem 1.6rem;
+    border-radius: 22px;
+    background: linear-gradient(160deg,#FFFFFF 0%,#F3F7FE 55%,#E8F0FC 100%);
+    border: 1px solid #DBEAFE;
     mix-blend-mode: multiply;
-    -webkit-mask-image: radial-gradient(ellipse 92% 88% at 50% 50%,
-        #000 60%, rgba(0,0,0,0.5) 80%, transparent 99%);
-    mask-image: radial-gradient(ellipse 92% 88% at 50% 50%,
-        #000 60%, rgba(0,0,0,0.5) 80%, transparent 99%);
-    filter: contrast(1.05) drop-shadow(0 12px 28px rgba(37,99,235,0.10));
-    transition: transform .25s ease;
+    box-shadow:
+        0 10px 28px rgba(37,99,235,0.12),
+        0 2px 6px rgba(15,23,42,0.06),
+        inset 0 1px 0 rgba(255,255,255,0.9);
+    transition: transform .25s ease, box-shadow .25s ease;
 }
-.dis-logo-block img:hover { transform: translateY(-2px); }
+.dis-logo-block img:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 16px 36px rgba(37,99,235,0.18),
+        0 3px 8px rgba(15,23,42,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.9);
+}
 .dis-beta {
     display: inline-block;
     background: linear-gradient(135deg,#1E40AF,#2563EB);
@@ -643,9 +654,16 @@ def render_sidebar_logo() -> None:
         if unlocked:
             st.sidebar.page_link(path, label=label, icon=icon)
         else:
+            _lock_svg = (
+                '<svg class="lock-ic" width="15" height="15" viewBox="0 0 24 24" '
+                'fill="none" stroke="#5B6B85" stroke-width="2" stroke-linecap="round" '
+                'stroke-linejoin="round" style="flex:none;">'
+                '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>'
+                '<path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>'
+            )
             st.sidebar.markdown(
                 f'<div class="ins-nav-locked" title="Coming soon">'
-                f'<span class="material-symbols-outlined lock-ic">lock</span>'
+                f'{_lock_svg}'
                 f'<span class="lk-label">{label}</span>'
                 f'<span class="lk-soon">Soon</span>'
                 f'</div>',

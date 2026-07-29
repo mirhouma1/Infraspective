@@ -1366,17 +1366,34 @@ def calc_block_shear_paths(
 
 # ── UI helpers ────────────────────────────────────────────────────────────────
 def _bolt_hole_inputs(key_prefix: str) -> Tuple[str, float, float]:
+    ks_bs = f"{key_prefix}_bs"
+    ks_hd = f"{key_prefix}_hd"
+
+    def _sync_from_bolt():
+        # Bolt size changed -> set hole diameter to its standard hole size.
+        bs = st.session_state[ks_bs]
+        st.session_state[ks_hd] = float(STD_HOLE.get(bs, BOLT_DIA[bs] + 2.0))
+
+    def _sync_from_hole():
+        # Hole diameter changed -> if it matches a standard hole size,
+        # select the matching bolt in the dropdown.
+        hd = float(st.session_state[ks_hd])
+        for bs, dh in STD_HOLE.items():
+            if abs(dh - hd) < 1e-6:
+                st.session_state[ks_bs] = bs
+                break
+
     c1, c2, c3 = st.columns(3)
     with c1:
         bolt_size = st.selectbox("Bolt size", list(BOLT_DIA.keys()), index=1,
-                                    key=f"{key_prefix}_bs")
+                                    key=ks_bs, on_change=_sync_from_bolt)
     with c2:
-        d_hole_nom = STD_HOLE.get(bolt_size, BOLT_DIA[bolt_size] + 2.0)
+        if ks_hd not in st.session_state:
+            st.session_state[ks_hd] = float(
+                STD_HOLE.get(bolt_size, BOLT_DIA[bolt_size] + 2.0))
         hole_dia   = st.number_input("Hole diameter (mm)", min_value=0.0,
-                                        #st is the streamlit library[
-                                        value=float(d_hole_nom), step=1.0,
-        # value=float(d_hole_nom) sets the default value of the number input to the nominal hole diameter calculated earlier.                                   
-                                        key=f"{key_prefix}_hd")
+                                        step=0.5,
+                                        key=ks_hd, on_change=_sync_from_hole)
     with c3:
         allowance = st.number_input("Hole allowance (mm)", min_value=0.0,
                                     max_value=10.0, value=0.0, step=0.5,
@@ -1427,7 +1444,9 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
         gov_tag = "  <-- GOVERNS" if c.name == gov else ""
         has_diagram = bool(diagrams and any(k.lower() in c.name.lower() for k in diagrams))
         with st.expander(f"{title} — Tr = {c.value:,.1f} kN{gov_tag}", expanded=True):
-            if show_steps:
+            if show_steps and not has_diagram:
+                # Skip the text-only summary steps when detailed per-path
+                # cards (steps + result + diagram) are rendered below.
                 st.markdown("\n".join(c.steps))
             if c.table is not None:
                 st.dataframe(c.table, use_container_width=True)
@@ -2256,16 +2275,46 @@ def main() -> None:
     }
     if sec_type in DATASET_BY_TYPE:
         label, loader = DATASET_BY_TYPE[sec_type]
+
+        # Designation currently selected in the panel above.
+        sel_des = None
+        if sec_type == "Single Angle":
+            sel_des = st.session_state.get("sa_des")
+        elif sec_type == "WT Section":
+            sel_des = st.session_state.get("wt_des")
+        elif sec_type == "Channel (C / MC)":
+            sel_des = st.session_state.get("ch_des")
+        elif sec_type == "Double Angle":
+            for k, v in st.session_state.items():
+                if str(k).startswith("da_des_") and v:
+                    sel_des = v
+                    break
+
         st.divider()
         st.subheader("Raw Dataset (CISC SST12.1)")
-        with st.expander(f"{label} — raw dataset", expanded=False):
+        with st.expander(f"{label} — selected member data", expanded=False):
             try:
                 df_raw = loader()
                 if df_raw is None or df_raw.empty:
                     st.warning("Dataset not found.")
                 else:
-                    st.caption(f"{len(df_raw)} sections")
-                    st.dataframe(df_raw, use_container_width=True, height=400)
+                    row = None
+                    if sel_des is not None and "designation" in df_raw.columns:
+                        hit = df_raw[df_raw["designation"].astype(str)
+                                     == str(sel_des)]
+                        if not hit.empty:
+                            row = hit.iloc[0]
+                    if row is None:
+                        st.caption(f"{len(df_raw)} sections")
+                        st.dataframe(df_raw, use_container_width=True,
+                                     height=400)
+                    else:
+                        st.caption(f"Selected member: {sel_des}")
+                        tidy = row.reset_index()
+                        tidy.columns = ["Property", "Value"]
+                        tidy["Value"] = tidy["Value"].astype(str)
+                        st.dataframe(tidy, use_container_width=True,
+                                     hide_index=True, height=400)
             except Exception as e:
                 st.warning(f"Could not load dataset: {e}")
 

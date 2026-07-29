@@ -1,0 +1,54 @@
+Rearrange the CURRENT Net Section Fracture and Block Shear outputs only.
+
+Do not change calculations, formulas, detection logic, values, or governing-case selection.
+
+For EVERY dynamically detected Net Section Fracture path and EVERY dynamically detected Block Shear case, render:
+
+1. Complete detailed calculation steps
+2. Compact final result
+3. Small matching engineering diagram
+
+Then continue to the next detected case. Do not hard-code any number of paths or cases.
+
+The small diagram must not be a generic bolt-grid image. It must use the same geometry data used by that calculation and show:
+
+- the actual section shape, such as plate, single angle, double angle, channel, or WT
+- the connected leg, flange, web, or plate being checked
+- the bolt-hole arrangement
+- the exact net-fracture or block-shear failure path
+- governing status
+- dimensions relevant to that calculation
+
+For Net Section Fracture, show applicable dimensions such as:
+
+- section thickness t
+- hole diameter or effective hole diameter d_eff
+- pitch or stagger distance s
+- gauge g
+- edge distances
+- connected width or leg width
+- fracture-path segments
+
+For Block Shear, show applicable dimensions such as:
+
+- section thickness t
+- effective hole diameter d_eff
+- bolt spacing
+- edge distances
+- shear-path length Lv
+- tension-path length Lt
+- gross and net shear planes
+- gross and net tension plane
+
+Only show dimensions relevant to the current case. Do not clutter the diagram with unrelated dimensions.
+
+The diagram must update dynamically when the section, bolt arrangement, dimensions, or detected path changes. Do not hard-code a plate shape or fixed bolt pattern.
+
+Required loop structure:
+
+for each detected candidate:
+    render_complete_detailed_steps(candidate)
+    render_compact_result(candidate)
+    render_small_dimensioned_section_diagram(candidate)
+
+Keep each diagram small, centred, and directly below its corresponding result. Do not place diagrams in a separate section. Do not delete or abbreviate the existing detailed calculation steps. Do not duplicate any calculation, result, or image.

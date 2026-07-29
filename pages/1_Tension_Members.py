@@ -1427,7 +1427,7 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
         gov_tag = "  <-- GOVERNS" if c.name == gov else ""
         has_diagram = bool(diagrams and any(k.lower() in c.name.lower() for k in diagrams))
         with st.expander(f"{title} — Tr = {c.value:,.1f} kN{gov_tag}", expanded=True):
-            if show_steps and not has_diagram:
+            if show_steps:
                 st.markdown("\n".join(c.steps))
             if c.table is not None:
                 st.dataframe(c.table, use_container_width=True)
@@ -1701,6 +1701,7 @@ calc_gross_yield(Ag, mat.Fy),
         w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
         pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
         edge_trans=bp.edge_trans, hole_dia=hole_dia,
+        section_label="Single Angle - connected leg",
     )
     from path_thumbnails import render_net_paths, render_block_patterns
 
@@ -1906,6 +1907,7 @@ def panel_double_angle(render_material) -> None:
         w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
         pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
         edge_trans=bp.edge_trans, hole_dia=hole_dia,
+        section_label="Double Angle - connected legs (pair)",
     )
     from path_thumbnails import render_net_paths, render_block_patterns
 

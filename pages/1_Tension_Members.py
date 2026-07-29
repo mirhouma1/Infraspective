@@ -1438,10 +1438,10 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
                 delta="<-- governs" if c.name == gov else None,
                 delta_color="inverse",
             )
-        if diagrams:
-            for key, render_fn in diagrams.items():
-                if key.lower() in c.name.lower():
-                    render_fn()
+            if diagrams:
+                for key, render_fn in diagrams.items():
+                    if key.lower() in c.name.lower():
+                        render_fn()
 
     if Tf > 0:
         util = Tf / Tr

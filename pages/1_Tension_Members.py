@@ -2017,7 +2017,9 @@ def panel_wt(render_material) -> None:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
     geom = dict(
-        w_conn=w_conn, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
+        # Use the same connected-element width the detector used
+        # (stem-connected: d - t_flange; flange-connected: b_flange).
+        w_conn=el.width, n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
         pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
         edge_trans=bp.edge_trans, hole_dia=hole_dia,
         section_label=f"WT Section - connected {connected_el}",

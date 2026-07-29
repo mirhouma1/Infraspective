@@ -1413,29 +1413,24 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
     Tr   = vals[gov]
 
     st.divider()
-    if show_steps: st.subheader("Calculations — Shown Work")
+    st.subheader("Calculations & Results")
 
-    for c in (calcs if show_steps else []):
-        with st.expander(f" Tr Calculation Steps — {c.name.split('(')[0].strip()}", expanded=True):
-            st.markdown("\n".join(c.steps))
-            if c.table is not None:
-
-                st.dataframe(c.table, use_container_width=True)
-            if c.note:
-                st.info(c.note)
-
-
-    st.subheader("Results")
-    cols = st.columns(len(calcs))
-    #st.columns(len(calcs)): This creates a list of column objects. The number of columns is determined by the length of the calcs list.
-
-    for i, c in enumerate(calcs):
-        cols[i].metric(
-            c.name.split("(")[0].strip(),
-            f"{c.value:,.1f} kN",
-            delta="<-- governs" if c.name == gov else None,
-            delta_color="inverse",
-        )
+    for c in calcs:
+        title = c.name.split("(")[0].strip()
+        gov_tag = "  <-- GOVERNS" if c.name == gov else ""
+        with st.expander(f"{title} — Tr = {c.value:,.1f} kN{gov_tag}", expanded=True):
+            if show_steps:
+                st.markdown("\n".join(c.steps))
+                if c.table is not None:
+                    st.dataframe(c.table, use_container_width=True)
+                if c.note:
+                    st.info(c.note)
+            st.metric(
+                title,
+                f"{c.value:,.1f} kN",
+                delta="<-- governs" if c.name == gov else None,
+                delta_color="inverse",
+            )
 
     if Tf > 0:
         util = Tf / Tr

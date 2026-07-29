@@ -282,6 +282,15 @@ def detect_block_shear_paths(
     Agv_single = Lv * t
     out: List[Dict] = []
 
+    def crosses_obstruction(x_a: float, x_b: float) -> bool:
+        # A tension plane may not run across an interior obstruction
+        # (e.g. the stem of a flange-connected WT).
+        ox = element.obstruction_x
+        if ox is None:
+            return False
+        lo, hi = min(x_a, x_b), max(x_a, x_b)
+        return lo + 1e-6 < ox < hi - 1e-6
+
     def add(key, desc, Lnt, planes, formula, subst):
         if Lnt <= 0:
             return  # infeasible geometry: report as absent, not shear-only
@@ -308,6 +317,8 @@ def detect_block_shear_paths(
     # Tension terminating at the NEAR free edge (x = 0 side).
     if element.free_near:
         for i, x in enumerate(x_lines):
+            if crosses_obstruction(0.0, x):
+                continue
             equiv = i + 0.5
             Lnt = x - equiv * d_eff
             add("NEAR-%d" % (i + 1),
@@ -320,6 +331,8 @@ def detect_block_shear_paths(
     if element.free_far:
         last = len(x_lines) - 1
         for i, x in enumerate(x_lines):
+            if crosses_obstruction(x, element.width):
+                continue
             equiv = (last - i) + 0.5
             gross = element.width - x
             Lnt = gross - equiv * d_eff
@@ -332,6 +345,8 @@ def detect_block_shear_paths(
     # Tension BETWEEN two bolt lines (two shear planes). Always valid: the
     # material between interior lines can tear regardless of edge freedom.
     for a, b in combinations(range(len(x_lines)), 2):
+        if crosses_obstruction(x_lines[a], x_lines[b]):
+            continue
         gross = x_lines[b] - x_lines[a]
         equiv = b - a
         Lnt = gross - equiv * d_eff

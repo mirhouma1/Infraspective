@@ -1570,7 +1570,11 @@ def panel_plate(render_material) -> None:
     slend = (L_m / r_min) if r_min > 0 and L_m > 0 else 0.0
 
     st.divider()
-    paths = net_paths(width, bp, hole_dia, allowance, thick)
+    grid = build_bolt_grid(bp)
+    paths = detect_net_section_paths(
+        Ag=Ag, t=thick, d_eff=d_eff, bolts=grid,
+        connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
+    )
     if not paths:
         st.error("No feasible net fracture path. Check bolt layout vs plate width.")
         return
@@ -1583,9 +1587,19 @@ def panel_plate(render_material) -> None:
         calcs.append(calc_pin(An, mat.Fy))
     calcs.append(calc_net_fracture_paths(paths, U, mat.Fu))
 
-    bs_pats = block_shear_paths(bp, thick, d_eff)
-    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
-    calcs.append(bs_calc)
+    el = resolve_connected_element("Plate", "",
+                                   {"width": width, "t": thick})
+    try:
+        bs_pats = detect_block_shear_paths(bp, el, d_eff)
+    except ValueError as e:
+        st.error(f"Block shear geometry error: {e}")
+        return
+    if bs_pats:
+        bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+        calcs.append(bs_calc)
+    else:
+        bs_gov = None
+        st.warning("No feasible block-shear pattern for this bolt layout.")
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
@@ -2060,7 +2074,11 @@ def panel_wt(render_material) -> None:
 
     st.divider()
 
-    paths = net_paths(w_conn, bp, hole_dia, allowance, t_conn)
+    grid = build_bolt_grid(bp)
+    paths = detect_net_section_paths(
+        Ag=Ag, t=t_conn, d_eff=d_eff, bolts=grid,
+        connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
+    )
     if not paths:
         st.error("No feasible net fracture path.")
         return
@@ -2071,17 +2089,36 @@ def panel_wt(render_material) -> None:
         calc_gross_yield(Ag, mat.Fy),
         calc_net_fracture_paths(paths, U, mat.Fu),
     ]
-    bs_pats = block_shear_paths(bp, t_conn, d_eff)
-    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
-    calcs.append(bs_calc)
+    el = resolve_connected_element(
+        "WT Section", connected_el,
+        {"b_flange": b_fl, "d_depth": d_dep,
+         "t_flange": t_fl, "t_stem": t_st},
+    )
+    try:
+        bs_pats = detect_block_shear_paths(bp, el, d_eff)
+    except ValueError as e:
+        st.error(f"Block shear geometry error: {e}")
+        return
+    if bs_pats:
+        bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+        calcs.append(bs_calc)
+    else:
+        bs_gov = None
+        st.warning("No feasible block-shear pattern for this bolt layout "
+                   "and connected-element topology.")
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
+        st.caption(el.note)
         df_p = pd.DataFrame([{
-            "Path":      p["description"],
-            "wn (mm)":   round(p["wn_mm"], 1),
-            "An (mm2)":  round(p["An_mm2"], 1),
-            "Ane (mm2)": round(U * p["An_mm2"], 1),
+            "Path":                 p["description"],
+            "Holes":                p["n_holes"],
+            "Ag (mm2)":             round(p["Ag_mm2"], 1),
+            "Hole deduction (mm2)": round(p["hole_deduction_mm2"], 1),
+            "s2/4g (mm)":           round(p["stagger_term"], 2),
+            "Stagger add (mm2)":    round(p["stagger_area_mm2"], 1),
+            "An (mm2)":             round(p["An_mm2"], 1),
+            "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
         } for p in paths])
         st.dataframe(df_p, use_container_width=True)
 
@@ -2204,7 +2241,11 @@ def panel_channel(render_material) -> None:
 
     st.divider()
 
-    paths = net_paths(w_conn, bp, hole_dia, allowance, t_conn)
+    grid = build_bolt_grid(bp)
+    paths = detect_net_section_paths(
+        Ag=Ag, t=t_conn, d_eff=d_eff, bolts=grid,
+        connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
+    )
     if not paths:
         st.error("No feasible net fracture path.")
         return
@@ -2216,17 +2257,36 @@ def panel_channel(render_material) -> None:
         calc_net_fracture_paths(paths, U, mat.Fu),
 
     ]
-    bs_pats = block_shear_paths(bp, t_conn, d_eff)
-    bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
-    calcs.append(bs_calc)
+    el = resolve_connected_element(
+        "Channel (C / MC)", "web",
+        {"d_depth": d_dep, "t_web": t_web},
+    )
+    try:
+        bs_pats = detect_block_shear_paths(bp, el, d_eff)
+    except ValueError as e:
+        st.error(f"Block shear geometry error: {e}")
+        return
+    if bs_pats:
+        bs_calc, bs_gov = calc_block_shear_paths(bs_pats, mat.Fy, mat.Fu, Ut)
+        calcs.append(bs_calc)
+    else:
+        bs_gov = None
+        st.warning("No feasible block-shear pattern: a web-connected channel "
+                   "has no free transverse edge, so block shear requires at "
+                   "least two bolt lines (tension tear between lines).")
 
     with st.expander("Net fracture paths", expanded=False):
         st.info(f"Shear lag: {U_note}")
+        st.caption(el.note)
         df_p = pd.DataFrame([{
-            "Path":      p["description"],
-            "wn (mm)":   round(p["wn_mm"], 1),
-            "An (mm2)":  round(p["An_mm2"], 1),
-            "Ane (mm2)": round(U * p["An_mm2"], 1),
+            "Path":                 p["description"],
+            "Holes":                p["n_holes"],
+            "Ag (mm2)":             round(p["Ag_mm2"], 1),
+            "Hole deduction (mm2)": round(p["hole_deduction_mm2"], 1),
+            "s2/4g (mm)":           round(p["stagger_term"], 2),
+            "Stagger add (mm2)":    round(p["stagger_area_mm2"], 1),
+            "An (mm2)":             round(p["An_mm2"], 1),
+            "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
         } for p in paths])
         st.dataframe(df_p, use_container_width=True)
 

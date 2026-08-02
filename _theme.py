@@ -4,6 +4,7 @@ Apply to every page:  from _theme import apply_theme, render_sidebar_logo, rende
 """
 from __future__ import annotations
 import base64
+#base64 is used to encode binary data into ASCII characters
 from pathlib import Path
 import streamlit as st
 
@@ -625,11 +626,14 @@ def apply_theme() -> None:
 # (path, label, material icon, unlocked?)  Only Tension Members is live in Beta.
 _NAV = [
     ("pages/1_Tension_Members.py",     "Tension Members",      ":material/open_in_full:",           True),
-    ("app.py",                         "Beam Flexure",         ":material/architecture:",           False),
-    ("pages/2_Compression.py",         "Compression",          ":material/compress:",               False),
-    ("pages/4_Beam_Column_Members.py", "Beam-Column Members",  ":material/view_column:",            False),
+    ("app.py",                         "Beam Flexure",         ":material/architecture:",           True),
+    ("pages/2_Compression.py",         "Compression",          ":material/compress:",               True),
+    ("pages/4_Beam_Column_Members.py", "Beam-Column Members",  ":material/view_column:",            True),
     ("pages/5_Bolted_Connections.py",  "Bolted Connections",   ":material/build:",                  False),
     ("pages/6_Welded_Connections.py",  "Welded Connections",   ":material/local_fire_department:",  False),
+     
+    ("pages/7_Lifting_Lug.py",         "Lifting Lug",          ":material/link:",                   True),
+    
 ]
 
 

@@ -20,6 +20,30 @@ from flexure_diagrams import (
 # CONFIG
 # ----------------------------
 import sst12  # direct reader for the CISC SST12.1 workbook
+try:
+    import viewer_3d_flexure
+    HAS_VIEWER = True
+except Exception:
+    HAS_VIEWER = False
+
+
+@dataclass
+class _ViewerSection:
+    """Minimal stand-in for the Compression page's SectionProps.
+    Only the attributes section_geometry.py and viewer_3d.py read."""
+    designation: str
+    family: str = "W"
+    family_label: str = "W shapes"
+    kind: str = "I"
+    A_mm2: Optional[float] = None
+    d_mm: Optional[float] = None
+    b_mm: Optional[float] = None
+    t_mm: Optional[float] = None
+    w_mm: Optional[float] = None
+    h_mm: Optional[float] = None
+    hss_kind: Optional[str] = None
+
+
 
 PHI_B = 0.9
 PHI_V_DEFAULT = 0.9
@@ -1048,6 +1072,43 @@ DEFLECTION_CASES = [
     ("midspan_point", "Midspan Point Load (P kN)"),
 ]
 
+# End conditions for the 3D member model.
+# (key, label, symbol at the left end, symbol at the right end)
+# These drive the model only: the moment diagram, the deflected shape and
+# the support symbols. They do not feed Mr, the LTB check or the
+# deflection check above, all of which remain simply supported.
+END_CASES = [
+    ("pin_pin", "Pinned - pinned", "pinned", "roller"),
+    ("fix_pin", "Fixed - pinned (propped)", "fixed", "roller"),
+    ("fix_fix", "Fixed - fixed", "fixed", "fixed"),
+    ("fix_free", "Fixed - free (cantilever)", "fixed", "free"),
+]
+
+
+def peak_moment_kNm(end_key, load_type, w_kN_m, P_kN, L_m):
+    """Peak absolute bending moment for the selected model case, kN-m.
+    Standard coefficients: a UDL on a fixed-fixed span peaks at wL^2/12 at
+    the supports, a propped cantilever at wL^2/8, a cantilever at wL^2/2."""
+    if load_type == "udl" and w_kN_m:
+        w = float(w_kN_m)
+        LL = float(L_m)
+        if end_key == "fix_fix":
+            return w * LL * LL / 12.0
+        if end_key == "fix_free":
+            return w * LL * LL / 2.0
+        return w * LL * LL / 8.0
+    if load_type == "point" and P_kN:
+        P = float(P_kN)
+        LL = float(L_m)
+        if end_key == "fix_fix":
+            return P * LL / 8.0
+        if end_key == "fix_pin":
+            return 3.0 * P * LL / 16.0
+        if end_key == "fix_free":
+            return P * LL
+        return P * LL / 4.0
+    return None
+
 
 # ----------------------------
 # STREAMLIT APP
@@ -1057,9 +1118,11 @@ apply_theme()
 render_sidebar_logo()
 render_footer()
 
+
+#For Locking flexure app *****
 # Beta: Beam Flexure is locked — only Tension Members is available.
-from _theme import beta_lock_page
-beta_lock_page("Beam Flexure")
+#from _theme import beta_lock_page
+#beta_lock_page("Beam Flexure")
 
 st.title(APP_TITLE)
 
@@ -1834,6 +1897,160 @@ if selected_section:
                     if "text" in s:
                         st.write(s["text"])
                     st.divider()
+
+    # ============================================================
+    # MEMBER MODEL (3D)
+    # ============================================================
+    st.divider()
+    st.subheader("Member Model")
+    st.caption("Built from the SST12.1 dimensions above: the outline from "
+               "d, b, t, w and the published area, the section class "
+               "colours from Table 2. Use the controls under the view to "
+               "change what is shown.")
+
+    if not HAS_VIEWER:
+        st.info("3D viewer not loaded. Place section_geometry.py, "
+                "viewer_3d.py, viewer_3d_flexure.py and "
+                "viewer_3d_flexure.html in the repository root.")
+    else:
+        vcol1, vcol2, vcol3, vcol4 = st.columns(4)
+        with vcol1:
+            _span_m = st.number_input("Span L (m) - model only",
+                                      min_value=0.5, value=6.0, step=0.5,
+                                      key="model_span_m")
+        with vcol2:
+            _lb_model_m = st.number_input("Unbraced length Lb (m) - model only",
+                                          min_value=0.1, value=3.0, step=0.5,
+                                          key="model_lb_m")
+        with vcol3:
+            _end_key = st.selectbox(
+                "End conditions",
+                options=[c[0] for c in END_CASES],
+                format_func=lambda k: dict((a, b) for a, b, _c, _d
+                                           in END_CASES)[k],
+                index=0, key="model_ends")
+            _end_bottom = dict((a, c) for a, _b, c, _d in END_CASES)[_end_key]
+            _end_top = dict((a, d) for a, _b, _c, d in END_CASES)[_end_key]
+        with vcol4:
+            _load_type = st.selectbox(
+                "Load pattern",
+                options=["udl", "point", "none"],
+                format_func=lambda k: {
+                    "udl": "UDL (w kN/m)",
+                    "point": ("Tip point load (P kN)"
+                              if _end_key == "fix_free"
+                              else "Midspan point load (P kN)"),
+                    "none": "Uniform moment"}[k],
+                index=0, key="model_load_type")
+            _w_model = None
+            _p_model = None
+            if _load_type == "udl":
+                _w_model = st.number_input("w (kN/m)", min_value=0.0,
+                                           value=10.0, step=1.0,
+                                           key="model_w")
+            elif _load_type == "point":
+                _p_model = st.number_input("P (kN)", min_value=0.0,
+                                           value=50.0, step=5.0,
+                                           key="model_p")
+
+        _geom = class_info["geometry_used"]
+
+        _area = None
+        for _k in ("Area", "area", "A", "Area_mm2"):
+            _v = shape.get(_k)
+            if _v not in (None, ""):
+                try:
+                    _area = float(str(_v).replace(",", "").strip())
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+        _sec = _ViewerSection(
+            designation=str(selected_section),
+            A_mm2=_area,
+            d_mm=float(_geom["d"]),
+            b_mm=float(_geom["b"]),
+            t_mm=float(_geom["t"]),
+            w_mm=float(_geom["w"]),
+            h_mm=float(_geom["h"]),
+        )
+
+        def _row(group, symbol, value, unit, nd=1):
+            if value is None:
+                return None
+            try:
+                v = "{:,.{}f}".format(float(value), nd)
+            except (ValueError, TypeError):
+                v = str(value)
+            return {"group": group, "symbol": symbol, "value": v,
+                    "unit": unit}
+
+        _props = [
+            _row("Geometry", "d", _geom["d"], "mm"),
+            _row("Geometry", "b", _geom["b"], "mm"),
+            _row("Geometry", "t", _geom["t"], "mm"),
+            _row("Geometry", "w", _geom["w"], "mm"),
+            _row("Geometry", "h", _geom["h"], "mm"),
+            _row("Geometry", "A", _area, "mm2", 0),
+            _row("Table 2 ratios", "b/2t", class_info["ratios"]["b/2t"], "", 2),
+            _row("Table 2 ratios", "h/w", class_info["ratios"]["h/w"], "", 2),
+            _row("Flexure", "Zx", shape.get("Zx"), "10^3 mm3", 0),
+            _row("Flexure", "Sx", shape.get("Sx"), "10^3 mm3", 0),
+            _row("Flexure", "Ix", shape.get("Ix"), "10^6 mm4", 1),
+            _row("LTB", "Iy", shape.get("Iy"), "10^6 mm4", 1),
+            _row("LTB", "J", shape.get("J"), "10^3 mm4", 1),
+            _row("LTB", "Cw", shape.get("Cw"), "10^9 mm6", 1),
+            _row("Material", "Fy", Fy, "MPa", 0),
+        ]
+        _props = [p for p in _props if p is not None]
+
+        _L_mm = float(_span_m) * 1000.0
+        _Lb_mm = min(float(_lb_model_m) * 1000.0, _L_mm)
+
+        # The y entry draws the end symbols and sets the span. The x entry
+        # carries Lb, which drives the brace marks and the LTB half-wave.
+        _supports = {
+            "ends": _end_key,
+            "y": {"K": 1.0, "L": _L_mm,
+                  "bottom": _end_bottom, "top": _end_top},
+            "x": {"K": 1.0, "L": _Lb_mm,
+                  "bottom": _end_bottom, "top": _end_top},
+        }
+
+        _load = {"type": _load_type, "w_kN_m": _w_model, "P_kN": _p_model}
+
+        _e2 = [
+            {"key": "t2_flange", "label": "Flange b/2t", "zone": "flange",
+             "cls": int(class_info["class_flange"])},
+            {"key": "t2_web", "label": "Web h/w", "zone": "web",
+             "cls": int(class_info["class_web"])},
+        ]
+
+        _mr = None
+        if not mr_info.get("error") and mr_info.get("mr_kNm"):
+            _mr = float(mr_info["mr_kNm"])
+
+        # Shape of the moment diagram comes from the load pattern, the
+        # magnitude from Mu when the demand check at the top is ticked.
+        _mf = peak_moment_kNm(_end_key, _load_type, _w_model, _p_model,
+                              _span_m)
+        if check_demand and Mu is not None:
+            _mf = float(Mu)
+
+        _util = (_mf / _mr) if (_mf is not None and _mr) else None
+
+        _results = {
+            "util": _util,
+            "Mr_kNm": _mr,
+            "Mf_kNm": _mf,
+            "section_class": int(class_info["class_section"]),
+        }
+
+        viewer_3d_flexure.render_beam(
+            _sec, length_mm=_L_mm, height=640,
+            supports=_supports, load=_load,
+            elements_t2=_e2, results=_results, props=_props,
+            show_diagnostics=False)
 
     with st.expander("Raw Section Data"):
         st.json(shape)

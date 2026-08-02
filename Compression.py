@@ -166,7 +166,7 @@ class ColumnDBProps:
 @dataclass(frozen=True)
 class ColumnUserInputs:
     """These come from the UI (project-specific)."""
-    Kx: float = 1.0
+    Kx: float = .0
     Ky: float = 1.0
     Lx_mm: float = 3000.0
     Ly_mm: float = 3000.0

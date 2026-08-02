@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0d1117;
+    font-family:-apple-system, "Segoe UI", Roboto, sans-serif; color:#e6edf3; }
+  #root { display:flex; flex-direction:column; height:100vh; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; touch-action:none; }
+  #cv { display:block; width:100%; height:100%; }
+  #hud { position:absolute; left:10px; top:8px; font-size:11px; line-height:1.45;
+    color:#8b949e; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  #hud b { color:#e6edf3; font-size:12px; }
+  #legend { position:absolute; right:10px; top:8px; font-size:10.5px;
+    line-height:1.5; color:#c9d1d9; pointer-events:none; text-align:right;
+    text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+    margin-left:5px; vertical-align:middle; }
+  #err { position:absolute; left:10px; bottom:8px; color:#f85149; font-size:11px; }
+  #props { position:absolute; right:8px; bottom:8px; max-height:62%;
+    overflow:auto; background:rgba(13,17,23,.82); border:1px solid #30363d;
+    border-radius:8px; padding:8px 10px; font-size:10.5px; line-height:1.5;
+    color:#c9d1d9; display:none; max-width:60%; }
+  #props .g { color:#6e7681; text-transform:uppercase; letter-spacing:.05em;
+    font-size:9px; margin-top:6px; }
+  #props .g:first-child { margin-top:0; }
+  #props .k { color:#8b949e; display:inline-block; min-width:58px; }
+  #props .v { color:#e6edf3; }
+  #bar { flex:0 0 auto; background:#161b22; border-top:1px solid #30363d;
+    padding:6px 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .row + .row { margin-top:5px; }
+  button.t { background:#21262d; color:#8b949e; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer;
+    white-space:nowrap; }
+  button.t.on { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  button.v { background:#21262d; color:#c9d1d9; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; }
+  button.v:active { background:#1f6feb; color:#fff; }
+  button.t:focus-visible, button.v:focus-visible, select:focus-visible {
+    outline:2px solid #58a6ff; outline-offset:1px; }
+  select { background:#21262d; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:5px 7px; font-size:11px; flex:1 1 190px;
+    min-width:150px; }
+  .lbl { font-size:10px; color:#6e7681; text-transform:uppercase;
+    letter-spacing:.05em; margin-right:2px; }
+  #expl { font-size:11px; color:#8b949e; line-height:1.45; margin-top:6px;
+    padding-top:6px; border-top:1px solid #21262d; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="legend"></div>
+    <div id="props"></div>
+    <div id="err"></div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <span class="lbl">View</span>
+      <button class="v" id="vIso">Iso</button>
+      <button class="v" id="vFront">Lug face</button>
+      <button class="v" id="vSide">Side</button>
+      <button class="v" id="vTop">Top</button>
+      <button class="v" id="vFit">Fit</button>
+      <button class="t" id="vPan">Pan mode</button>
+      <button class="v" id="vSpin">Spin</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Parts</span>
+      <button class="t" id="pLug">Lug plate</button>
+      <button class="t" id="pCheek">Cheek plates</button>
+      <button class="t" id="pCap">Cap plate</button>
+      <button class="t" id="pBolt">Bolts</button>
+      <button class="t" id="pPin">Pin</button>
+      <button class="t" id="pWeld">Welds</button>
+      <button class="t" id="pSling">Sling</button>
+      <button class="t" id="pExpl">Exploded</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Show</span>
+      <button class="t" id="tDim">Dimensions</button>
+      <button class="t" id="tProps">Design data</button>
+      <button class="t" id="tLab">Labels</button>
+      <button class="t" id="tAx">Axes</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Behaviour</span>
+      <select id="mode"></select>
+    </div>
+    <div id="expl"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+<script>
+var DATA = __GEOMETRY_JSON__;
+
+function fail(m) { document.getElementById("err").textContent = m; }
+
+try {
+
+var G = DATA.geom || {};
+var RES = DATA.results || {};
+var CHECKS = DATA.checks || [];
+
+var stage = document.getElementById("stage");
+var canvas = document.getElementById("cv");
+
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(DATA.bg || "#0d1117");
+
+function makeEnv() {
+  var c = document.createElement("canvas");
+  c.width = 16; c.height = 256;
+  var g = c.getContext("2d");
+  var grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.00, "#ffffff");
+  grad.addColorStop(0.35, "#c8d2dc");
+  grad.addColorStop(0.55, "#7d8894");
+  grad.addColorStop(0.75, "#3a424b");
+  grad.addColorStop(1.00, "#14181d");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  var tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  var p = new THREE.PMREMGenerator(renderer);
+  p.compileEquirectangularShader();
+  var env = p.fromEquirectangular(tex).texture;
+  p.dispose(); tex.dispose();
+  return env;
+}
+scene.environment = makeEnv();
+
+var key = new THREE.DirectionalLight(0xffffff, 1.35);
+key.position.set(1, 1.4, 1); scene.add(key);
+var fill = new THREE.DirectionalLight(0xffffff, 0.45);
+fill.position.set(-1, 0.3, -0.8); scene.add(fill);
+scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+
+// =====================================================================
+// text sprites
+// =====================================================================
+function label(text, color, scale) {
+  color = color || "#e6edf3";
+  scale = scale || 1.0;
+  var pad = 8, fs = 44;
+  var c = document.createElement("canvas");
+  var g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  var wpx = Math.ceil(g.measureText(text).width) + pad * 2;
+  c.width = wpx; c.height = fs + pad * 2;
+  g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  g.fillStyle = "rgba(13,17,23,0.72)";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = color;
+  g.textBaseline = "middle";
+  g.fillText(text, pad, c.height / 2);
+  var tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false }));
+  sp.userData.aspect = c.width / c.height;
+  sp.userData.baseScale = scale;
+  return sp;
+}
+var LABELS = [], labelsOn = true;
+function regLabel(sp) { LABELS.push(sp); sp.visible = labelsOn; return sp; }
+function setLabels(on) {
+  labelsOn = on;
+  for (var i = 0; i < LABELS.length; i++) LABELS[i].visible = on;
+}
+function sizeLabels(root, unit) {
+  root.traverse(function (o) {
+    if (o.isSprite && o.userData.aspect) {
+      var h = unit * o.userData.baseScale;
+      o.scale.set(h * o.userData.aspect, h, 1);
+    }
+  });
+}
+
+// =====================================================================
+// materials, one per component so each can be coloured on its own
+// =====================================================================
+var STEEL = new THREE.Color("#9fb0c0");
+var DIM = new THREE.Color("#39424e");
+var PARTC = {
+  lug:   new THREE.Color("#9fb0c0"),
+  cheek: new THREE.Color("#8b9bab"),
+  cap:   new THREE.Color("#94a5b5"),
+  bolt:  new THREE.Color("#c9a227"),
+  pin:   new THREE.Color("#c9a227"),
+  weld:  new THREE.Color("#d97706")
+};
+
+function newMat(comp) {
+  return new THREE.MeshStandardMaterial({
+    color: (PARTC[comp] || STEEL).clone(),
+    metalness: DATA.metalness !== undefined ? DATA.metalness : 0.85,
+    roughness: DATA.roughness !== undefined ? DATA.roughness : 0.30,
+    side: THREE.DoubleSide
+  });
+}
+
+var MATS = {};       // component -> [materials]
+var GROUPS = {};     // component -> THREE.Group
+function group(comp) {
+  if (!GROUPS[comp]) {
+    GROUPS[comp] = new THREE.Group();
+    GROUPS[comp].userData.component = comp;
+    scene.add(GROUPS[comp]);
+  }
+  return GROUPS[comp];
+}
+function addMesh(comp, geo, mat) {
+  var m = mat || newMat(comp);
+  if (!MATS[comp]) MATS[comp] = [];
+  MATS[comp].push(m);
+  var mesh = new THREE.Mesh(geo, m);
+  mesh.userData.component = comp;
+  group(comp).add(mesh);
+  return mesh;
+}
+
+// =====================================================================
+// geometry
+// =====================================================================
+function buildShape(outer, holes) {
+  var s = new THREE.Shape();
+  s.moveTo(outer[0][0], outer[0][1]);
+  for (var i = 1; i < outer.length; i++) s.lineTo(outer[i][0], outer[i][1]);
+  s.closePath();
+  for (var h = 0; h < (holes || []).length; h++) {
+    var lp = holes[h];
+    var p = new THREE.Path();
+    p.moveTo(lp[0][0], lp[0][1]);
+    for (var j = 1; j < lp.length; j++) p.lineTo(lp[j][0], lp[j][1]);
+    p.closePath();
+    s.holes.push(p);
+  }
+  return s;
+}
+function extrude(outer, holes, depth) {
+  var g = new THREE.ExtrudeGeometry(buildShape(outer, holes),
+    { depth: depth, bevelEnabled: false, curveSegments: 16, steps: 1 });
+  g.translate(0, 0, -depth / 2);
+  g.computeVertexNormals();
+  return g;
+}
+
+var tp2 = G.tp2 || 25, tp3 = G.tp3 || 12, tp1 = G.tp1 || 25;
+var H1 = G.H1 || 100, H2 = G.H2 || 100, L2 = G.L2 || 300;
+var L1 = G.L1 || 300, W1 = G.W1 || 225;
+var Dpin = G.Dpin || 38, Dcheek = G.Dcheekp || 130, Db = G.Db || 24;
+var w1 = G.w1 || 8;
+
+// lug plate, in the x-y plane, extruded across z
+addMesh("lug", extrude(DATA.profile.outer, DATA.profile.holes, tp2));
+
+// cheek plates, one each side
+var zCheek = tp2 / 2 + tp3 / 2;
+[-1, 1].forEach(function (sgn) {
+  var m = addMesh("cheek", extrude(DATA.cheek.outer, DATA.cheek.holes, tp3));
+  m.position.z = sgn * zCheek;
+  m.userData.explode = new THREE.Vector3(0, 0, sgn * Dcheek * 0.55);
+});
+
+// cap plate: built in its own plane then laid flat, top face at y = 0
+(function () {
+  var m = addMesh("cap", extrude(DATA.cap.outer, DATA.cap.holes, tp1));
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = -tp1 / 2;
+  m.userData.explode = new THREE.Vector3(0, -tp1 * 3.5, 0);
+})();
+
+// bolts through the cap plate
+(function () {
+  var len = tp1 * 2.2;
+  (DATA.cap.bolt_xy || []).forEach(function (xy) {
+    var g = new THREE.CylinderGeometry(Db / 2, Db / 2, len, 20);
+    var m = addMesh("bolt", g);
+    m.position.set(xy[0], -tp1 / 2, xy[1]);
+    var hd = new THREE.CylinderGeometry(Db * 0.82, Db * 0.82, Db * 0.62, 6);
+    var mh = addMesh("bolt", hd);
+    mh.position.set(xy[0], -tp1 - Db * 0.31, xy[1]);
+    m.userData.explode = new THREE.Vector3(0, -tp1 * 6.0, 0);
+    mh.userData.explode = new THREE.Vector3(0, -tp1 * 6.0, 0);
+  });
+})();
+
+// pin through the hole
+(function () {
+  var len = tp2 + 2 * tp3 + Dpin * 1.1;
+  var g = new THREE.CylinderGeometry(Dpin / 2, Dpin / 2, len, 28);
+  var m = addMesh("pin", g);
+  m.rotation.x = Math.PI / 2;
+  m.position.set(0, H2, 0);
+  m.userData.explode = new THREE.Vector3(0, 0, Dcheek * 1.4);
+})();
+
+// fillet welds down both sides of the lug base
+(function () {
+  if (!(w1 > 0)) return;
+  [-1, 1].forEach(function (sgn) {
+    var tri = new THREE.Shape();
+    tri.moveTo(0, 0);
+    tri.lineTo(sgn * w1, 0);
+    tri.lineTo(0, w1);
+    tri.closePath();
+    var g = new THREE.ExtrudeGeometry(tri,
+      { depth: L2, bevelEnabled: false, steps: 1 });
+    g.translate(0, 0, -L2 / 2);
+    g.computeVertexNormals();
+    var m = addMesh("weld", g);
+    // the triangle is drawn in x-y then swung round so it runs along x
+    m.rotation.y = Math.PI / 2;
+    m.position.set(0, 0, sgn * tp2 / 2);
+    m.userData.explode = new THREE.Vector3(0, 0, sgn * Dcheek * 0.9);
+  });
+})();
+
+// sling, drawn from the pin at the working angle
+var gSling = new THREE.Group(); scene.add(gSling);
+(function () {
+  var ang = (DATA.load && DATA.load.sling_angle_deg) || 60.0;
+  var th = ang * Math.PI / 180.0;
+  var len = Math.max(H1 + H2, L2) * 1.35;
+  var col = 0xff7b72;
+  [-1, 1].forEach(function (sgn) {
+    var dir = new THREE.Vector3(sgn * Math.cos(th), Math.sin(th), 0);
+    var end = new THREE.Vector3(0, H2, 0).add(dir.clone().multiplyScalar(len));
+    var g = new THREE.BufferGeometry().setFromPoints(
+      [new THREE.Vector3(0, H2, 0), end]);
+    gSling.add(new THREE.Line(g,
+      new THREE.LineBasicMaterial({ color: col, depthTest: false })));
+  });
+  var tf = (RES.Tf_kN !== undefined && RES.Tf_kN !== null)
+    ? ("Tf = " + Number(RES.Tf_kN).toFixed(1) + " kN") : "Tf";
+  var sp = regLabel(label(tf, "#ff7b72"));
+  sp.position.set(0, H2 + len * Math.sin(th) * 0.75, 0);
+  gSling.add(sp);
+  var sa = regLabel(label(ang.toFixed(0) + " deg", "#ff7b72", 0.85));
+  sa.position.set(L2 * 0.30, H2 + L2 * 0.28, 0);
+  gSling.add(sa);
+})();
+
+// =====================================================================
+// overlays
+// =====================================================================
+var overlays = new THREE.Group(); scene.add(overlays);
+var SPAN = Math.max(L2, L1, H1 + H2, W1);
+var UNIT = SPAN * 0.055;
+
+function addLine(grp, a, b, color) {
+  grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2])]),
+    new THREE.LineBasicMaterial({ color: color, depthTest: false })));
+}
+function addLabel(grp, text, pos, color, sc) {
+  var sp = regLabel(label(text, color, sc));
+  sp.position.set(pos[0], pos[1], pos[2]);
+  grp.add(sp);
+  return sp;
+}
+
+var gDim = new THREE.Group(); overlays.add(gDim);
+(function () {
+  var o = SPAN * 0.62, zf = tp2 / 2;
+  addLine(gDim, [-L2 / 2, -o * 0.25, zf], [L2 / 2, -o * 0.25, zf], 0x58a6ff);
+  addLabel(gDim, "L2 = " + L2.toFixed(0), [0, -o * 0.40, zf], "#58a6ff");
+  addLine(gDim, [L2 / 2 + o * 0.12, 0, zf], [L2 / 2 + o * 0.12, H2, zf],
+          0x7ee787);
+  addLabel(gDim, "H2 = " + H2.toFixed(0), [L2 / 2 + o * 0.34, H2 / 2, zf],
+           "#7ee787");
+  addLine(gDim, [L2 / 2 + o * 0.12, H2, zf], [L2 / 2 + o * 0.12, H2 + H1, zf],
+          0x7ee787);
+  addLabel(gDim, "H1 = " + H1.toFixed(0),
+           [L2 / 2 + o * 0.34, H2 + H1 * 0.5, zf], "#7ee787");
+  addLabel(gDim, "hole " + (G.Dhole || 0).toFixed(0), [0, H2, zf + o * 0.10],
+           "#c9d1d9", 0.9);
+  addLabel(gDim, "pin " + Dpin.toFixed(0), [0, H2 - UNIT * 1.5, zf + o * 0.10],
+           "#c9a227", 0.9);
+  addLabel(gDim, "cheek " + Dcheek.toFixed(0),
+           [0, H2 + Dcheek * 0.5, zf + o * 0.10], "#c9d1d9", 0.9);
+  addLabel(gDim, "tp2 = " + tp2.toFixed(0), [-L2 * 0.32, H2 * 0.35, 0],
+           "#8b949e", 0.9);
+  addLine(gDim, [-L1 / 2, -tp1 * 2.2, 0], [L1 / 2, -tp1 * 2.2, 0], 0x8b949e);
+  addLabel(gDim, "L1 = " + L1.toFixed(0), [0, -tp1 * 3.4, 0], "#c9d1d9", 0.9);
+  addLine(gDim, [0, -tp1 * 2.2, -W1 / 2], [0, -tp1 * 2.2, W1 / 2], 0x8b949e);
+  addLabel(gDim, "W1 = " + W1.toFixed(0), [0, -tp1 * 3.4, W1 * 0.62],
+           "#c9d1d9", 0.9);
+  addLabel(gDim, "tp1 = " + tp1.toFixed(0), [-L1 * 0.56, -tp1 / 2, 0],
+           "#8b949e", 0.9);
+})();
+
+var gAx = new THREE.Group(); overlays.add(gAx);
+(function () {
+  var a = SPAN * 0.75;
+  var defs = [[[a, 0, 0], 0xff7b72, "x"], [[0, a, 0], 0x7ee787, "y"],
+              [[0, 0, a], 0x79c0ff, "z"]];
+  for (var i = 0; i < defs.length; i++) {
+    addLine(gAx, [0, 0, 0], defs[i][0], defs[i][1]);
+    addLabel(gAx, defs[i][2], [defs[i][0][0] * 1.1, defs[i][0][1] * 1.1,
+             defs[i][0][2] * 1.1],
+             "#" + new THREE.Color(defs[i][1]).getHexString(), 1.1);
+  }
+})();
+
+// =====================================================================
+// colour modes
+// =====================================================================
+function utilColor(u) {
+  if (u === null || u === undefined) return STEEL.clone();
+  var c = new THREE.Color();
+  var x = Math.max(0, Math.min(1.3, u)) / 1.3;
+  c.setHSL((1 - x) * 0.33, 0.75, 0.5);
+  return c;
+}
+
+// Worst unity check attached to each component. A component with no
+// check of its own keeps its plain colour rather than pretending to a
+// utilisation it was never given.
+function worstFor(comp) {
+  var w = null;
+  for (var i = 0; i < CHECKS.length; i++) {
+    var c = CHECKS[i];
+    if (c.component === comp && c.uc !== null && c.uc !== undefined) {
+      if (w === null || c.uc > w.uc) w = c;
+    }
+  }
+  return w;
+}
+
+function setComp(comp, col) {
+  var list = MATS[comp] || [];
+  for (var i = 0; i < list.length; i++) list[i].color.copy(col);
+}
+
+function paint(mode) {
+  var comps = Object.keys(MATS);
+  var html = "";
+  for (var i = 0; i < comps.length; i++) {
+    var comp = comps[i];
+    if (mode === "plain") {
+      setComp(comp, (PARTC[comp] || STEEL).clone());
+    } else if (mode === "util") {
+      var w = worstFor(comp);
+      setComp(comp, w ? utilColor(w.uc) : (PARTC[comp] || STEEL).clone());
+    } else if (mode === "gov") {
+      var w2 = worstFor(comp);
+      var isGov = w2 && w2.label === RES.governing_name;
+      setComp(comp, isGov ? utilColor(w2.uc) : DIM.clone());
+    } else if (mode === "verdict") {
+      var w3 = worstFor(comp);
+      if (!w3) setComp(comp, DIM.clone());
+      else setComp(comp, new THREE.Color(
+        w3.verdict === "OK" ? "#3fb950" : "#f85149"));
+    }
+  }
+  if (mode === "util" || mode === "gov") {
+    for (var j = 0; j < CHECKS.length; j++) {
+      var c = CHECKS[j];
+      if (c.uc === null || c.uc === undefined) continue;
+      html += c.label + " " + c.uc.toFixed(3)
+        + "<span class='sw' style='background:#"
+        + utilColor(c.uc).getHexString() + "'></span><br>";
+    }
+  } else if (mode === "verdict") {
+    for (var k = 0; k < CHECKS.length; k++) {
+      html += CHECKS[k].label + " " + CHECKS[k].verdict
+        + "<span class='sw' style='background:"
+        + (CHECKS[k].verdict === "OK" ? "#3fb950" : "#f85149")
+        + "'></span><br>";
+    }
+  }
+  document.getElementById("legend").innerHTML = html;
+}
+
+// =====================================================================
+// exploded view
+// =====================================================================
+var explodeOn = false;
+function applyExplode(on) {
+  explodeOn = on;
+  var comps = Object.keys(GROUPS);
+  for (var i = 0; i < comps.length; i++) {
+    GROUPS[comps[i]].traverse(function (o) {
+      if (!o.isMesh) return;
+      if (!o.userData.home) o.userData.home = o.position.clone();
+      var e = o.userData.explode;
+      o.position.copy(o.userData.home);
+      if (on && e) o.position.add(e);
+    });
+  }
+}
+
+// =====================================================================
+// camera and orbit
+// =====================================================================
+var FOV = 32;
+var radius = SPAN * 1.1;
+var camera = new THREE.PerspectiveCamera(FOV, 1, radius * 0.004, radius * 400);
+var target = new THREE.Vector3(0, (H1 + H2) * 0.35, 0);
+var sph = { theta: 0.85, phi: 1.15, dist: radius * 2.6 };
+var spin = false, panMode = false;
+
+function fitDist(objH, objW, margin) {
+  var vt = Math.tan(FOV * Math.PI / 360);
+  var asp = camera.aspect || 1;
+  return Math.max((objH / 2) / vt, (objW / 2) / (asp * vt)) * (margin || 1.15);
+}
+function fitWhole(margin) {
+  return fitDist((H1 + H2) * 1.9, Math.max(L1, L2) * 1.5, margin || 1.15);
+}
+function applyCamera() {
+  sph.phi = Math.max(0.02, Math.min(Math.PI - 0.02, sph.phi));
+  sph.dist = Math.max(radius * 0.05, Math.min(radius * 40, sph.dist));
+  var sp = Math.sin(sph.phi);
+  camera.position.set(
+    target.x + sph.dist * sp * Math.sin(sph.theta),
+    target.y + sph.dist * Math.cos(sph.phi),
+    target.z + sph.dist * sp * Math.cos(sph.theta));
+  camera.lookAt(target);
+}
+function pan(dxPx, dyPx) {
+  var hpx = stage.clientHeight || 1;
+  var worldPerPx = 2 * sph.dist * Math.tan(FOV * Math.PI / 360) / hpx;
+  var st = Math.sin(sph.theta), ct = Math.cos(sph.theta);
+  var sp = Math.sin(sph.phi), cp = Math.cos(sph.phi);
+  target.x += (-dxPx * ct + dyPx * (-st * cp)) * worldPerPx;
+  target.y += (dyPx * sp) * worldPerPx;
+  target.z += (-dxPx * (-st) + dyPx * (-ct * cp)) * worldPerPx;
+  applyCamera();
+}
+applyCamera();
+
+var ptrs = {}, last = null, pinch0 = null, mid0 = null;
+canvas.addEventListener("pointerdown", function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  if (Object.keys(ptrs).length === 1) last = { x: e.clientX, y: e.clientY };
+  spin = false;
+});
+canvas.addEventListener("pointermove", function (e) {
+  if (!ptrs[e.pointerId]) return;
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var ids = Object.keys(ptrs);
+  if (ids.length === 1 && last) {
+    var dx = e.clientX - last.x, dy = e.clientY - last.y;
+    if (panMode) { pan(dx, dy); }
+    else { sph.theta -= dx * 0.009; sph.phi -= dy * 0.009; applyCamera(); }
+    last = { x: e.clientX, y: e.clientY };
+  } else if (ids.length === 2) {
+    var a = ptrs[ids[0]], b = ptrs[ids[1]];
+    var d2 = Math.hypot(a.x - b.x, a.y - b.y);
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (pinch0 === null) { pinch0 = d2; mid0 = { x: mx, y: my }; }
+    if (d2 > 0) { sph.dist *= pinch0 / d2; pinch0 = d2; }
+    if (mid0) { pan(mx - mid0.x, my - mid0.y); mid0 = { x: mx, y: my }; }
+    applyCamera();
+  }
+});
+function up(e) {
+  delete ptrs[e.pointerId];
+  if (Object.keys(ptrs).length < 2) { pinch0 = null; mid0 = null; }
+  if (Object.keys(ptrs).length === 0) last = null;
+  var rest = Object.keys(ptrs);
+  if (rest.length === 1) last = { x: ptrs[rest[0]].x, y: ptrs[rest[0]].y };
+}
+canvas.addEventListener("pointerup", up);
+canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  sph.dist *= (1 + (e.deltaY > 0 ? 0.12 : -0.12));
+  applyCamera();
+}, { passive: false });
+
+function setView(th, ph, dist) {
+  spin = false;
+  target.set(0, (H1 + H2) * 0.35, 0);
+  sph.theta = th; sph.phi = ph; sph.dist = dist;
+  applyCamera();
+  sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+}
+document.getElementById("vIso").onclick = function () {
+  setView(0.85, 1.15, fitWhole(1.20)); };
+document.getElementById("vFront").onclick = function () {
+  setView(0, 1.5708, fitWhole(1.10)); };
+document.getElementById("vSide").onclick = function () {
+  setView(1.5708, 1.5708, fitWhole(1.10)); };
+document.getElementById("vTop").onclick = function () {
+  setView(0, 0.05, fitDist(W1 * 1.8, L1 * 1.5, 1.2)); };
+document.getElementById("vFit").onclick = function () {
+  setView(sph.theta, sph.phi, fitWhole(1.16)); };
+document.getElementById("vSpin").onclick = function () { spin = !spin; };
+(function () {
+  var pb = document.getElementById("vPan");
+  pb.onclick = function () {
+    panMode = !panMode; pb.classList.toggle("on", panMode); };
+})();
+
+// =====================================================================
+// toggles
+// =====================================================================
+function bindToggle(id, grp, initial, after) {
+  var b = document.getElementById(id);
+  var on = !!initial;
+  function apply() {
+    b.classList.toggle("on", on);
+    if (grp) grp.visible = on;
+    if (after) after(on);
+  }
+  b.onclick = function () { on = !on; apply(); };
+  apply();
+  return function (want) { if (want !== on) { on = want; apply(); } };
+}
+
+(function () {
+  var el = document.getElementById("props");
+  var rows = DATA.props || [];
+  if (!rows.length) { el.innerHTML = "<div class='g'>No data</div>"; return; }
+  var cur = null, html = "";
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.group !== cur) { cur = r.group; html += "<div class='g'>" + cur + "</div>"; }
+    var u = r.unit ? (" " + r.unit) : "";
+    html += "<div><span class='k'>" + r.symbol + "</span><span class='v'>"
+         + r.value + u + "</span></div>";
+  }
+  el.innerHTML = html;
+})();
+
+bindToggle("pLug", group("lug"), true);
+bindToggle("pCheek", group("cheek"), true);
+bindToggle("pCap", group("cap"), true);
+bindToggle("pBolt", group("bolt"), true);
+bindToggle("pPin", group("pin"), true);
+bindToggle("pWeld", group("weld"), true);
+bindToggle("pSling", gSling, true);
+bindToggle("pExpl", null, false, function (on) { applyExplode(on); });
+bindToggle("tDim", gDim, false);
+bindToggle("tAx", gAx, false);
+bindToggle("tProps", null, false, function (on) {
+  document.getElementById("props").style.display = on ? "block" : "none"; });
+bindToggle("tLab", null, true, function (on) { setLabels(on); });
+
+// =====================================================================
+// behaviour dropdown
+// =====================================================================
+var MODES = [
+  ["plain", "As fabricated",
+   "The assembly as built, each part in its own colour. Turn on Exploded "
+   + "to pull the cheek plates, pin, cap plate and bolts apart."],
+  ["util", "Utilisation by part",
+   "Every part is coloured by the worst unity check that applies to it. "
+   + "Green is lightly worked, red is at or beyond capacity. A part with "
+   + "no check of its own keeps its plain colour."],
+  ["gov", "Governing check",
+   "Only the part carrying the governing check keeps its colour, "
+   + "everything else drops back. This is the one to look at when you "
+   + "want to know where the design is actually being decided."],
+  ["verdict", "Pass or fail",
+   "Flat green for OK and red for NG on every part that carries a check, "
+   + "with no shading in between."]
+];
+var sel = document.getElementById("mode");
+for (var i = 0; i < MODES.length; i++) {
+  var o = document.createElement("option");
+  o.value = MODES[i][0]; o.textContent = MODES[i][1];
+  sel.appendChild(o);
+}
+var currentMode = "plain";
+function setMode(m) {
+  currentMode = m;
+  paint(m);
+  for (var i = 0; i < MODES.length; i++) {
+    if (MODES[i][0] === m) {
+      document.getElementById("expl").textContent = MODES[i][2];
+    }
+  }
+}
+sel.onchange = function () { setMode(sel.value); };
+setMode("plain");
+
+// =====================================================================
+// hud
+// =====================================================================
+(function () {
+  var h = "<b>" + (DATA.label || "Lifting lug") + "</b><br>";
+  h += "lug " + L2.toFixed(0) + " x " + (H1 + H2).toFixed(0)
+     + " x " + tp2.toFixed(0) + "<br>";
+  h += "cap " + L1.toFixed(0) + " x " + W1.toFixed(0)
+     + " x " + tp1.toFixed(0);
+  if (RES.Tf_kN !== undefined && RES.Tf_kN !== null) {
+    h += "<br>Tf = " + Number(RES.Tf_kN).toFixed(1) + " kN";
+  }
+  if (RES.governing_name) {
+    h += "<br>governs: " + RES.governing_name;
+    if (RES.governing_uc !== undefined && RES.governing_uc !== null) {
+      h += " at " + Number(RES.governing_uc).toFixed(3);
+    }
+  }
+  if (RES.overall) {
+    h += "<br><span style='color:"
+      + (RES.overall === "OK" ? "#3fb950" : "#f85149") + "'>"
+      + RES.overall + "</span>";
+  }
+  document.getElementById("hud").innerHTML = h;
+})();
+
+// =====================================================================
+// resize and loop
+// =====================================================================
+function resize() {
+  var w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+}
+window.addEventListener("resize", resize);
+resize();
+sph.dist = fitWhole(1.20);
+applyCamera();
+sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+
+var lastDist = sph.dist;
+function loop() {
+  requestAnimationFrame(loop);
+  if (spin) { sph.theta += 0.004; applyCamera(); }
+  if (Math.abs(sph.dist - lastDist) > radius * 0.01) {
+    lastDist = sph.dist;
+    sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+  }
+  renderer.render(scene, camera);
+}
+loop();
+
+} catch (err) {
+  fail("Viewer error: " + err.message);
+}
+</script>
+</body>
+</html>

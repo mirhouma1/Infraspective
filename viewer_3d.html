@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0d1117;
+    font-family:-apple-system, "Segoe UI", Roboto, sans-serif; color:#e6edf3; }
+  #root { display:flex; flex-direction:column; height:100vh; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; touch-action:none; }
+  #cv { display:block; width:100%; height:100%; }
+  #hud { position:absolute; left:10px; top:8px; font-size:11px; line-height:1.45;
+    color:#8b949e; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  #hud b { color:#e6edf3; font-size:12px; }
+  #legend { position:absolute; right:10px; top:8px; font-size:10.5px;
+    line-height:1.5; color:#c9d1d9; pointer-events:none; text-align:right;
+    text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+    margin-left:5px; vertical-align:middle; }
+  #err { position:absolute; left:10px; bottom:8px; color:#f85149; font-size:11px; }
+  #props { position:absolute; right:8px; bottom:8px; max-height:62%;
+    overflow:auto; background:rgba(13,17,23,.82); border:1px solid #30363d;
+    border-radius:8px; padding:8px 10px; font-size:10.5px; line-height:1.5;
+    color:#c9d1d9; display:none; max-width:60%; }
+  #props .g { color:#6e7681; text-transform:uppercase; letter-spacing:.05em;
+    font-size:9px; margin-top:6px; }
+  #props .g:first-child { margin-top:0; }
+  #props .k { color:#8b949e; display:inline-block; min-width:52px; }
+  #props .v { color:#e6edf3; }
+  #bar { flex:0 0 auto; background:#161b22; border-top:1px solid #30363d;
+    padding:6px 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .row + .row { margin-top:5px; }
+  button.t { background:#21262d; color:#8b949e; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer;
+    white-space:nowrap; }
+  button.t.on { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  button.v { background:#21262d; color:#c9d1d9; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; }
+  button.v:active { background:#1f6feb; color:#fff; }
+  select { background:#21262d; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:5px 7px; font-size:11px; flex:1 1 190px;
+    min-width:150px; }
+  .lbl { font-size:10px; color:#6e7681; text-transform:uppercase;
+    letter-spacing:.05em; margin-right:2px; }
+  #expl { font-size:11px; color:#8b949e; line-height:1.45; margin-top:6px;
+    padding-top:6px; border-top:1px solid #21262d; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="legend"></div>
+    <div id="props"></div>
+    <div id="err"></div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <span class="lbl">View</span>
+      <button class="v" id="vIso">Iso</button>
+      <button class="v" id="vWeb">Web face</button>
+      <button class="v" id="vFlg">Flange face</button>
+      <button class="v" id="vEnd">Section</button>
+      <button class="v" id="vFit">Fit</button>
+      <button class="t" id="vPan">Pan mode</button>
+      <button class="v" id="vSpin">Spin</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Show</span>
+      <button class="t" id="tDim">Dimensions</button>
+      <button class="t" id="tProps">Section data</button>
+      <button class="t" id="tLab">Labels</button>
+      <button class="t" id="tSup">Supports and K</button>
+      <button class="t" id="tAx">Axes</button>
+      <button class="t" id="tLoad">Load</button>
+      <button class="t" id="tBrace">Bracing</button>
+      <button class="t" id="tBuck">Buckled shape</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Behaviour</span>
+      <select id="mode"></select>
+    </div>
+    <div id="expl"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+<script>
+var DATA = __GEOMETRY_JSON__;
+
+function fail(m) { document.getElementById("err").textContent = m; }
+
+try {
+
+// =====================================================================
+// scene
+// =====================================================================
+var stage = document.getElementById("stage");
+var canvas = document.getElementById("cv");
+
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(DATA.bg || "#0d1117");
+
+function makeEnv() {
+  var c = document.createElement("canvas");
+  c.width = 16; c.height = 256;
+  var g = c.getContext("2d");
+  var grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.00, "#ffffff");
+  grad.addColorStop(0.35, "#c8d2dc");
+  grad.addColorStop(0.55, "#7d8894");
+  grad.addColorStop(0.75, "#3a424b");
+  grad.addColorStop(1.00, "#14181d");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  var tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  var p = new THREE.PMREMGenerator(renderer);
+  p.compileEquirectangularShader();
+  var env = p.fromEquirectangular(tex).texture;
+  p.dispose(); tex.dispose();
+  return env;
+}
+scene.environment = makeEnv();
+
+var key = new THREE.DirectionalLight(0xffffff, 1.35);
+key.position.set(1, 1.4, 1); scene.add(key);
+var fill = new THREE.DirectionalLight(0xffffff, 0.45);
+fill.position.set(-1, 0.3, -0.8); scene.add(fill);
+scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+
+// =====================================================================
+// text sprites
+// =====================================================================
+function label(text, color, scale) {
+  color = color || "#e6edf3";
+  scale = scale || 1.0;
+  var pad = 8, fs = 44;
+  var c = document.createElement("canvas");
+  var g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  var wpx = Math.ceil(g.measureText(text).width) + pad * 2;
+  c.width = wpx; c.height = fs + pad * 2;
+  g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  g.fillStyle = "rgba(13,17,23,0.72)";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = color;
+  g.textBaseline = "middle";
+  g.fillText(text, pad, c.height / 2);
+  var tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false }));
+  sp.userData.aspect = c.width / c.height;
+  sp.userData.baseScale = scale;
+  return sp;
+}
+
+var LABELS = [];          // every text sprite, for the Labels toggle
+var labelsOn = true;
+
+function regLabel(sp) { LABELS.push(sp); sp.visible = labelsOn; return sp; }
+
+function setLabels(on) {
+  labelsOn = on;
+  for (var i = 0; i < LABELS.length; i++) LABELS[i].visible = on;
+}
+
+function sizeLabels(root, unit) {
+  root.traverse(function (o) {
+    if (o.isSprite && o.userData.aspect) {
+      var h = unit * o.userData.baseScale;
+      o.scale.set(h * o.userData.aspect, h, 1);
+    }
+  });
+}
+
+// =====================================================================
+// geometry
+// =====================================================================
+function buildShape(outer, holes) {
+  var s = new THREE.Shape();
+  s.moveTo(outer[0][0], outer[0][1]);
+  for (var i = 1; i < outer.length; i++) s.lineTo(outer[i][0], outer[i][1]);
+  s.closePath();
+  for (var h = 0; h < (holes || []).length; h++) {
+    var lp = holes[h];
+    var p = new THREE.Path();
+    p.moveTo(lp[0][0], lp[0][1]);
+    for (var j = 1; j < lp.length; j++) p.lineTo(lp[j][0], lp[j][1]);
+    p.closePath();
+    s.holes.push(p);
+  }
+  return s;
+}
+
+var L = DATA.length_mm;
+var STEPS = 48;                     // enough sections for a smooth buckle
+
+var member = new THREE.Group();     // the steel itself
+var overlays = new THREE.Group();   // annotation groups
+scene.add(member); scene.add(overlays);
+
+var mat = new THREE.MeshStandardMaterial({
+  color: 0xffffff,
+  metalness: DATA.metalness !== undefined ? DATA.metalness : 0.85,
+  roughness: DATA.roughness !== undefined ? DATA.roughness : 0.3,
+  vertexColors: true,
+  side: THREE.DoubleSide
+});
+
+var meshes = [];
+var loops = [DATA.outer].concat(DATA.extra_loops || []);
+for (var li = 0; li < loops.length; li++) {
+  var shp = buildShape(loops[li], li === 0 ? (DATA.holes || []) : []);
+  var g = new THREE.ExtrudeGeometry(shp, {
+    depth: L, bevelEnabled: false, curveSegments: 12, steps: STEPS });
+  g.translate(0, 0, -L / 2);
+  g.computeVertexNormals();
+  // keep a pristine copy so the buckled shape can be applied and undone
+  g.userData.base = g.attributes.position.array.slice(0);
+  var m = new THREE.Mesh(g, mat);
+  member.add(m);
+  meshes.push(m);
+}
+
+// extrusion runs along local z; stand the column up so z becomes world y
+member.rotation.x = -Math.PI / 2;
+overlays.rotation.x = -Math.PI / 2;
+
+// =====================================================================
+// plate-element zone classification
+//
+// Each vertex is tagged flange / web / other from its position in the
+// cross-section, so Table 1 and Table 2 elements can be coloured.
+// =====================================================================
+var Z = DATA.zones || {};
+var kind = DATA.kind || "I";
+
+function zoneOf(x, y) {
+  if (kind === "I" || kind === "CHANNEL") {
+    if (Math.abs(y) >= (Z.flange_y || 1e9) - 0.51) return "flange";
+    return "web";
+  }
+  if (kind === "TEE") {
+    var top = (DATA.dims.d || 0) - (DATA.dims.y_bar || 0);
+    if (y >= top - (DATA.dims.t || 0) - 0.51) return "flange";
+    return "web";
+  }
+  if (kind === "RHS") {
+    if (Math.abs(y) >= (Z.flange_y || 1e9) - 0.51) return "flange";
+    if (Math.abs(x) >= (Z.web_x || 1e9) - 0.51) return "web";
+    return "flange";
+  }
+  if (kind === "CHS") return "wall";
+  return "leg";
+}
+
+var zoneCache = [];
+for (var mi = 0; mi < meshes.length; mi++) {
+  var pos = meshes[mi].geometry.userData.base;
+  var zc = new Array(pos.length / 3);
+  for (var vi = 0; vi < zc.length; vi++) {
+    zc[vi] = zoneOf(pos[vi * 3], pos[vi * 3 + 1]);
+  }
+  zoneCache.push(zc);
+}
+
+// =====================================================================
+// colour modes
+// =====================================================================
+var STEEL = new THREE.Color("#9fb0c0");
+var PASS = new THREE.Color("#3fb950");
+var FAIL = new THREE.Color("#f85149");
+var DIM = new THREE.Color("#4a5568");
+var CLS = [new THREE.Color("#3fb950"), new THREE.Color("#58a6ff"),
+           new THREE.Color("#d29922"), new THREE.Color("#f85149")];
+
+function utilColor(u) {
+  var c = new THREE.Color();
+  if (u === null || u === undefined) return STEEL.clone();
+  var x = Math.max(0, Math.min(1.3, u)) / 1.3;
+  c.setHSL((1 - x) * 0.33, 0.75, 0.5);
+  return c;
+}
+
+function stressColor(f) {           // 0 low .. 1 high
+  var c = new THREE.Color();
+  c.setHSL(0.66 - 0.66 * Math.max(0, Math.min(1, f)), 0.85, 0.52);
+  return c;
+}
+
+function elementFor(zone, list) {
+  if (!list) return null;
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].zone === zone) return list[i];
+  }
+  return null;
+}
+
+function paint(mode) {
+  var legend = [];
+  for (var mi = 0; mi < meshes.length; mi++) {
+    var geo = meshes[mi].geometry;
+    var n = geo.attributes.position.count;
+    var col = new Float32Array(n * 3);
+    var base = geo.userData.base;
+    for (var vi = 0; vi < n; vi++) {
+      var zone = zoneCache[mi][vi];
+      var c = STEEL.clone();
+
+      if (mode === "util") {
+        c = utilColor(DATA.results ? DATA.results.util : null);
+
+      } else if (mode === "t1") {
+        var e = elementFor(zone, DATA.elements_t1);
+        if (e) {
+          c = e.ok ? PASS.clone() : FAIL.clone();
+          var m = e.limit > 0 ? Math.min(1, e.ratio / e.limit) : 0;
+          c.lerp(new THREE.Color("#0d1117"), 0.35 * (1 - m));
+        } else { c = DIM.clone(); }
+
+      } else if (mode === "t2") {
+        var e2 = elementFor(zone, DATA.elements_t2);
+        if (e2 && e2.cls) { c = CLS[Math.min(3, e2.cls - 1)].clone(); }
+        else { c = DIM.clone(); }
+
+      } else if (mode === "slender") {
+        // distance from the centroidal axis that governs buckling
+        var r = DATA.results || {};
+        var ax = (r.gov_axis === "x-x") ? "x" : "y";
+        var v = (ax === "x") ? base[vi * 3 + 1] : base[vi * 3];
+        var half = (ax === "x") ? (DATA.dims.d || 1) / 2 : (DATA.dims.b || 1) / 2;
+        c = stressColor(Math.abs(v) / Math.max(half, 1));
+
+      } else if (mode === "axial") {
+        // uniform axial stress: the whole section is equally stressed
+        var u2 = DATA.results ? DATA.results.util : 0;
+        c = stressColor(Math.max(0, Math.min(1, u2 || 0)));
+
+      } else if (mode === "buckstress") {
+        // bending stress added by the buckled shape, peak at mid-height
+        var zz = base[vi * 3 + 2];
+        var envp = Math.cos(Math.PI * zz / L);
+        var r2 = DATA.results || {};
+        var ax2 = (r2.gov_axis === "x-x") ? "x" : "y";
+        var v2 = (ax2 === "x") ? base[vi * 3 + 1] : base[vi * 3];
+        var half2 = (ax2 === "x") ? (DATA.dims.d || 1) / 2 : (DATA.dims.b || 1) / 2;
+        c = stressColor(Math.abs(envp) * Math.abs(v2) / Math.max(half2, 1));
+      }
+      col[vi * 3] = c.r; col[vi * 3 + 1] = c.g; col[vi * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  }
+
+  // legend text
+  var html = "";
+  if (mode === "util" && DATA.results && DATA.results.util !== null) {
+    html = "Utilisation " + (100 * DATA.results.util).toFixed(0) + "%"
+         + "<span class='sw' style='background:"
+         + "#" + utilColor(DATA.results.util).getHexString() + "'></span>";
+  } else if (mode === "t1" && DATA.elements_t1) {
+    for (var i = 0; i < DATA.elements_t1.length; i++) {
+      var e = DATA.elements_t1[i];
+      html += e.label + " " + e.ratio.toFixed(2) + " / " + e.limit.toFixed(2)
+        + "<span class='sw' style='background:"
+        + (e.ok ? "#3fb950" : "#f85149") + "'></span><br>";
+    }
+  } else if (mode === "t2" && DATA.elements_t2) {
+    for (var j = 0; j < DATA.elements_t2.length; j++) {
+      var e3 = DATA.elements_t2[j];
+      html += e3.label + " Class " + e3.cls
+        + "<span class='sw' style='background:#"
+        + CLS[Math.min(3, e3.cls - 1)].getHexString() + "'></span><br>";
+    }
+  } else if (mode === "slender" || mode === "buckstress") {
+    html = "low<span class='sw' style='background:#"
+      + stressColor(0).getHexString() + "'></span>"
+      + "<span class='sw' style='background:#"
+      + stressColor(0.5).getHexString() + "'></span>"
+      + "<span class='sw' style='background:#"
+      + stressColor(1).getHexString() + "'></span> high";
+  }
+  document.getElementById("legend").innerHTML = html;
+}
+
+// =====================================================================
+// buckled shape
+// =====================================================================
+function bucklePath(zz, K) {
+  // zz runs -L/2 .. +L/2, returns a unit deflection
+  var s = (zz + L / 2) / L;              // 0 .. 1
+  if (K >= 1.8) return 1 - Math.cos(Math.PI * s / 2);      // cantilever
+  if (K <= 0.6) return (1 - Math.cos(2 * Math.PI * s)) / 2; // fixed-fixed
+  if (K <= 0.85) return Math.sin(Math.PI * s) * (1 - 0.35 * s); // fixed-pinned
+  return Math.sin(Math.PI * s);                            // pinned-pinned
+}
+
+var buckleOn = false;
+function applyBuckle(on) {
+  var r = DATA.results || {};
+  var ax = (r.gov_axis === "x-x") ? 1 : 0;   // 0 -> x, 1 -> y
+  var K = 1.0;
+  if (DATA.supports) {
+    var sp = (r.gov_axis === "x-x") ? DATA.supports.x : DATA.supports.y;
+    if (sp && sp.K) K = sp.K;
+  }
+  var amp = on ? Math.max(L * 0.045, 40) : 0;
+  for (var mi = 0; mi < meshes.length; mi++) {
+    var geo = meshes[mi].geometry;
+    var p = geo.attributes.position.array;
+    var b = geo.userData.base;
+    for (var vi = 0; vi < p.length / 3; vi++) {
+      p[vi * 3] = b[vi * 3];
+      p[vi * 3 + 1] = b[vi * 3 + 1];
+      p[vi * 3 + 2] = b[vi * 3 + 2];
+      if (on) p[vi * 3 + ax] += amp * bucklePath(b[vi * 3 + 2], K);
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+}
+
+// =====================================================================
+// annotation groups
+// =====================================================================
+var D = DATA.dims || {};
+var halfB = (D.b || D.d || 100) / 2;
+var halfD = (D.d || 100) / 2;
+var span = Math.max(halfB, halfD);
+var UNIT = Math.max(L * 0.028, span * 0.30);   // label height
+
+function lineGeom(a, b) {
+  return new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2])]);
+}
+function addLine(grp, a, b, color) {
+  grp.add(new THREE.Line(lineGeom(a, b),
+    new THREE.LineBasicMaterial({ color: color, depthTest: false })));
+}
+function addLabel(grp, text, pos, color) {
+  var sp = regLabel(label(text, color));
+  sp.position.set(pos[0], pos[1], pos[2]);
+  grp.add(sp);
+  return sp;
+}
+
+// ---- dimensions -----------------------------------------------------
+var gDim = new THREE.Group(); overlays.add(gDim);
+(function () {
+  var off = span * 1.9;
+  // member length along the extrusion axis
+  addLine(gDim, [off, 0, -L / 2], [off, 0, L / 2], 0x58a6ff);
+  addLine(gDim, [off * 0.9, 0, -L / 2], [off * 1.1, 0, -L / 2], 0x58a6ff);
+  addLine(gDim, [off * 0.9, 0, L / 2], [off * 1.1, 0, L / 2], 0x58a6ff);
+  addLabel(gDim, "L = " + (L / 1000).toFixed(2) + " m", [off * 1.25, 0, 0],
+           "#58a6ff");
+  // depth d
+  if (D.d) {
+    addLine(gDim, [-halfB - span * 0.5, -halfD, -L / 2],
+                  [-halfB - span * 0.5, halfD, -L / 2], 0x8b949e);
+    addLabel(gDim, "d = " + D.d.toFixed(0),
+             [-halfB - span * 1.0, 0, -L / 2], "#c9d1d9");
+  }
+  // width b
+  if (D.b) {
+    addLine(gDim, [-halfB, -halfD - span * 0.5, -L / 2],
+                  [halfB, -halfD - span * 0.5, -L / 2], 0x8b949e);
+    addLabel(gDim, "b = " + D.b.toFixed(0),
+             [0, -halfD - span * 0.95, -L / 2], "#c9d1d9");
+  }
+  // clear web depth h, the width Cl. 11.3.2 d) uses
+  if (D.h) {
+    addLine(gDim, [halfB + span * 0.45, -D.h / 2, -L / 2],
+                  [halfB + span * 0.45, D.h / 2, -L / 2], 0x7ee787);
+    addLabel(gDim, "h = " + D.h.toFixed(1),
+             [halfB + span * 0.95, 0, -L / 2], "#7ee787");
+  }
+  // t and w
+  if (D.t) {
+    addLabel(gDim, "t = " + D.t.toFixed(1),
+             [halfB * 1.25, halfD * 0.92, -L / 2], "#8b949e");
+  }
+  if (D.w) {
+    addLabel(gDim, "w = " + D.w.toFixed(1), [span * 0.35, 0, -L / 2],
+             "#8b949e");
+  }
+})();
+
+// ---- supports and K -------------------------------------------------
+var gSup = new THREE.Group(); overlays.add(gSup);
+function supportSymbol(type, zEnd, sign) {
+  var g = new THREE.Group();
+  var s = span * 0.85;
+  var t = String(type || "").toLowerCase();
+  var col = 0xd29922;
+  if (t.indexOf("fixed") >= 0) {
+    var pl = new THREE.Mesh(
+      new THREE.BoxGeometry(s * 2.4, s * 2.4, s * 0.22),
+      new THREE.MeshStandardMaterial({ color: 0xd29922, metalness: 0.2,
+        roughness: 0.7 }));
+    pl.position.set(0, 0, zEnd + sign * s * 0.12);
+    g.add(pl);
+    for (var i = -2; i <= 2; i++) {
+      addLine(g, [i * s * 0.5, -s * 1.2, zEnd + sign * s * 0.45],
+                 [i * s * 0.5 + s * 0.3, s * 1.2, zEnd + sign * s * 0.45], col);
+    }
+  } else if (t.indexOf("guided") >= 0 || t.indexOf("roller") >= 0) {
+    var pl2 = new THREE.Mesh(
+      new THREE.BoxGeometry(s * 2.4, s * 2.4, s * 0.18),
+      new THREE.MeshStandardMaterial({ color: 0xd29922, metalness: 0.2,
+        roughness: 0.7 }));
+    pl2.position.set(0, 0, zEnd + sign * s * 0.5);
+    g.add(pl2);
+    for (var k = -1; k <= 1; k++) {
+      var ro = new THREE.Mesh(new THREE.SphereGeometry(s * 0.22, 12, 10),
+        new THREE.MeshStandardMaterial({ color: 0xd29922 }));
+      ro.position.set(k * s * 0.8, 0, zEnd + sign * s * 0.2);
+      g.add(ro);
+    }
+  } else if (t.indexOf("pinned") >= 0) {
+    var cone = new THREE.Mesh(new THREE.ConeGeometry(s * 0.85, s * 1.1, 4),
+      new THREE.MeshStandardMaterial({ color: 0xd29922, metalness: 0.2,
+        roughness: 0.7 }));
+    cone.rotation.x = sign > 0 ? -Math.PI / 2 : Math.PI / 2;
+    cone.position.set(0, 0, zEnd + sign * s * 0.55);
+    g.add(cone);
+  }
+  return g;
+}
+(function () {
+  if (!DATA.supports) return;
+  var gov = DATA.supports.y || DATA.supports.x;
+  if (!gov) return;
+  gSup.add(supportSymbol(gov.bottom, -L / 2, -1));
+  gSup.add(supportSymbol(gov.top, L / 2, 1));
+  var txt = [];
+  if (DATA.supports.x) txt.push("Kx = " + DATA.supports.x.K.toFixed(2));
+  if (DATA.supports.y) txt.push("Ky = " + DATA.supports.y.K.toFixed(2));
+  if (DATA.supports.z) txt.push("Kz = " + DATA.supports.z.K.toFixed(2));
+  addLabel(gSup, txt.join("   "), [0, span * 1.7, L / 2 * 0.55], "#d29922");
+  if (gov.bottom) {
+    addLabel(gSup, String(gov.bottom), [0, -span * 1.9, -L / 2], "#d29922");
+  }
+  if (gov.top) {
+    addLabel(gSup, String(gov.top), [0, span * 1.9, L / 2], "#d29922");
+  }
+})();
+
+// ---- axes -----------------------------------------------------------
+var gAx = new THREE.Group(); overlays.add(gAx);
+(function () {
+  var a = span * 2.2;
+  var defs = [
+    [[a, 0, 0], 0xff7b72, "x  weak axis bending"],
+    [[0, a, 0], 0x7ee787, "y  strong axis bending"],
+    [[0, 0, a * 1.6], 0x79c0ff, "z  member axis"]
+  ];
+  for (var i = 0; i < defs.length; i++) {
+    addLine(gAx, [0, 0, 0], defs[i][0], defs[i][1]);
+    var sp = regLabel(label(defs[i][2].split("  ")[0],
+                   "#" + new THREE.Color(defs[i][1]).getHexString(), 1.15));
+    sp.position.set(defs[i][0][0] * 1.12, defs[i][0][1] * 1.12,
+                    defs[i][0][2] * 1.12);
+    gAx.add(sp);
+  }
+  addLabel(gAx, "x = weak axis   y = strong axis", [0, -span * 2.6, 0],
+           "#8b949e");
+})();
+
+// ---- load arrows ----------------------------------------------------
+var gLoad = new THREE.Group(); overlays.add(gLoad);
+(function () {
+  if (!DATA.load || !DATA.load.Cf_kN) return;
+  var s = span * 0.55;
+  var len = Math.max(L * 0.16, span * 2.2);
+  var col = 0xff7b72;
+  function arrow(zStart, dir) {
+    var g = new THREE.Group();
+    var sh = new THREE.Mesh(
+      new THREE.CylinderGeometry(s * 0.16, s * 0.16, len, 12),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.1,
+        roughness: 0.6 }));
+    sh.rotation.x = Math.PI / 2;
+    sh.position.set(0, 0, zStart + dir * len / 2);
+    g.add(sh);
+    var hd = new THREE.Mesh(new THREE.ConeGeometry(s * 0.42, s * 1.0, 16),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.1,
+        roughness: 0.6 }));
+    hd.rotation.x = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+    hd.position.set(0, 0, zStart + dir * s * 0.5);
+    g.add(hd);
+    return g;
+  }
+  gLoad.add(arrow(L / 2, 1));         // pushing down onto the top
+  gLoad.add(arrow(-L / 2, -1));       // pushing up onto the bottom
+  addLabel(gLoad, "Cf = " + DATA.load.Cf_kN.toFixed(0) + " kN",
+           [span * 0.9, 0, L / 2 + len * 0.75], "#ff7b72");
+  addLabel(gLoad, "Cf = " + DATA.load.Cf_kN.toFixed(0) + " kN",
+           [span * 0.9, 0, -L / 2 - len * 0.75], "#ff7b72");
+})();
+
+// ---- bracing --------------------------------------------------------
+var gBrace = new THREE.Group(); overlays.add(gBrace);
+(function () {
+  if (!DATA.supports) return;
+  var Lx = DATA.supports.x ? DATA.supports.x.L : L;
+  var Ly = DATA.supports.y ? DATA.supports.y.L : L;
+  var total = Math.max(Lx, Ly, L);
+  function ring(zz, color, txt) {
+    var pts = [];
+    for (var a = 0; a <= 36; a++) {
+      var th = a / 36 * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(th) * span * 1.35,
+                                 Math.sin(th) * span * 1.35, zz));
+    }
+    gBrace.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: color, depthTest: false })));
+    if (txt) addLabel(gBrace, txt, [span * 1.6, span * 1.0, zz],
+                      "#" + new THREE.Color(color).getHexString());
+  }
+  // intermediate braces wherever an unbraced length is shorter than the
+  // overall member
+  [["x", 0xff7b72], ["y", 0x7ee787]].forEach(function (pair) {
+    var ax = pair[0];
+    var sp = DATA.supports[ax];
+    if (!sp || !sp.L || sp.L <= 0) return;
+    var n = Math.round(total / sp.L);
+    if (n <= 1) return;
+    for (var i = 1; i < n; i++) {
+      ring(-total / 2 + i * sp.L, pair[1],
+           ax + " brace at " + (i * sp.L / 1000).toFixed(2) + " m");
+    }
+  });
+  var t2 = [];
+  if (DATA.supports.x) t2.push("Lx = " + (DATA.supports.x.L / 1000).toFixed(2) + " m");
+  if (DATA.supports.y) t2.push("Ly = " + (DATA.supports.y.L / 1000).toFixed(2) + " m");
+  if (DATA.supports.z) t2.push("Lz = " + (DATA.supports.z.L / 1000).toFixed(2) + " m");
+  addLabel(gBrace, t2.join("   "), [0, span * 2.0, -L / 2 * 0.55], "#8b949e");
+})();
+
+// =====================================================================
+// camera and orbit
+// =====================================================================
+var FOV = 32;
+var radius = Math.sqrt(L * L / 4 + span * span) * 1.05;
+var camera = new THREE.PerspectiveCamera(FOV, 1, radius * 0.004, radius * 400);
+var target = new THREE.Vector3(0, 0, 0);
+var sph = { theta: 0.85, phi: 1.25, dist: radius * 2.6 };
+var spin = false;
+var panMode = false;
+
+// Distance at which an object of the given height and width just fits,
+// allowing for the current aspect ratio. margin > 1 leaves breathing room.
+function fitDist(objH, objW, margin) {
+  var vt = Math.tan(FOV * Math.PI / 360);
+  var asp = camera.aspect || 1;
+  var dH = (objH / 2) / vt;
+  var dW = (objW / 2) / (asp * vt);
+  return Math.max(dH, dW) * (margin || 1.15);
+}
+
+// The whole member, including the support symbols and load arrows that
+// stick out past each end.
+function fitWhole(margin) {
+  var arrow = (DATA.load && DATA.load.Cf_kN)
+    ? Math.max(L * 0.16, span * 2.2) * 1.35 : span * 1.6;
+  return fitDist(L + 2 * arrow, span * 3.4, margin || 1.12);
+}
+
+function applyCamera() {
+  sph.phi = Math.max(0.02, Math.min(Math.PI - 0.02, sph.phi));
+  sph.dist = Math.max(radius * 0.05, Math.min(radius * 40, sph.dist));
+  var sp = Math.sin(sph.phi);
+  camera.position.set(
+    target.x + sph.dist * sp * Math.sin(sph.theta),
+    target.y + sph.dist * Math.cos(sph.phi),
+    target.z + sph.dist * sp * Math.cos(sph.theta));
+  camera.lookAt(target);
+}
+
+// Slide the look-at point across the screen plane.
+//
+// The camera basis is derived straight from the orbit angles rather than
+// read back out of the matrix, so panning stays correct at any angle and
+// does not depend on the renderer having updated its transforms yet.
+//
+//   right = ( cos t,          0,      -sin t        )
+//   up    = (-sin t cos p,  sin p,  -cos t cos p    )
+function pan(dxPx, dyPx) {
+  var hpx = stage.clientHeight || 1;
+  var worldPerPx = 2 * sph.dist * Math.tan(FOV * Math.PI / 360) / hpx;
+  var st = Math.sin(sph.theta), ct = Math.cos(sph.theta);
+  var sp = Math.sin(sph.phi), cp = Math.cos(sph.phi);
+  var rx = ct, ry = 0, rz = -st;
+  var ux = -st * cp, uy = sp, uz = -ct * cp;
+  target.x += (-dxPx * rx + dyPx * ux) * worldPerPx;
+  target.y += (-dxPx * ry + dyPx * uy) * worldPerPx;
+  target.z += (-dxPx * rz + dyPx * uz) * worldPerPx;
+  applyCamera();
+}
+
+applyCamera();
+
+var ptrs = {}, last = null, pinch0 = null, mid0 = null;
+canvas.addEventListener("pointerdown", function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  if (Object.keys(ptrs).length === 1) last = { x: e.clientX, y: e.clientY };
+  spin = false;
+});
+canvas.addEventListener("pointermove", function (e) {
+  if (!ptrs[e.pointerId]) return;
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var ids = Object.keys(ptrs);
+
+  if (ids.length === 1 && last) {
+    var dx = e.clientX - last.x;
+    var dy = e.clientY - last.y;
+    if (panMode) {
+      pan(dx, dy);
+    } else {
+      sph.theta -= dx * 0.009;
+      sph.phi -= dy * 0.009;
+      applyCamera();
+    }
+    last = { x: e.clientX, y: e.clientY };
+
+  } else if (ids.length === 2) {
+    // two fingers pinch to zoom and drag to pan at the same time
+    var a = ptrs[ids[0]], b = ptrs[ids[1]];
+    var d2 = Math.hypot(a.x - b.x, a.y - b.y);
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (pinch0 === null) { pinch0 = d2; mid0 = { x: mx, y: my }; }
+    if (d2 > 0) { sph.dist *= pinch0 / d2; pinch0 = d2; }
+    if (mid0) { pan(mx - mid0.x, my - mid0.y); mid0 = { x: mx, y: my }; }
+    applyCamera();
+  }
+});
+function up(e) {
+  delete ptrs[e.pointerId];
+  if (Object.keys(ptrs).length < 2) { pinch0 = null; mid0 = null; }
+  if (Object.keys(ptrs).length === 0) last = null;
+  // hand the remaining finger a fresh origin so the view does not jump
+  var rest = Object.keys(ptrs);
+  if (rest.length === 1) last = { x: ptrs[rest[0]].x, y: ptrs[rest[0]].y };
+}
+canvas.addEventListener("pointerup", up);
+canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  sph.dist *= (1 + (e.deltaY > 0 ? 0.12 : -0.12));
+  applyCamera();
+}, { passive: false });
+
+function setView(th, ph, dist) {
+  spin = false;
+  target.set(0, 0, 0);
+  sph.theta = th; sph.phi = ph; sph.dist = dist;
+  applyCamera();
+  sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+}
+document.getElementById("vIso").onclick = function () {
+  setView(0.85, 1.25, fitWhole(1.22));
+};
+document.getElementById("vWeb").onclick = function () {
+  setView(0, 1.5708, fitWhole(1.14));
+};
+document.getElementById("vFlg").onclick = function () {
+  setView(1.5708, 1.5708, fitWhole(1.14));
+};
+document.getElementById("vEnd").onclick = function () {
+  // looking straight down the member axis, so only the cross-section and
+  // the support plate need to fit
+  setView(0, 0.05, fitDist(span * 3.2, span * 3.2, 1.25));
+};
+document.getElementById("vFit").onclick = function () {
+  setView(sph.theta, sph.phi, fitWhole(1.16));
+};
+document.getElementById("vSpin").onclick = function () { spin = !spin; };
+(function () {
+  var pb = document.getElementById("vPan");
+  pb.onclick = function () {
+    panMode = !panMode;
+    pb.classList.toggle("on", panMode);
+  };
+})();
+
+// =====================================================================
+// toggles
+// =====================================================================
+function bindToggle(id, group, initial, after) {
+  var b = document.getElementById(id);
+  var on = !!initial;
+  function apply() {
+    b.classList.toggle("on", on);
+    if (group) group.visible = on;
+    if (after) after(on);
+  }
+  b.onclick = function () { on = !on; apply(); };
+  apply();
+  // returns a setter so other controls can drive this toggle directly
+  return function (want) { if (want !== on) { on = want; apply(); } };
+}
+// ---- section data panel --------------------------------------------
+// DATA.props comes from the page's display whitelist, so this shows the
+// same calculation inputs the report uses and nothing else.
+(function () {
+  var el = document.getElementById("props");
+  var rows = DATA.props || [];
+  if (!rows.length) { el.innerHTML = "<div class='g'>No data</div>"; return; }
+  var cur = null, html = "";
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.group !== cur) {
+      cur = r.group;
+      html += "<div class='g'>" + cur + "</div>";
+    }
+    var u = r.unit ? (" " + r.unit) : "";
+    u = u.replace("mm2", "mm2").replace("mm4", "mm4").replace("mm6", "mm6");
+    html += "<div><span class='k'>" + r.symbol + "</span>"
+         + "<span class='v'>" + r.value + u + "</span></div>";
+  }
+  el.innerHTML = html;
+})();
+
+bindToggle("tDim", gDim, false);
+bindToggle("tSup", gSup, true);
+bindToggle("tAx", gAx, true);
+bindToggle("tLoad", gLoad, !!(DATA.load && DATA.load.Cf_kN));
+bindToggle("tBrace", gBrace, false);
+var setBuckle = bindToggle("tBuck", null, false, function (on) {
+  buckleOn = on; applyBuckle(on); paint(currentMode);
+});
+bindToggle("tProps", null, false, function (on) {
+  document.getElementById("props").style.display = on ? "block" : "none";
+});
+bindToggle("tLab", null, true, function (on) { setLabels(on); });
+
+// =====================================================================
+// behaviour dropdown
+// =====================================================================
+var MODES = [
+  ["plain", "Plain steel", "The member as fabricated. No result mapped."],
+  ["axial", "Axial stress, Cf / Cr",
+   "Axial compression is uniform over the whole cross-section, so every "
+   + "fibre carries the same stress. The colour is the utilisation."],
+  ["t1", "Table 1 local buckling",
+   "Each plate element is coloured by its own Table 1 check. Green passes, "
+   + "red exceeds the limit. A darker shade means the ratio is well below "
+   + "the limit, so that element has more reserve."],
+  ["t2", "Table 2 section class",
+   "Each element is coloured by the class its width-to-thickness ratio "
+   + "earns in flexural compression. Class 1 green through Class 4 red."],
+  ["slender", "Slenderness, KL/r",
+   "Colour is the distance of each fibre from the axis the member buckles "
+   + "about. That distance is what r measures, so the blue core contributes "
+   + "little to r while the red extremities do most of the work."],
+  ["buckstress", "Buckling bending stress",
+   "Once the member bows, the axial load acts at an eccentricity and adds "
+   + "bending. That added stress peaks at mid-height and at the fibres "
+   + "furthest from the buckling axis, which is where red appears."],
+  ["util", "Utilisation Cf / Cr",
+   "The whole member coloured by the demand to capacity ratio. Green is "
+   + "lightly loaded, red is at or beyond capacity."]
+];
+
+var sel = document.getElementById("mode");
+for (var i = 0; i < MODES.length; i++) {
+  var o = document.createElement("option");
+  o.value = MODES[i][0]; o.textContent = MODES[i][1];
+  sel.appendChild(o);
+}
+var currentMode = "plain";
+function setMode(m) {
+  currentMode = m;
+  paint(m);
+  for (var i = 0; i < MODES.length; i++) {
+    if (MODES[i][0] === m) {
+      document.getElementById("expl").textContent = MODES[i][2];
+    }
+  }
+  // the buckling stress map only makes sense on a bowed member
+  if (m === "buckstress") { setBuckle(true); }
+}
+sel.onchange = function () { setMode(sel.value); };
+setMode("plain");
+
+// =====================================================================
+// hud
+// =====================================================================
+(function () {
+  var r = DATA.results || {};
+  var h = "<b>" + (DATA.label || "") + "</b><br>";
+  h += (DATA.family_label || "") + "<br>";
+  h += "L = " + (L / 1000).toFixed(2) + " m";
+  if (r.KLr) h += "<br>KL/r = " + r.KLr.toFixed(1)
+                + "  (" + (r.gov_axis || "") + " governs)";
+  if (r.Cr) h += "<br>Cr = " + r.Cr.toFixed(0) + " kN";
+  if (DATA.load && DATA.load.Cf_kN) {
+    h += "<br>Cf = " + DATA.load.Cf_kN.toFixed(0) + " kN";
+  }
+  document.getElementById("hud").innerHTML = h;
+})();
+
+// =====================================================================
+// resize and loop
+// =====================================================================
+function resize() {
+  var w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+}
+window.addEventListener("resize", resize);
+resize();
+// open framed on the whole member rather than a fixed multiple of radius
+sph.dist = fitWhole(1.22);
+applyCamera();
+sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+
+var lastDist = sph.dist;
+function loop() {
+  requestAnimationFrame(loop);
+  if (spin) { sph.theta += 0.004; applyCamera(); }
+  if (Math.abs(sph.dist - lastDist) > radius * 0.01) {
+    lastDist = sph.dist;
+    sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+  }
+  renderer.render(scene, camera);
+}
+loop();
+
+} catch (err) {
+  fail("Viewer error: " + err.message);
+}
+</script>
+</body>
+</html>

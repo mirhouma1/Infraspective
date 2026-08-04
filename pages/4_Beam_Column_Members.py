@@ -1,369 +1,799 @@
+"""
+pages/4_Beam_Column_Members.py
+
+CSA S16 beam-column calculator. Self-contained: section loading, every
+clause check and the page itself live in this file.
+
+Section data is read the same way 2_Compression.py reads it, through
+sst12.load_all_tables() with a direct r.get() on the keys sst12 already
+publishes for the shared W and HSS sheets. sst12.py is not modified.
+
+Covers Chapter 5 end to end:
+
+  5.2     axial tension and bending        cl 13.9.1, 13.9.2 a) b)
+  5.3.2.1 local buckling                   Table 1 axial, Table 2 flexure
+                                           plus axial with the web limits
+                                           reduced by Cf/phi.Cy
+  5.3.2.2 cross-sectional strength         cl 13.8.2 a) / 13.8.3 a)
+  5.3.2.3 overall member strength          cl 13.8.2 b) / 13.8.3 b)
+  5.3.2.4 lateral torsional buckling       cl 13.8.2 c) / 13.8.3 c)
+          moment amplification U1          cl 13.8.4
+          equivalent moment factor omega1  cl 13.8.5 a) b) c)
+          Mr laterally supported           cl 13.5
+          Mr laterally unsupported         cl 13.6
+
+Three points differ from the previous revision of this page, all
+deliberate and all conservative.
+
+1. The coefficients follow the clause, not the class alone. Cl. 13.8.2 is
+   written for Class 1 and Class 2 sections OF I-SHAPED MEMBERS. Anything
+   else, a Class 3 W or a Class 1 HSS alike, takes Cl. 13.8.3, where the
+   0.85 on the x term and the 0.6 or beta on the y term all become 1.0.
+
+2. Cr for check b) is taken on the axis of bending when the bending is
+   uniaxial, per Cl. 13.8.2 b) i), not always on the governing axis.
+
+3. U1 is forced to 1.0 in an unbraced frame, per Cl. 13.8.2 b) iii) and
+   c) iv), and check a) is reported but not counted because it applies to
+   braced frames only.
+
+Section class is now computed from the geometry through Table 2 rather
+than read from a "Class" column, so the web limits carry the axial
+reduction that makes a beam-column classification differ from a beam one.
+
+A Class 4 section returns Mr = None unless the Se option is ticked. It
+never contributes a zero moment term to an interaction equation, because
+that reads as a pass.
+"""
+
 from __future__ import annotations
+
 import math
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
-from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+from _theme import (apply_theme, render_sidebar_logo, render_footer,
+                    gate_disclaimer)
 
-# ============================================================
-# CONFIG
-# ============================================================
-APP_TITLE = "Beam-Column Check (CSA S16)"
 import sys as _sys
+from pathlib import Path
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import sst12
 
-PHI = 0.9     # resistance factor for tension, compression, flexure
-N_CSA = 1.34  # CSA S16 column curve exponent (hot-rolled)
+try:
+    import viewer_3d_beamcolumn
+    HAS_VIEWER = True
+except Exception:
+    HAS_VIEWER = False
+
+APP_TITLE = "Beam-Column Members"
+DASH = "-"
+PHI_DEFAULT = 0.9
+E_DEFAULT = 200000.0
+G_DEFAULT = 77000.0
 
 
 # ============================================================
-# CSV LOADING
+# FORMATTING
 # ============================================================
-def _norm(s: str) -> str:
-    out = (
-        str(s).strip().lower()
-        .replace("(", "").replace(")", "")
-        .replace("[", "").replace("]", "")
-        .replace("/", "_").replace("-", "_")
-        .replace(" ", "_").replace("^", "")
-    )
-    return "".join(c for c in out if (c.isalnum() or c == "_") and ord(c) < 128)
+def num(x: Any, nd: int = 2) -> str:
+    if x is None:
+        return DASH
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    if not math.isfinite(v):
+        return "inf"
+    if abs(v) >= 100000:
+        return "{:,.0f}".format(v)
+    return "{:,.{}f}".format(v, nd)
 
 
-def _pick(rec: Dict[str, Any], candidates: List[str]) -> Optional[Any]:
-    norm_map = {_norm(k): v for k, v in rec.items()}
-    for cand in candidates:
-        ck = _norm(cand)
-        if ck in norm_map and norm_map[ck] not in (None, "", " "):
-            return norm_map[ck]
-    return None
+def tx(x: Any, nd: int = 2) -> str:
+    return num(x, nd).replace(",", r"\,")
 
 
-def _flt(x: Any) -> Optional[float]:
+def uc(v) -> str:
+    return DASH if v is None else "{:.4f}".format(v)
+
+
+def verdict(v) -> str:
+    if v is None:
+        return "INCOMPLETE"
+    return "PASS" if v <= 1.0 else "FAIL"
+
+
+def _f(x) -> Optional[float]:
     if x in (None, ""):
         return None
     try:
         return float(str(x).replace(",", "").strip())
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
-_ALIASES: Dict[str, List[str]] = {
-    "designation": [
-        "Designation", "designation", "Section", "section", "shape", "name",
-    ],
-    "Area": [
-        "Area (mm2)", "Area (mmý)", "Area (mm²)", "Area",
-    ],
-    "Ix": [
-        "Ix (10^6 mm4)", "Ix (10^6 mm?)", "Ix (10^6 mm4)", "Ix (10e6 mm4)",
-        "Ix (10^6 mm?)", "Ix (106 mm?)", "Ix (10 mm)", "Ix",
-        "I (10? mm?)", "I (10^4 mm4)", "I",
-    ],
-    "Iy": [
-        "Iy (10^6 mm4)", "Iy (10^6 mm?)", "Iy (10e6 mm4)",
-        "Iy (10 mm)", "Iy",
-    ],
-    "Sx": [
-        "Sx (10^3 mm3)", "Sx (10^3 mm?)", "Sx (10e3 mm3)",
-        "Sx (10 mm)", "Sx",
-        "S (10? mm?)", "S (10^3 mm3)", "S",
-    ],
-    "Sy": [
-        "Sy (10^3 mm3)", "Sy (10^3 mm?)", "Sy (10e3 mm3)",
-        "Sy (10 mm)", "Sy",
-    ],
-    "Zx": [
-        "Zx (10^3 mm3)", "Zx (10^3 mm?)", "Zx (10e3 mm3)",
-        "Zx (10 mm)", "Zx",
-        "Z (10? mm?)", "Z (10^3 mm3)", "Z",
-    ],
-    "Zy": [
-        "Zy (10^3 mm3)", "Zy (10^3 mm?)", "Zy (10e3 mm3)",
-        "Zy (10 mm)", "Zy",
-    ],
-    "rx": ["rx (mm)", "rx", "r (mm)", "r"],
-    "ry": ["ry (mm)", "ry", "r (mm)", "r"],
-    "J":  ["J (10^3 mm4)", "J (10^3 mm?)", "J (10e3 mm4)", "J"],
-    "Cw": ["Cw (10^9 mm6)", "Cw (10^9 mm?)", "Cw (10e9 mm6)", "Cw"],
-    "d":  ["Depth d (mm)", "Depth (mm)", "d (mm)", "Outside Diameter (mm)", "d"],
-    "b":  ["Flange Width b (mm)", "Width (mm)", "b (mm)", "b"],
-    "t":  ["Flange Thickness t (mm)", "Wall Thickness (mm)", "tf (mm)", "t"],
-    "w":  ["Web Thickness w (mm)", "tw (mm)", "w"],
-    "section_class": ["Class", "class", "Section Class", "section class"],
-    "ba_t": ["ba/t", "b_a/t", "ba_t", "b_a_over_t"],
-    "h_w":  ["h/w", "h_w", "h_over_w"],
-}
-
-_MULT: Dict[str, float] = {
-    "Ix": 1e6, "Iy": 1e6,
-    "Sx": 1e3, "Sy": 1e3,
-    "Zx": 1e3, "Zy": 1e3,
-    "J": 1e3,
-    "Cw": 1e9,
-}
-
-
-def _canonicalize(rec: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for sym, aliases in _ALIASES.items():
-        v = _pick(rec, aliases)
-        if v is not None:
-            out[sym] = v
-    return out
-@st.cache_data(ttl=120)
-def load_all_shapes() -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    merged: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
-    # Read W + HSS section records directly from the SST12.1 workbook
-    for rec in sst12.shared_records():
-        c = _canonicalize(rec)
-        des = c.get("designation")
-        if des:
-            # Only keep sections this page can build (needs Area/rx/ry).
-            if (_flt(c.get("Area")) is None
-                    or _flt(c.get("rx")) is None
-                    or _flt(c.get("ry")) is None):
-                continue
-            key = str(des).strip()
-            merged[key] = c
-            order.append(key)
-    seen: set = set()
-    uniq = [k for k in order if not (k in seen or seen.add(k))]
-    import re as _re
-    uniq.sort(key=lambda s: [int(c) if c.isdigit() else c.lower() for c in _re.split(r"(\d+)", s)])
-    return merged, uniq
-
-
-# ============================================================
-# SAFE PROPERTY READERS
-# ============================================================
-def get_raw_prop(shape: Dict[str, Any], sym: str) -> Optional[float]:
-    return _flt(shape.get(sym))
-
-
-def get_prop(shape: Dict[str, Any], sym: str) -> Optional[float]:
-    v = _flt(shape.get(sym))
-    if v is None:
+def _sd(a, b) -> Optional[float]:
+    try:
+        if b in (None, 0):
+            return None
+        return float(a) / float(b)
+    except (TypeError, ValueError, ZeroDivisionError):
         return None
-    return v * _MULT.get(sym, 1.0)
+
+
+def _nat_key(s):
+    return [int(c) if c.isdigit() else c.lower()
+            for c in re.split(r"(\d+)", str(s))]
 
 
 # ============================================================
-# CSA S16 CLAUSE 13.5 — MOMENT RESISTANCE (LATERALLY SUPPORTED)
+# SECTION SOURCE
+#
+# Read exactly the way 2_Compression.py reads it. sst12 publishes short
+# symbols on the shared W and HSS sheets, so this is a direct r.get() on
+# each one. The only addition is the six keys Cl. 13.8 needs and
+# Cl. 13.3 does not: Ix, Iy, Zx, Zy, Sx, Sy.
+#
+# Only the tables a beam-column check can complete are loaded. The
+# channel, WT, single-angle and double-angle sheets come through the _mm
+# normaliser without section moduli and without J or Cw, so Mr under
+# Cl. 13.5 and Mu under Cl. 13.6 cannot be formed for them.
 # ============================================================
-def calc_Mr_clause_13_5(
-    shape: Dict[str, Any],
-    Fy_MPa: float,
-    axis: str = "x",
-) -> Dict[str, Any]:
-    designation = str(shape.get("designation", "Unknown")).strip()
-    cls_raw = get_raw_prop(shape, "section_class")
-    if cls_raw is None:
-        raise ValueError(f"{designation}: 'Class' column not found in CSV.")
-    section_class = int(cls_raw)
+FAMILIES = [
+    ("W", "W shapes", "w", "I", True),
+    ("HSS_SQUARE", "HSS square (SHS)", "hss_square", "RHS", False),
+    ("HSS_RECT", "HSS rectangular (RHS)", "hss_rect", "RHS", False),
+    ("HSS_ROUND", "HSS round (CHS)", "hss_round", "CHS", False),
+]
+FAMILY_ORDER = [f[0] for f in FAMILIES]
+FAMILY_LABEL = dict((f[0], f[1]) for f in FAMILIES)
+FAMILY_KIND = dict((f[0], f[3]) for f in FAMILIES)
+FAMILY_LTB = dict((f[0], f[4]) for f in FAMILIES)
 
-    axis = axis.lower()
-    if axis == "x":
-        Z = get_prop(shape, "Zx")
-        S = get_prop(shape, "Sx")
-        axis_label = "x"
-    elif axis == "y":
-        Z = get_prop(shape, "Zy")
-        S = get_prop(shape, "Sy")
-        axis_label = "y"
-    else:
-        raise ValueError("axis must be 'x' or 'y'")
+EXCLUDED_NOTE = (
+    "Channels, WTs, single angles and double angles are not offered here. "
+    "Those sheets come through sst12.py without section moduli and without "
+    "J or Cw, so Mr under Cl. 13.5 and Mu under Cl. 13.6 cannot be formed "
+    "and a Cl. 13.8 check cannot be completed. They remain available on "
+    "the Compression page, which does not need those properties. S, M and "
+    "HP shapes are not reachable through sst12.py at all."
+)
 
-    result: Dict[str, Any] = {
-        "designation":   designation,
-        "section_class": section_class,
-        "axis":          axis_label,
-        "Mr_kNm":        None,
-        "formula":       None,
-        "modulus_used":  None,
-        "warning":       None,
+
+def norm_shared(r: Dict[str, Any], fam: str) -> Dict[str, Any]:
+    return {
+        "designation": str(r.get("Designation", "")).strip(),
+        "family": fam,
+        "family_label": FAMILY_LABEL[fam],
+        "kind": FAMILY_KIND[fam],
+        "ltb_applies": FAMILY_LTB[fam],
+        "d": _f(r.get("d")), "b": _f(r.get("b")),
+        "t": _f(r.get("t")), "w": _f(r.get("w")),
+        "A": _f(r.get("Area")),
+        "rx": _f(r.get("rx")), "ry": _f(r.get("ry")),
+        "bt": _f(r.get("ba/t")), "hw": _f(r.get("h/w")),
+        "J": _f(r.get("J")), "Cw": _f(r.get("Cw")),
+        "Ix": _f(r.get("Ix")), "Iy": _f(r.get("Iy")),
+        "Zx": _f(r.get("Zx")), "Zy": _f(r.get("Zy")),
+        "Sx": _f(r.get("Sx")), "Sy": _f(r.get("Sy")),
     }
 
-    if section_class in (1, 2):
-        if Z is None:
-            raise ValueError(f"{designation}: Z{axis_label} missing — required for Class {section_class}.")
-        result.update({
-            "Mr_kNm":       PHI * Fy_MPa * Z / 1e6,
-            "formula":      f"Mr = φ · Z{axis_label} · Fy",
-            "modulus_used": f"Z{axis_label}",
-        })
-        return result
 
+def _finish(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill in what the shape implies, then convert the table units. The
+    Compression page does the same conversion in build_section."""
+    fam = rec["family"]
+
+    if fam == "HSS_ROUND":
+        for a, b in (("Iy", "Ix"), ("Sy", "Sx"), ("Zy", "Zx"),
+                     ("ry", "rx"), ("b", "d")):
+            if rec.get(a) is None and rec.get(b) is not None:
+                rec[a] = rec[b]
+
+    if fam in ("HSS_SQUARE", "HSS_RECT", "HSS_ROUND") and rec.get("w") is None:
+        rec["w"] = rec.get("t")
+
+    if rec.get("d") is not None and rec.get("t") is not None:
+        if fam == "W":
+            rec["h"] = rec["d"] - 2.0 * rec["t"]
+        elif fam in ("HSS_SQUARE", "HSS_RECT"):
+            rec["h"] = rec["d"] - 4.0 * rec["t"]
+        else:
+            rec["h"] = None
+    else:
+        rec["h"] = None
+
+    for k, mult in (("Ix", 1e6), ("Iy", 1e6), ("Zx", 1e3), ("Zy", 1e3),
+                    ("Sx", 1e3), ("Sy", 1e3), ("J", 1e3), ("Cw", 1e9)):
+        if rec.get(k) is not None:
+            rec[k] = rec[k] * mult
+    return rec
+
+
+REQUIRED_ALL = ["A", "d", "b", "t", "rx", "ry", "Ix", "Iy", "Zx", "Sx"]
+REQUIRED_I = ["w", "J", "Cw", "Zy", "Sy"]
+
+
+def _missing(rec) -> List[str]:
+    need = REQUIRED_ALL + (REQUIRED_I if rec["family"] == "W" else [])
+    return [k for k in need if not rec.get(k)]
+
+
+@st.cache_data(ttl=600)
+def load_sections():
+    t = sst12.load_all_tables()
+    data: Dict[str, List[Dict[str, Any]]] = {}
+    report = {"loaded": {}, "rejected": [], "tables_read": [],
+              "tables_skipped": []}
+
+    wanted = dict((f[2], f[0]) for f in FAMILIES)
+    for tname in t.keys():
+        (report["tables_read"] if tname in wanted
+         else report["tables_skipped"]).append(tname)
+
+    for fam, _label, tkey, _kind, _ltb in FAMILIES:
+        keep = []
+        for r in t.get(tkey, []):
+            rec = _finish(norm_shared(r, fam))
+            if not rec["designation"]:
+                continue
+            miss = _missing(rec)
+            if miss:
+                report["rejected"].append((fam, rec["designation"], miss))
+                continue
+            keep.append(rec)
+        keep.sort(key=lambda r: _nat_key(r["designation"]))
+        if keep:
+            data[fam] = keep
+            report["loaded"][fam] = len(keep)
+    return data, report
+
+
+# ============================================================
+# PROPERTY DISPLAY - calculation inputs only
+#
+# The workbook publishes roughly thirty columns per section. Sixteen are
+# listed, each used by a clause below, each saying which.
+# ============================================================
+_DISPLAY = [
+    ("Geometry", [
+        ("d", "d", "mm", "Web width for Table 1 and Table 2, h = d - 2t. "
+                         "D/t for a round HSS."),
+        ("b", "b", "mm", "Flange ratio. Cl. 11.3.1 c) takes b/2 for an "
+                         "I-shape flange."),
+        ("t", "t", "mm", "Flange or wall thickness."),
+        ("w", "w", "mm", "Web thickness. Denominator of h/w."),
+        ("h", "h", "mm", "Clear web depth. Cl. 11.3.2 d) rolled, "
+                         "d - 4t hollow."),
+    ]),
+    ("Section properties", [
+        ("A", "A", "mm2", "Cr = phi A Fcr, Tr = phi A Fy, and Cy = A Fy in "
+                          "the Table 2 web reduction."),
+        ("rx", "rx", "mm", "(KL/r)x, sets Cr for strong-axis bending."),
+        ("ry", "ry", "mm", "(KL/r)y, sets Cr for check c) and lambda_y."),
+        ("Ix", "Ix", "mm4", "Ce,x = pi^2 E Ix / Lx^2 for U1x, Cl. 13.8.4."),
+        ("Iy", "Iy", "mm4", "Ce,y for U1y, and Mu under Cl. 13.6."),
+    ]),
+    ("Moduli for Mr, Cl. 13.5", [
+        ("Zx", "Zx", "mm3", "Mrx = phi Zx Fy, Class 1 or 2."),
+        ("Zy", "Zy", "mm3", "Mry, Class 1 or 2."),
+        ("Sx", "Sx", "mm3", "Mrx, Class 3, and the S term in Cl. 13.9.2 b)."),
+        ("Sy", "Sy", "mm3", "Mry, Class 3."),
+    ]),
+    ("Torsional, for Mu Cl. 13.6", [
+        ("J", "J", "mm4", "St Venant torsion constant in Mu."),
+        ("Cw", "Cw", "mm6", "Warping constant in Mu."),
+    ]),
+]
+
+
+def display_rows(rec) -> List[Dict[str, Any]]:
+    out = []
+    for group, spec in _DISPLAY:
+        for key, symbol, unit, why in spec:
+            v = rec.get(key)
+            if v is None:
+                continue
+            out.append({"group": group, "symbol": symbol, "value": v,
+                        "unit": unit, "why": why})
+    return out
+
+
+# ============================================================
+# CLASS 4 EFFECTIVE SECTION MODULUS
+# ============================================================
+def effective_flange_width(b, t, Fy):
+    lam = (b / 2.0) / t
+    lam_r = 200.0 / math.sqrt(Fy)
+    return b if lam <= lam_r else min(b * (lam_r / lam), b)
+
+
+def effective_web_height(h, w, Fy):
+    lam = h / w
+    lam_r = 1700.0 / math.sqrt(Fy)
+    return h if lam <= lam_r else min(h * (lam_r / lam), h)
+
+
+def compute_Se(d, b, t, w, Fy):
+    h = d - 2.0 * t
+    b_eff = effective_flange_width(b, t, Fy)
+    h_eff = effective_web_height(h, w, Fy)
+    Af = b_eff * t
+    y = (h_eff / 2.0) + (t / 2.0)
+    If = 2.0 * ((b_eff * t ** 3) / 12.0 + Af * y ** 2)
+    Iw = (w * h_eff ** 3) / 12.0
+    Ix_eff = If + Iw
+    return {"h": h, "b_eff": b_eff, "h_eff": h_eff, "Ix_eff": Ix_eff,
+            "Se": Ix_eff / (d / 2.0)}
+
+
+# ============================================================
+# TABLE 1 - local buckling under axial compression
+# ============================================================
+def table1_elements(rec, Fy):
+    s = math.sqrt(Fy)
+    kind = rec["kind"]
+    out = []
+
+    if kind == "I":
+        b_el = rec["b"] / 2.0
+        out.append({
+            "key": "t1_flange", "zone": "flange",
+            "label": "Flange, supported along one edge",
+            "why": ("The flange is joined to the web along one edge and is "
+                    "free at the other. That is the least stiff plate "
+                    "boundary, so it carries the most severe limit."),
+            "clause": "Table 1, width per Cl. 11.3.1 c)",
+            "width": r"b_{el} = \frac{b}{2} = \frac{" + tx(rec["b"], 1)
+                     + r"}{2} = " + tx(b_el, 1) + r"\ \mathrm{mm}",
+            "ratio_tex": r"\frac{b_{el}}{t} = \frac{" + tx(b_el, 1) + r"}{"
+                         + tx(rec["t"], 1) + r"} = " + tx(b_el / rec["t"], 2),
+            "limit_tex": r"\frac{200}{\sqrt{F_y}} = \frac{200}{" + tx(s, 3)
+                         + r"} = " + tx(200.0 / s, 2),
+            "ratio": b_el / rec["t"], "limit": 200.0 / s})
+        if rec.get("h") and rec.get("w"):
+            out.append({
+                "key": "t1_web", "zone": "web",
+                "label": "Web, supported along two edges",
+                "why": ("The web is held by a flange top and bottom. Two "
+                        "supported edges is a far stiffer boundary, so the "
+                        "limit rises from 200 to 670."),
+                "clause": "Table 1, width per Cl. 11.3.2 d)",
+                "width": r"h = d - 2t = " + tx(rec["d"], 1) + r" - 2("
+                         + tx(rec["t"], 1) + r") = " + tx(rec["h"], 1)
+                         + r"\ \mathrm{mm}",
+                "ratio_tex": r"\frac{h}{w} = \frac{" + tx(rec["h"], 1)
+                             + r"}{" + tx(rec["w"], 1) + r"} = "
+                             + tx(rec["h"] / rec["w"], 2),
+                "limit_tex": r"\frac{670}{\sqrt{F_y}} = " + tx(670.0 / s, 2),
+                "ratio": rec["h"] / rec["w"], "limit": 670.0 / s})
+
+    elif kind == "RHS":
+        for key, dim, zone, lbl in (("t1_hss_flange", rec["b"], "flange",
+                                     "Flange wall"),
+                                    ("t1_hss_web", rec["d"], "web",
+                                     "Web wall")):
+            b_el = dim - 4.0 * rec["t"]
+            out.append({
+                "key": key, "zone": zone,
+                "label": lbl + ", supported along two edges",
+                "why": ("Every wall of a closed tube runs into the two "
+                        "walls beside it, so each is supported on two "
+                        "edges. The width takes off four wall thicknesses "
+                        "to remove the corner radii."),
+                "clause": "Table 1, width per Cl. 11.3.2 b)",
+                "width": r"b_{el} = " + tx(dim, 1) + r" - 4("
+                         + tx(rec["t"], 1) + r") = " + tx(b_el, 1)
+                         + r"\ \mathrm{mm}",
+                "ratio_tex": r"\frac{b_{el}}{t} = " + tx(b_el / rec["t"], 2),
+                "limit_tex": r"\frac{670}{\sqrt{F_y}} = " + tx(670.0 / s, 2),
+                "ratio": b_el / rec["t"], "limit": 670.0 / s})
+
+    elif kind == "CHS":
+        out.append({
+            "key": "t1_chs", "zone": "wall",
+            "label": "Circular tube wall",
+            "why": ("A circular wall has no free edge anywhere. Its limit "
+                    "is written on D/t and divided by Fy, not by the root "
+                    "of Fy."),
+            "clause": "Table 1",
+            "width": r"D = " + tx(rec["d"], 1) + r"\ \mathrm{mm}",
+            "ratio_tex": r"\frac{D}{t} = " + tx(rec["d"] / rec["t"], 2),
+            "limit_tex": r"\frac{23\,000}{F_y} = " + tx(23000.0 / Fy, 2),
+            "ratio": rec["d"] / rec["t"], "limit": 23000.0 / Fy})
+    return out
+
+
+# ============================================================
+# TABLE 2 - classification for a beam-column
+#
+# The flange limits are the beam limits, because the flange is in
+# uniform compression either way. The web limits carry the axial
+# reduction, which is what makes this a beam-column classification.
+# ============================================================
+def table2_flange_limits(Fy):
+    s = math.sqrt(Fy)
+    return [145.0 / s, 170.0 / s, 200.0 / s]
+
+
+def table2_web_limits(Fy, Cf_kN, A_mm2, phi):
+    s = math.sqrt(Fy)
+    Cy = A_mm2 * Fy / 1000.0
+    ratio = _sd(Cf_kN, phi * Cy) or 0.0
+    return ([(1100.0 / s) * (1.0 - 0.39 * ratio),
+             (1700.0 / s) * (1.0 - 0.61 * ratio),
+             (1900.0 / s) * (1.0 - 0.65 * ratio)], Cy, ratio)
+
+
+def _class_from(ratio, limits):
+    for i, lv in enumerate(limits, start=1):
+        if ratio <= lv:
+            return i
+    return 4
+
+
+def classify_table2(sec, Fy, Cf_kN, phi=PHI_DEFAULT):
+    d, b, t, w, A = (sec.get("d"), sec.get("b"), sec.get("t"),
+                     sec.get("w"), sec.get("A"))
+    out = {"ok": False}
+    if None in (b, t) or not t:
+        return out
+
+    lam_f = (b / 2.0) / t
+    fl = table2_flange_limits(Fy)
+    cf_cls = _class_from(lam_f, fl)
+
+    wl, Cy, ratio = table2_web_limits(Fy, Cf_kN, A, phi)
+    h = None
+    cw_cls = None
+    if None not in (d, t, w) and w:
+        h = sec.get("h")
+        if h is None:
+            h = d - 2.0 * t
+        cw_cls = _class_from(h / w, wl)
+
+    classes = [c for c in (cf_cls, cw_cls) if c]
+    out.update({
+        "ok": True, "lam_f": lam_f, "flange_limits": fl,
+        "flange_class": cf_cls, "h": h, "lam_w": _sd(h, w),
+        "web_limits": wl, "web_class": cw_cls,
+        "Cy_kN": Cy, "Cf_over_phiCy": ratio,
+        "section_class": max(classes) if classes else None,
+    })
+    return out
+
+
+# ============================================================
+# CLAUSE 13.5 - Mr laterally supported
+# ============================================================
+def Mr_13_5(sec, Fy, section_class, axis="x", phi=PHI_DEFAULT,
+            class4_use_Se=False):
+    Z = sec.get("Zx") if axis == "x" else sec.get("Zy")
+    S = sec.get("Sx") if axis == "x" else sec.get("Sy")
+
+    if section_class in (1, 2):
+        if not Z:
+            return {"Mr_kNm": None, "note": "Z" + axis + " missing."}
+        return {"Mr_kNm": phi * Fy * Z / 1e6, "modulus": "Z_{" + axis + "}",
+                "modulus_value": Z, "clause": "Cl. 13.5 a)"}
     if section_class == 3:
-        if S is None:
-            raise ValueError(f"{designation}: S{axis_label} missing — required for Class 3.")
-        result.update({
-            "Mr_kNm":       PHI * Fy_MPa * S / 1e6,
-            "formula":      f"Mr = φ · S{axis_label} · Fy",
-            "modulus_used": f"S{axis_label}",
-        })
-        return result
+        if not S:
+            return {"Mr_kNm": None, "note": "S" + axis + " missing."}
+        return {"Mr_kNm": phi * Fy * S / 1e6, "modulus": "S_{" + axis + "}",
+                "modulus_value": S, "clause": "Cl. 13.5 b)"}
 
-    if section_class == 4:
-        result.update({
-            "warning": (
-                "Class 4 section — Cl. 13.5 requires effective section modulus. "
-                "Mr not computed in this version."
-            ),
-            "ba_t": get_raw_prop(shape, "ba_t"),
-            "h_w":  get_raw_prop(shape, "h_w"),
-        })
-        return result
-
-    raise ValueError(f"{designation}: unrecognised section class value '{section_class}'.")
+    if not class4_use_Se:
+        return {"Mr_kNm": None, "class4": True,
+                "note": ("Class 4 section. Cl. 13.5 c) needs an effective "
+                         "section modulus. Tick the Se option to compute "
+                         "it, otherwise the moment term cannot be formed.")}
+    if axis != "x":
+        return {"Mr_kNm": None, "class4": True,
+                "note": ("Se is built for major-axis bending only, so a "
+                         "Class 4 section with Mfy stays incomplete.")}
+    d, b, t, w = sec.get("d"), sec.get("b"), sec.get("t"), sec.get("w")
+    if None in (d, b, t, w):
+        return {"Mr_kNm": None, "class4": True,
+                "note": "d, b, t and w are needed to build Se."}
+    se = compute_Se(d, b, t, w, Fy)
+    return {"Mr_kNm": phi * Fy * se["Se"] / 1e6, "modulus": "S_e",
+            "modulus_value": se["Se"], "se_detail": se,
+            "clause": "Cl. 13.5 c)", "class4": True}
 
 
 # ============================================================
-# CSA S16 CLAUSE 13.6 — MOMENT RESISTANCE (LATERALLY UNSUPPORTED)
+# CLAUSE 13.6 - Mr laterally unsupported
 # ============================================================
-G_STEEL = 77_000.0  # MPa
-
-def calc_Mu(
-    omega2: float,
-    L_mm: float,
-    E_MPa: float,
-    Iy_mm4: float,
-    G_MPa: float,
-    J_mm4: float,
-    Cw_mm6: float,
-) -> float:
-    term1 = E_MPa * Iy_mm4 * G_MPa * J_mm4
-    term2 = ((math.pi * E_MPa / L_mm) ** 2) * Iy_mm4 * Cw_mm6
-    return (omega2 * math.pi / L_mm) * math.sqrt(term1 + term2)
+def Mu_13_6(omega2, L_mm, E, Iy, G, J, Cw):
+    if not L_mm or L_mm <= 0:
+        return None
+    t1 = E * Iy * G * J
+    t2 = ((math.pi * E / L_mm) ** 2) * Iy * Cw
+    return (omega2 * math.pi / L_mm) * math.sqrt(max(t1 + t2, 0.0)) / 1e6
 
 
-def calc_Mr_clause_13_6(
-    shape: Dict[str, Any],
-    Fy_MPa: float,
-    omega2: float,
-    L_mm: float,
-    E_MPa: float,
-    G_MPa: float,
-    Cw_override: Optional[float] = None,
-) -> Dict[str, Any]:
-    designation = str(shape.get("designation", "Unknown")).strip()
-    cls_raw = get_raw_prop(shape, "section_class")
-    if cls_raw is None:
-        raise ValueError(f"{designation}: 'Class' column not found in CSV.")
-    section_class = int(cls_raw)
+def Mr_13_6(sec, Fy, section_class, omega2, L_mm, E=E_DEFAULT, G=G_DEFAULT,
+            phi=PHI_DEFAULT, class4_use_Se=False):
+    Iy, J, Cw = sec.get("Iy"), sec.get("J"), sec.get("Cw")
+    if None in (Iy, J, Cw):
+        return {"Mr_kNm": None,
+                "note": "Iy, J or Cw missing, so Cl. 13.6 cannot be run."}
 
-    Zx  = get_prop(shape, "Zx")
-    Sx  = get_prop(shape, "Sx")
-    Iy  = get_prop(shape, "Iy")
-    J   = get_prop(shape, "J")
-    Cw  = Cw_override if Cw_override is not None else get_prop(shape, "Cw")
-
-    missing = [n for n, v in [("Zx", Zx), ("Iy", Iy), ("J", J), ("Cw", Cw)] if v is None]
-    if missing:
-        raise ValueError(f"{designation}: missing properties for Cl. 13.6 — {', '.join(missing)}")
-
-    assert Zx is not None and Iy is not None and J is not None and Cw is not None
-
-    # Class 1 & 2: Mp = Fy·Zx (plastic moment)
-    # Class 3:     Mp = Fy·Sx (yield moment My — per Cl. 13.6 note)
     if section_class in (1, 2):
-        modulus_136 = Zx
-        modulus_136_name = "Zx"
+        mod, name = sec.get("Zx"), "Z_x"
+    elif section_class == 3:
+        mod, name = sec.get("Sx"), "S_x"
     else:
-        if Sx is None:
-            raise ValueError(f"{designation}: Sx missing — required for Class 3 Cl. 13.6.")
-        modulus_136 = Sx
-        modulus_136_name = "Sx"
+        if not class4_use_Se:
+            return {"Mr_kNm": None, "class4": True,
+                    "note": "Class 4. Tick the Se option to run Cl. 13.6."}
+        d, b, t, w = sec.get("d"), sec.get("b"), sec.get("t"), sec.get("w")
+        if None in (d, b, t, w):
+            return {"Mr_kNm": None, "class4": True,
+                    "note": "d, b, t and w are needed to build Se."}
+        mod, name = compute_Se(d, b, t, w, Fy)["Se"], "S_e"
+    if not mod:
+        return {"Mr_kNm": None, "note": name + " missing."}
 
-    Mp_Nmm = Fy_MPa * modulus_136
-    Mp_kNm = Mp_Nmm / 1e6
-    Mu_Nmm = calc_Mu(omega2, L_mm, E_MPa, Iy, G_MPa, J, Cw)
-    Mu_kNm = Mu_Nmm / 1e6
-    phi_Mp_kNm = PHI * Mp_kNm
-    threshold  = 0.67 * Mp_kNm
+    Mp = Fy * mod / 1e6
+    Mu = Mu_13_6(omega2, L_mm, E, Iy, G, J, Cw)
+    if Mu is None:
+        return {"Mr_kNm": None, "note": "Mu could not be formed."}
 
-    if Mu_kNm > threshold:
-        Mr_kNm_raw = 1.15 * PHI * Mp_kNm * (1.0 - 0.28 * Mp_kNm / Mu_kNm)
-        Mr_kNm     = min(Mr_kNm_raw, phi_Mp_kNm)
-        branch     = "Mu > 0.67·Mp"
-        formula    = r"M_r = 1.15\,\phi M_p\!\left(1 - \frac{0.28\,M_p}{M_u}\right) \leq \phi M_p"
+    phiMp = phi * Mp
+    if Mu > 0.67 * Mp:
+        Mr = min(1.15 * phiMp * (1.0 - 0.28 * Mp / Mu), phiMp)
+        branch = "Mu > 0.67 Mp, inelastic"
+        formula = (r"M_r = 1.15\,\phi M_p\left(1 - \frac{0.28 M_p}{M_u}"
+                   r"\right) \leq \phi M_p")
     else:
-        Mr_kNm  = PHI * Mu_kNm
-        branch  = "Mu ≤ 0.67·Mp"
+        Mr = phi * Mu
+        branch = "Mu <= 0.67 Mp, elastic"
         formula = r"M_r = \phi M_u"
 
-    return {
-        "designation":      designation,
-        "section_class":    section_class,
-        "omega2":           omega2,
-        "L_mm":             L_mm,
-        "Iy_mm4":           Iy,
-        "J_mm4":            J,
-        "Cw_mm6":           Cw,
-        "modulus_136":      modulus_136,
-        "modulus_136_name": modulus_136_name,
-        "Mp_kNm":           Mp_kNm,
-        "Mu_kNm":           Mu_kNm,
-        "phi_Mp_kNm":       phi_Mp_kNm,
-        "threshold_kNm":    threshold,
-        "branch":           branch,
-        "formula":          formula,
-        "Mr_kNm":           Mr_kNm,
-        "warning":          None if section_class in (1, 2) else
-                            f"Cl. 13.6 applies to Class 1 & 2. "
-                            f"This section is Class {section_class} — "
-                            f"Mp base changed to Sx (yield moment My).",
-    }
+    return {"Mr_kNm": Mr, "Mu_kNm": Mu, "Mp_kNm": Mp, "phiMp_kNm": phiMp,
+            "threshold_kNm": 0.67 * Mp, "modulus": name,
+            "modulus_value": mod, "branch": branch, "formula": formula,
+            "omega2": omega2, "L_mm": L_mm, "clause": "Cl. 13.6"}
 
 
 # ============================================================
-# CSA S16 ENGINEERING CALCULATIONS
+# CLAUSE 13.3 - Cr
 # ============================================================
-def calc_Tr(A_mm2: float, Fy_MPa: float) -> float:
-    return PHI * float(Fy_MPa) * float(A_mm2) / 1000.0  # kN
+def Cr_13_3(A, Fy, KLr, E=E_DEFAULT, phi=PHI_DEFAULT, n=1.34):
+    if KLr is None or KLr <= 0:
+        return {"Cr_kN": phi * A * Fy / 1000.0, "lam": 0.0, "Fe": None,
+                "Fcr": Fy, "KLr": 0.0}
+    Fe = (math.pi ** 2) * E / (KLr ** 2)
+    lam = KLr * math.sqrt(Fy / ((math.pi ** 2) * E))
+    Fcr = Fy / ((1.0 + lam ** (2.0 * n)) ** (1.0 / n))
+    return {"Cr_kN": phi * A * Fcr / 1000.0, "lam": lam, "Fe": Fe,
+            "Fcr": Fcr, "KLr": KLr}
 
 
-def calc_Mr(Z_mm3: float, Fy_MPa: float) -> float:
-    return PHI * float(Fy_MPa) * float(Z_mm3) / 1e6  # kN·m
+# ============================================================
+# CLAUSE 13.8.4 and 13.8.5 - Ce, U1, omega1
+# ============================================================
+def Ce_euler(E, I_mm4, L_mm):
+    if not L_mm or L_mm <= 0 or not I_mm4:
+        return None
+    return (math.pi ** 2) * E * I_mm4 / (L_mm ** 2) / 1000.0
 
 
-def calc_Cr(
-    A_mm2: float,
-    Fy_MPa: float,
-    E_MPa: float,
-    KLr: float,
-) -> Tuple[float, float, float]:
-    A_mm2  = float(A_mm2)
-    Fy_MPa = float(Fy_MPa)
-    E_MPa  = float(E_MPa)
-    KLr    = float(KLr)
-
-    if KLr <= 0:
-        return PHI * A_mm2 * Fy_MPa / 1000.0, float("inf"), Fy_MPa
-    Fe  = (math.pi ** 2) * E_MPa / (KLr ** 2)
-    lam = KLr * math.sqrt(Fy_MPa / ((math.pi ** 2) * E_MPa))
-    Fcr = Fy_MPa / ((1.0 + lam ** (2.0 * N_CSA)) ** (1.0 / N_CSA))
-    Cr  = PHI * A_mm2 * Fcr / 1000.0
-    return Cr, Fe, Fcr
+OMEGA1_CASES = [
+    ("kappa", "No transverse loads between supports (kappa based)"),
+    ("distributed", "Distributed load or a series of point loads"),
+    ("concentrated", "A concentrated load or moment between supports"),
+]
 
 
-def calc_U1(omega1: float, Cf_kN: float, Ce_kN: float) -> float:
-    denom = 1.0 - float(Cf_kN) / float(Ce_kN) if Ce_kN > 0 else 0.0
+def omega1_from(case, kappa=1.0):
+    if case == "distributed":
+        return 1.0
+    if case == "concentrated":
+        return 0.85
+    return max(0.4, 0.6 - 0.4 * float(kappa))
+
+
+def U1_13_8_4(omega1, Cf_kN, Ce_kN, braced=True):
+    if not braced:
+        return {"U1": 1.0, "U1_raw": 1.0, "forced": True,
+                "why": ("Unbraced frame. Cl. 13.8.2 b) iii) and c) iv) set "
+                        "U1 to 1.0, because the peak moment sits at the "
+                        "member ends where P-delta is negligible. Sway is "
+                        "carried by the P-Delta analysis instead.")}
+    if not Ce_kN or Ce_kN <= 0:
+        return {"U1": 1.0, "U1_raw": None, "forced": False,
+                "why": "Ce unavailable."}
+    denom = 1.0 - float(Cf_kN) / float(Ce_kN)
     if denom <= 0:
-        return float("inf")
-    return max(1.0, float(omega1) / denom)
+        return {"U1": float("inf"), "U1_raw": float("inf"), "forced": False,
+                "why": "Cf has reached Ce. The member is unstable."}
+    raw = omega1 / denom
+    return {"U1": max(1.0, raw), "U1_raw": raw, "forced": False,
+            "why": "Cl. 13.8.4, not less than 1.0."}
 
 
-def Ce_euler(E_MPa: float, I_mm4: float, L_mm: float) -> float:
-    E_MPa = float(E_MPa)
-    I_mm4 = float(I_mm4)
-    L_mm  = float(L_mm)
-    if L_mm <= 0 or I_mm4 <= 0:
-        return float("inf")
-    return (math.pi ** 2) * E_MPa * I_mm4 / (L_mm ** 2) / 1000.0  # kN
+# ============================================================
+# CLAUSE 13.8 - the three checks
+# ============================================================
+def is_i_shaped(sec):
+    return str(sec.get("family", "")).upper() in ("W", "WWF", "I", "S",
+                                                  "M", "HP")
+
+
+def coefficients(sec, section_class):
+    """Cl. 13.8.2 is written for Class 1 and Class 2 sections OF I-SHAPED
+    members. Everything else takes Cl. 13.8.3, where every coefficient
+    is 1.0."""
+    if is_i_shaped(sec) and section_class in (1, 2):
+        return {"clause": "Cl. 13.8.2", "cx": 0.85, "cy_a": 0.60,
+                "cy_b": None,
+                "note": "Class %s I-shaped member." % section_class}
+    why = ("Class %s section" % section_class if section_class not in (1, 2)
+           else "Not an I-shaped member")
+    return {"clause": "Cl. 13.8.3", "cx": 1.0, "cy_a": 1.0, "cy_b": 1.0,
+            "note": ("%s, so Cl. 13.8.3 applies and the 0.85 and beta "
+                     "reductions are not available." % why)}
+
+
+def beta_factor(lam_y):
+    return min(0.85, 0.6 + 0.4 * lam_y)
+
+
+def check_13_8(sec, p):
+    Fy, E, G, phi = p["Fy"], p["E"], p["G"], p["phi"]
+    A = sec["A"]
+    Cf, Mfx, Mfy = p["Cf"], p["Mfx"], p["Mfy"]
+    braced, Lx, Ly = p["braced"], p["Lx"], p["Ly"]
+
+    cls = classify_table2(sec, Fy, Cf, phi)
+    section_class = cls.get("section_class")
+    C = coefficients(sec, section_class)
+
+    mrx = Mr_13_5(sec, Fy, section_class, "x", phi, p["class4_use_Se"])
+    mry = Mr_13_5(sec, Fy, section_class, "y", phi, p["class4_use_Se"])
+    Mrx, Mry = mrx.get("Mr_kNm"), mry.get("Mr_kNm")
+
+    Ce_x = Ce_euler(E, sec.get("Ix"), Lx)
+    Ce_y = Ce_euler(E, sec.get("Iy"), Ly)
+    u1x = U1_13_8_4(p["omega1x"], Cf, Ce_x, braced)
+    u1y = U1_13_8_4(p["omega1y"], Cf, Ce_y, braced)
+    U1x, U1y = u1x["U1"], u1y["U1"]
+
+    KLr_x1 = _sd(Lx, sec["rx"])
+    KLr_y1 = _sd(Ly, sec["ry"])
+    lam_y1 = (KLr_y1 or 0.0) * math.sqrt(Fy / ((math.pi ** 2) * E))
+    beta = beta_factor(lam_y1)
+    cy_b = C["cy_b"] if C["cy_b"] is not None else beta
+
+    uniaxial_x = (Mfy or 0.0) <= 1e-9 and (Mfx or 0.0) > 0
+    uniaxial_y = (Mfx or 0.0) <= 1e-9 and (Mfy or 0.0) > 0
+
+    def term(coef, U1, Mf, Mr):
+        # No applied moment about this axis contributes nothing, whether
+        # or not Mr could be formed. Only a real moment with no
+        # resistance to divide by stays None, so the check reads
+        # INCOMPLETE rather than passing on a missing term.
+        if not Mf:
+            return 0.0
+        if Mr is None or Mr <= 0:
+            return None
+        return coef * U1 * Mf / Mr
+
+    def total(parts):
+        return None if any(x is None for x in parts) else sum(parts)
+
+    # a) cross-sectional strength, lambda = 0
+    Cr_a = phi * A * Fy / 1000.0
+    a_terms = [_sd(Cf, Cr_a), term(C["cx"], U1x, Mfx, Mrx),
+               term(C["cy_a"], U1y, Mfy, Mry)]
+    check_a = {"applies": braced, "Cr_kN": Cr_a, "coef_x": C["cx"],
+               "coef_y": C["cy_a"], "terms": a_terms,
+               "total": total(a_terms), "clause": C["clause"] + " a)"}
+
+    # b) overall member strength, K = 1
+    if uniaxial_x:
+        KLr_b, axis_b = KLr_x1, "x-x, the axis of bending"
+    elif uniaxial_y:
+        KLr_b, axis_b = KLr_y1, "y-y, the axis of bending"
+    else:
+        vals = [v for v in (KLr_x1, KLr_y1) if v]
+        KLr_b = max(vals) if vals else None
+        axis_b = "x-x, governing" if KLr_b == KLr_x1 else "y-y, governing"
+    cr_b = Cr_13_3(A, Fy, KLr_b, E, phi, p["n"])
+    b_terms = [_sd(Cf, cr_b["Cr_kN"]), term(C["cx"], U1x, Mfx, Mrx),
+               term(cy_b, U1y, Mfy, Mry)]
+    check_b = {"applies": True, "Cr_kN": cr_b["Cr_kN"], "KLr": KLr_b,
+               "lam": cr_b["lam"], "Fe": cr_b["Fe"], "Fcr": cr_b["Fcr"],
+               "axis": axis_b, "coef_x": C["cx"], "coef_y": cy_b,
+               "beta": beta, "lam_y": lam_y1, "terms": b_terms,
+               "total": total(b_terms), "clause": C["clause"] + " b)"}
+
+    # c) lateral torsional buckling
+    ltb_applies = (Mfx or 0.0) > 0 and is_i_shaped(sec)
+    cr_c = Cr_13_3(A, Fy, KLr_y1, E, phi, p["n"])
+    mrx_136 = Mr_13_6(sec, Fy, section_class, p["omega2"], Ly, E, G, phi,
+                      p["class4_use_Se"])
+    Mrx_c = mrx_136.get("Mr_kNm")
+    c_terms = [_sd(Cf, cr_c["Cr_kN"]), term(C["cx"], U1x, Mfx, Mrx_c),
+               term(cy_b, U1y, Mfy, Mry)]
+    check_c = {"applies": ltb_applies, "Cr_kN": cr_c["Cr_kN"],
+               "KLr": KLr_y1, "lam": cr_c["lam"], "Fcr": cr_c["Fcr"],
+               "coef_x": C["cx"], "coef_y": cy_b, "Mrx_kNm": Mrx_c,
+               "ltb": mrx_136, "terms": c_terms, "total": total(c_terms),
+               "clause": C["clause"] + " c)",
+               "note": ("" if ltb_applies else
+                        "Lateral torsional buckling is not a failure mode "
+                        "for a closed section, and weak-axis bending alone "
+                        "does not start it in an I-shape.")}
+
+    mo = [0.0 if not Mfx else _sd(Mfx, Mrx),
+          0.0 if not Mfy else _sd(Mfy, Mry)]
+    check_m = {"terms": mo, "total": total(mo)}
+
+    rows = [("a) Cross-sectional strength", check_a["total"], braced),
+            ("b) Overall member strength", check_b["total"], True),
+            ("c) Lateral torsional buckling", check_c["total"], ltb_applies),
+            ("Moment only, Mfx/Mrx + Mfy/Mry", check_m["total"], True)]
+    live = [(n, v) for n, v, ap in rows if ap and v is not None]
+    gov = max(live, key=lambda z: z[1]) if live else (None, None)
+    incomplete = any(v is None for _n, v, ap in rows if ap)
+
+    return {"class_info": cls, "section_class": section_class,
+            "coefficients": C, "beta": beta, "lam_y": lam_y1,
+            "Mrx": mrx, "Mry": mry, "Mrx_kNm": Mrx, "Mry_kNm": Mry,
+            "Ce_x_kN": Ce_x, "Ce_y_kN": Ce_y, "u1x": u1x, "u1y": u1y,
+            "U1x": U1x, "U1y": U1y, "check_a": check_a,
+            "check_b": check_b, "check_c": check_c, "check_moment": check_m,
+            "rows": rows, "governing_name": gov[0], "governing_uc": gov[1],
+            "incomplete": incomplete,
+            "overall": ("INCOMPLETE" if incomplete else
+                        ("OK" if gov[1] is not None and gov[1] <= 1.0
+                         else "NG"))}
+
+
+# ============================================================
+# CLAUSE 13.9 - axial tension and bending
+# ============================================================
+def check_13_9(sec, p):
+    Fy, phi = p["Fy"], p["phi"]
+    A, Tf, Mfx, Mfy = sec["A"], p["Tf"], p["Mfx"], p["Mfy"]
+
+    cls = classify_table2(sec, Fy, 0.0, phi)
+    section_class = cls.get("section_class")
+
+    Tr = phi * A * Fy / 1000.0
+    mrx = Mr_13_5(sec, Fy, section_class, "x", phi, p["class4_use_Se"])
+    mry = Mr_13_5(sec, Fy, section_class, "y", phi, p["class4_use_Se"])
+    Mrx, Mry = mrx.get("Mr_kNm"), mry.get("Mr_kNm")
+
+    t1 = _sd(Tf, Tr)
+    t2 = 0.0 if not Mfx else _sd(Mfx, Mrx)
+    t3 = 0.0 if not Mfy else _sd(Mfy, Mry)
+    parts = [t1, t2, t3]
+    total_1 = None if any(x is None for x in parts) else sum(parts)
+
+    out = {"class_info": cls, "section_class": section_class, "Tr_kN": Tr,
+           "Mrx": mrx, "Mry": mry, "terms_13_9_1": parts,
+           "total_13_9_1": total_1}
+
+    m136 = Mr_13_6(sec, Fy, section_class, p["omega2"], p["Lu"], p["E"],
+                   p["G"], phi, p["class4_use_Se"])
+    Mr_u = m136.get("Mr_kNm")
+    if section_class in (1, 2):
+        mod, mod_name, sub = sec.get("Zx"), "Z", "a) Class 1 and 2"
+    else:
+        mod, mod_name, sub = sec.get("Sx"), "S", "b) Class 3 and 4"
+    val = None
+    if Mr_u and mod and A:
+        val = Mfx / Mr_u - (Tf * mod) / (Mr_u * 1e3 * A)
+    out.update({"ltb": m136, "Mr_unsup_kNm": Mr_u, "modulus_13_9_2": mod,
+                "modulus_name": mod_name, "sub_13_9_2": sub,
+                "total_13_9_2": val})
+    return out
 
 
 # ============================================================
@@ -373,1324 +803,592 @@ apply_theme()
 render_sidebar_logo()
 render_footer()
 gate_disclaimer()
-from _theme import beta_lock_page
-beta_lock_page("Beam-Column Members")
+
+# Lock page here ***************
+# from _theme import beta_lock_page
+# beta_lock_page("Beam-Column Members")
+
 st.title(APP_TITLE)
-st.caption("W-section and HSS beam-column checks per CSA S16 Clause 13.8 | Loads in kN / kN·m, geometry in mm")
-
-shapes, order = load_all_shapes()
-if not shapes:
-    st.error("No section data found. Add the CISC SST12.1 workbook to attached_assets/.")
-    st.stop()
-
-st.markdown("---")
-
-# ── 1. Section selection ──────────────────────────────────────────────────────
-st.subheader("1. Section Selection")
-sel_col1, sel_col2, sel_col3 = st.columns([1, 1.5, 2])
-
-with sel_col1:
-    section_type = st.selectbox(
-        "Section type",
-        ["All sections", "W sections", "HSS sections"],
-        key="bc4_type",
-    )
-
-with sel_col2:
-    if section_type == "W sections":
-        filtered = [s for s in order if s.upper().startswith("W") and len(s) > 1 and s[1].isdigit()]
-    elif section_type == "HSS sections":
-        filtered = [s for s in order if s.upper().startswith("HSS")]
-    else:
-        filtered = order
-
-    search = st.text_input("Search", placeholder="e.g. W310 or HSS 203", key="bc4_search")
-    if search:
-        filtered = [s for s in filtered if search.strip().lower() in s.lower()]
-
-with sel_col3:
-    if not filtered:
-        st.warning("No sections match.")
-        st.stop()
-    designation = st.selectbox("Designation", filtered, index=0, key="bc4_des")
-
-shape = shapes[designation]
-
-A    = get_prop(shape, "Area")
-Ix   = get_prop(shape, "Ix")
-Iy   = get_prop(shape, "Iy")
-rx   = get_prop(shape, "rx")
-ry   = get_prop(shape, "ry")
-Zx   = get_prop(shape, "Zx")
-Zy   = get_prop(shape, "Zy")
-Sx   = get_prop(shape, "Sx")
-Sy   = get_prop(shape, "Sy")
-J    = get_prop(shape, "J")
-Cw   = get_prop(shape, "Cw")
-
-sec_class = get_raw_prop(shape, "section_class")
-ba_t      = get_raw_prop(shape, "ba_t")
-h_w       = get_raw_prop(shape, "h_w")
-
-with st.expander(f"Section properties — {designation}", expanded=True):
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("A (mm²)",  f"{A:,.0f}"   if A  else "—")
-    p1.metric("Ix (mm⁴)", f"{Ix:.3e}"   if Ix else "—")
-    p1.metric("Iy (mm⁴)", f"{Iy:.3e}"   if Iy else "—")
-    p2.metric("rx (mm)",  f"{rx:.1f}"   if rx else "—")
-    p2.metric("ry (mm)",  f"{ry:.1f}"   if ry else "—")
-    p3.metric("Zx (mm³)", f"{Zx:.3e}"   if Zx else "—")
-    p3.metric("Zy (mm³)", f"{Zy:.3e}"   if Zy else "—")
-    p4.metric("Sx (mm³)", f"{Sx:.3e}"   if Sx else "—")
-    p4.metric("Sy (mm³)", f"{Sy:.3e}"   if Sy else "—")
-    if J:
-        p1.metric("J (mm⁴)",  f"{J:.3e}")
-    if Cw:
-        p2.metric("Cw (mm⁶)", f"{Cw:.3e}")
-
-    st.markdown("---")
-    cl1, cl2, cl3 = st.columns(3)
-    cl1.metric("Section Class (CSA S16)",  str(int(sec_class)) if sec_class is not None else "—")
-    cl2.metric("b_a / t  (flange slend.)", f"{ba_t:.2f}" if ba_t is not None else "—")
-    cl3.metric("h / w  (web slend.)",      f"{h_w:.2f}"  if h_w  is not None else "—")
-
-    _class_labels = {1: "Class 1 — Plastic", 2: "Class 2 — Compact",
-                     3: "Class 3 — Non-compact", 4: "Class 4 — Slender"}
-    if sec_class is not None:
-        label = _class_labels.get(int(sec_class), f"Class {int(sec_class)}")
-        if int(sec_class) == 4:
-            st.warning(f"⚠️ {label} — effective section treatment required for Mr (Cl. 13.5c).")
-        else:
-            st.info(f"ℹ️ {label}")
-
-st.markdown("---")
-
-# ── 2. Material ───────────────────────────────────────────────────────────────
-st.subheader("2. Material Properties")
-mat1, mat2 = st.columns(2)
-with mat1:
-    Fy = st.number_input("Fy (MPa)", min_value=200.0, max_value=700.0, value=350.0, step=5.0, key="bc4_fy")
-with mat2:
-    E  = st.number_input("E (MPa)",  min_value=100000.0, max_value=300000.0, value=200000.0, step=1000.0, key="bc4_e")
-
-st.markdown("---")
-
-# ── 3. Axial case ─────────────────────────────────────────────────────────────
-st.subheader("3. Member Axial Condition")
-axial_case_label = st.selectbox(
-    "Axial condition",
-    ["— Select —", "Member in Axial Tension", "Member in Axial Compression"],
-    key="bc4_case_dd",
-)
-
-if axial_case_label == "— Select —":
-    st.info("Select an axial condition above to continue.")
-    st.stop()
-
-axial_case = "TENSION" if axial_case_label == "Member in Axial Tension" else "COMPRESSION"
-st.markdown("---")
-
-# ── 4. Inputs ─────────────────────────────────────────────────────────────────
-if axial_case == "TENSION":
-    st.subheader("4. Tension + Bending Inputs")
-    t1, t2 = st.columns(2)
-    with t1:
-        Tf  = st.number_input("Factored Tension Tf (kN)",   min_value=0.0, value=500.0,  step=10.0, key="bc4_tf")
-        Mfx = st.number_input("Factored Moment Mfx (kN·m)", min_value=0.0, value=100.0,  step=10.0, key="bc4_mfx_t")
-    with t2:
-        Mfy = st.number_input("Factored Moment Mfy (kN·m)", min_value=0.0, value=0.0,    step=10.0, key="bc4_mfy_t")
-
-    st.markdown("---")
-    st.markdown("**Laterally Unsupported Check — Cl. 13.9.2 / Cl. 13.6** *(optional)*")
-    run_136 = st.checkbox(
-        "Include Cl. 13.9.2 check (laterally unsupported member)",
-        value=False, key="bc4_run136",
-    )
-
-    if run_136:
-        u1, u2, u3 = st.columns(3)
-        with u1:
-            L_unsup = st.number_input(
-                "Unbraced length L (m)", min_value=0.1, value=4.0, step=0.5, key="bc4_L136"
-            )
-            Cw_csv = get_prop(shape, "Cw")
-            cw_default = round(Cw_csv / 1e9, 4) if Cw_csv else 0.0
-            Cw_user = st.number_input(
-                f"Cw (×10⁹ mm⁶)  [CSV = {cw_default}]",
-                min_value=0.0, value=cw_default, format="%.4f", key="bc4_cw136",
-            )
-        with u2:
-            omega2_method = st.selectbox(
-                "ω₂ method",
-                ["Linear approximation (κ-based)", "Quarter-point moments"],
-                key="bc4_w2_method",
-            )
-        with u3:
-            if omega2_method == "Linear approximation (κ-based)":
-                kappa_136 = st.number_input(
-                    "κ  (M_smaller / M_larger, +ve = double curvature)",
-                    min_value=-1.0, max_value=1.0, value=1.0, step=0.1, key="bc4_kappa136",
-                )
-                omega2_val = min(2.5, 1.75 + 1.05 * kappa_136 + 0.3 * kappa_136 ** 2)
-                st.info(f"ω₂ = 1.75 + 1.05κ + 0.3κ²  =  **{omega2_val:.3f}**")
-            else:
-                st.markdown("**Quarter-point moments (kN·m)**")
-                Mmax_qp = st.number_input("M_max (maximum in segment)", min_value=0.01, value=200.0, step=10.0, key="bc4_mmax")
-                Ma_qp   = st.number_input("M_a   (at ¼ point)",         min_value=0.0,  value=150.0, step=10.0, key="bc4_ma")
-                Mb_qp   = st.number_input("M_b   (at midpoint)",        min_value=0.0,  value=180.0, step=10.0, key="bc4_mb")
-                Mc_qp   = st.number_input("M_c   (at ¾ point)",         min_value=0.0,  value=160.0, step=10.0, key="bc4_mc")
-                denom_qp = math.sqrt(Mmax_qp**2 + 4*Ma_qp**2 + 7*Mb_qp**2 + 4*Mc_qp**2)
-                omega2_val = min(2.5, 4 * Mmax_qp / denom_qp) if denom_qp > 0 else 1.0
-                st.info(f"ω₂ = 4·Mmax / √(Mmax² + 4Ma² + 7Mb² + 4Mc²)  =  **{omega2_val:.3f}**")
-
-else:  # COMPRESSION — Section 4 inputs
-    st.subheader("4. Compression + Bending Inputs")
-
-    # ── Row 1: loads and lengths ──────────────────────────────────────────────
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        Cf  = st.number_input("Factored Compression Cf (kN)",     min_value=0.0, value=1200.0, step=50.0,  key="bc4_cf")
-        Mfx = st.number_input("Factored Moment Mfx (kN·m)",       min_value=0.0, value=200.0,  step=10.0,  key="bc4_mfx_c")
-        Mfy = st.number_input("Factored Moment Mfy (kN·m)",       min_value=0.0, value=0.0,    step=10.0,  key="bc4_mfy_c")
-    with c2:
-        Kx  = st.number_input("Kx (eff. length factor, x-axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="bc4_kx")
-        Lx  = st.number_input("Lx — unbraced length x (m)",      min_value=0.1, value=4.0,    step=0.5,  key="bc4_lx")
-    with c3:
-        Ky  = st.number_input("Ky (eff. length factor, y-axis)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, key="bc4_ky")
-        Ly  = st.number_input("Ly — unbraced length y (m)",      min_value=0.1, value=4.0,    step=0.5,  key="bc4_ly")
-
-    st.markdown("---")
-
-    # ── ω₁ inputs (Cl. 13.8.4 / 13.8.5) — used for U₁ in all three checks ──
-    st.markdown("**Moment gradient factor ω₁** *(Cl. 13.8.5 — used for U₁ in all three checks)*")
-    w1_col1, w1_col2 = st.columns(2)
-
-    with w1_col1:
-        omega1_case_x = st.selectbox(
-            "ω₁ case — x-axis",
-            ["No transverse loads (κ-based)", "Distributed / series moments", "Concentrated between supports"],
-            key="bc4_w1x_case",
-        )
-        if omega1_case_x == "No transverse loads (κ-based)":
-            kappa_x  = st.number_input("κx (−1 to 1, +ve = double curvature)", min_value=-1.0, max_value=1.0, value=1.0, step=0.1, key="bc4_kx_kappa")
-            omega1_x = max(0.4, 0.6 - 0.4 * kappa_x)
-            st.info(f"ω₁x = 0.6 − 0.4κx = **{omega1_x:.3f}**")
-        elif omega1_case_x == "Distributed / series moments":
-            omega1_x = 1.0
-            st.info("ω₁x = 1.0")
-        else:
-            omega1_x = 0.85
-            st.info("ω₁x = 0.85")
-
-    with w1_col2:
-        omega1_case_y = st.selectbox(
-            "ω₁ case — y-axis",
-            ["No transverse loads (κ-based)", "Distributed / series moments", "Concentrated between supports"],
-            key="bc4_w1y_case",
-        )
-        if omega1_case_y == "No transverse loads (κ-based)":
-            kappa_y  = st.number_input("κy (−1 to 1, +ve = double curvature)", min_value=-1.0, max_value=1.0, value=1.0, step=0.1, key="bc4_ky_kappa")
-            omega1_y = max(0.4, 0.6 - 0.4 * kappa_y)
-            st.info(f"ω₁y = 0.6 − 0.4κy = **{omega1_y:.3f}**")
-        elif omega1_case_y == "Distributed / series moments":
-            omega1_y = 1.0
-            st.info("ω₁y = 1.0")
-        else:
-            omega1_y = 0.85
-            st.info("ω₁y = 0.85")
-
-    st.markdown("---")
-
-    # ── ω₂ / Cw inputs for Check (c) Cl. 13.6 ───────────────────────────────
-    st.markdown("**Check (c) — Lateral Torsional Buckling inputs** *(Cl. 13.6, uses Ly as unbraced length)*")
-
-    ltb1, ltb2, ltb3 = st.columns(3)
-
-    with ltb1:
-        Cw_csv_disp = get_prop(shape, "Cw")
-        cw_def_disp = round(Cw_csv_disp / 1e9, 4) if Cw_csv_disp else 0.0
-        Cw_user_c   = st.number_input(
-            f"Cw (×10⁹ mm⁶)  [CSV = {cw_def_disp}]",
-            min_value=0.0, value=cw_def_disp, format="%.4f", key="bc4_cw_c",
-        )
-
-    with ltb2:
-        omega2_method_c = st.selectbox(
-            "ω₂ method",
-            ["Linear approximation (κ-based)", "Quarter-point moments"],
-            key="bc4_w2_method_c",
-        )
-
-    with ltb3:
-        if omega2_method_c == "Linear approximation (κ-based)":
-            kappa_c  = st.number_input(
-                "κ (+ve = double curvature)",
-                min_value=-1.0, max_value=1.0, value=1.0, step=0.1, key="bc4_kappa_c",
-            )
-            omega2_c = min(2.5, 1.75 + 1.05 * kappa_c + 0.3 * kappa_c ** 2)
-            st.info(f"ω₂ = 1.75 + 1.05κ + 0.3κ² = **{omega2_c:.3f}**")
-        else:
-            st.markdown("**Quarter-point moments (kN·m)**")
-            Mmax_c = st.number_input("M_max", min_value=0.01, value=200.0, step=10.0, key="bc4_mmax_c")
-            Ma_c   = st.number_input("M_a (¼ pt)", min_value=0.0, value=150.0, step=10.0, key="bc4_ma_c")
-            Mb_c   = st.number_input("M_b (mid)",  min_value=0.0, value=180.0, step=10.0, key="bc4_mb_c")
-            Mc_c   = st.number_input("M_c (¾ pt)", min_value=0.0, value=160.0, step=10.0, key="bc4_mc_c")
-            denom_c = math.sqrt(Mmax_c**2 + 4*Ma_c**2 + 7*Mb_c**2 + 4*Mc_c**2)
-            omega2_c = min(2.5, 4 * Mmax_c / denom_c) if denom_c > 0 else 1.0
-            st.info(f"ω₂ = 4·Mmax / √(...) = **{omega2_c:.3f}**")
-
-st.markdown("---")
-
-# ── 5. Calculate & display results ────────────────────────────────────────────
-st.subheader("5. Results")
+st.caption("CSA S16 Cl. 13.8 and 13.9  |  loads in kN and kN-m, "
+           "geometry in mm")
 
 try:
-    if axial_case == "TENSION":
-        # ── Compute Mrx and Mry via Clause 13.5 ──────────────────────────────
-        res_x = calc_Mr_clause_13_5(shape, Fy, axis="x")
-        res_y = calc_Mr_clause_13_5(shape, Fy, axis="y")
-        Mrx_kNm: Optional[float] = res_x["Mr_kNm"]
-        Mry_kNm: Optional[float] = res_y["Mr_kNm"]
+    DATA, REPORT = load_sections()
+except Exception as exc:
+    st.error("Could not read the SST12.1 workbook: " + str(exc))
+    st.stop()
 
-        if res_x["warning"]:
-            st.warning(f"x-axis: {res_x['warning']}")
-        if res_y["warning"]:
-            st.warning(f"y-axis: {res_y['warning']}")
+if not DATA:
+    st.error("No section data found. Add the CISC SST12.1 workbook to "
+             "attached_assets/.")
+    st.stop()
 
-        if A is None:
-            st.error("Area (A) not found in section data.")
+col_calc, col_model = st.columns([1.15, 1], gap="large")
+
+with col_calc:
+
+    # ---- 1. Section ----
+    st.subheader("1. Section")
+    fam_opts = [(c, FAMILY_LABEL[c]) for c in FAMILY_ORDER if c in DATA]
+    fam_codes = [c for c, _l in fam_opts]
+    fam_lbl = dict(fam_opts)
+
+    s1, s2 = st.columns([1, 1.4])
+    with s1:
+        fam = st.selectbox("Family", fam_codes,
+                           format_func=lambda c: fam_lbl[c], key="bc_fam")
+    rows_f = DATA.get(fam, [])
+    with s2:
+        search = st.text_input("Search", placeholder="e.g. W310",
+                               key="bc_search")
+        opts = [r["designation"] for r in rows_f]
+        if search:
+            q = search.strip().lower()
+            opts = [d for d in opts if q in d.lower()]
+        if not opts:
+            st.warning("No sections match.")
             st.stop()
+        des = st.selectbox("Designation", opts, key="bc_des_" + fam)
 
-        assert A is not None
+    rec = next((r for r in rows_f if r["designation"] == des), None)
+    if rec is None:
+        st.error("Could not load " + str(des))
+        st.stop()
 
-        Tr_kN = calc_Tr(A, Fy)
+    with st.expander("Which tables are read", expanded=False):
+        st.write(EXCLUDED_NOTE)
+        st.caption("Read: " + ", ".join(REPORT["tables_read"])
+                   + ".  Skipped: " + ", ".join(REPORT["tables_skipped"])
+                   + ".")
+        if REPORT["rejected"]:
+            st.caption("%d rows dropped for missing properties a Cl. 13.8 "
+                       "check needs." % len(REPORT["rejected"]))
 
-        ratio_T  = Tf / Tr_kN    if Tr_kN  > 0                  else 0.0
-        ratio_Mx = Mfx / Mrx_kNm if (Mrx_kNm and Mrx_kNm > 0)  else 0.0
-        ratio_My = Mfy / Mry_kNm if (Mry_kNm and Mry_kNm > 0)  else 0.0
-        interaction = ratio_T + ratio_Mx + ratio_My
+    with st.expander("Section properties  -  " + des, expanded=False):
+        st.caption("Only the values the checks below consume. Each row "
+                   "says where it is used.")
+        cur = None
+        html = ["<table style='border-collapse:collapse;width:100%'>"]
+        for r in display_rows(rec):
+            if r["group"] != cur:
+                cur = r["group"]
+                html.append("<tr><td colspan='3' style='padding:10px 0 3px "
+                            "0;font-weight:600'>" + cur + "</td></tr>")
+            u = (" " + r["unit"]) if r["unit"] else ""
+            u = (u.replace("mm2", "mm<sup>2</sup>")
+                 .replace("mm3", "mm<sup>3</sup>")
+                 .replace("mm4", "mm<sup>4</sup>")
+                 .replace("mm6", "mm<sup>6</sup>"))
+            html.append("<tr><td style='padding:3px 16px 3px 14px;"
+                        "white-space:nowrap'>" + r["symbol"] + "</td>"
+                        "<td style='padding:3px 16px 3px 0;white-space:"
+                        "nowrap'>" + num(r["value"], 2) + u + "</td>"
+                        "<td style='padding:3px 0;color:#8b949e;font-size:"
+                        "0.88em'>" + r["why"] + "</td></tr>")
+        html.append("</table>")
+        st.markdown("".join(html), unsafe_allow_html=True)
+        st.caption("Source: CISC SST12.1, read at run time through "
+                   "sst12.py. Only calculation inputs are shown.")
 
-        sc        = res_x["section_class"]
-        mod_x     = res_x.get("modulus_used") or "Zx"
-        mod_y     = res_y.get("modulus_used") or "Zy"
-        mod_x_val = get_prop(shape, mod_x)
-        mod_y_val = get_prop(shape, mod_y)
+    # ---- 2. Material and frame ----
+    st.subheader("2. Material and Frame")
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        Fy = st.number_input("Fy (MPa)", 200.0, 700.0, 350.0, 5.0,
+                             key="bc_fy")
+        E = st.number_input("E (MPa)", 150000.0, 250000.0, 200000.0,
+                            1000.0, key="bc_e")
+    with m2:
+        G = st.number_input("G (MPa)", 50000.0, 100000.0, 77000.0, 1000.0,
+                            key="bc_g")
+        phi = st.number_input("phi", 0.50, 1.00, 0.90, 0.05, key="bc_phi")
+    with m3:
+        fab = st.radio("Fabrication, sets n",
+                       ["Hot-rolled, HSS Class C",
+                        "Welded three-plate, HSS Class H"],
+                       index=0, key="bc_fab")
+        n_col = 2.24 if fab.startswith("Welded") else 1.34
+        st.caption("n = " + str(n_col))
 
-        # ── Step 1 : Cl. 13.5 ─────────────────────────────────────────────
-        st.markdown("#### Step 1 — Moment Resistance  *(CSA S16 Cl. 13.5)*")
-        st.markdown(
-            f"Section **Class {sc}** → "
-            + ("use **plastic modulus Z**" if sc in (1, 2) else "use **elastic modulus S**")
-        )
+    frame = st.radio("Frame type (Cl. 13.8.1)",
+                     ["Braced frame", "Unbraced frame"], index=0,
+                     horizontal=True, key="bc_frame",
+                     help="A frame with bracing counts as braced if its "
+                          "sway stiffness is at least five times that of "
+                          "the frame without it.")
+    braced = frame.startswith("Braced")
+    if not braced:
+        st.info("Unbraced frame. Cl. 13.8.2 b) iii) and c) iv) set U1 to "
+                "1.0, because the peak moment sits at the member ends "
+                "where P-delta is negligible. Cl. 13.8.2 a) applies to "
+                "braced frames only, so it is reported but not counted.")
 
-        col_x, col_y = st.columns(2)
-        with col_x:
-            st.markdown("**x-axis  (Mrx)**")
-            if sc in (1, 2):
-                st.latex(r"M_{rx} = \phi \cdot Z_x \cdot F_y")
-            else:
-                st.latex(r"M_{rx} = \phi \cdot S_x \cdot F_y")
-            if mod_x_val is not None and Mrx_kNm is not None:
-                st.code(
-                    f"= {PHI} × {mod_x_val:,.0f} mm³ × {Fy:.0f} MPa\n"
-                    f"= {Mrx_kNm * 1e6:,.0f} N·mm\n"
-                    f"= {Mrx_kNm:.1f} kN·m",
-                    language="text",
-                )
-            else:
-                st.warning("Mrx could not be computed (Class 4 or missing modulus).")
+    # ---- 3. Axial condition ----
+    st.subheader("3. Axial Condition")
+    axial = st.radio("Condition", ["Axial compression and bending",
+                                   "Axial tension and bending"],
+                     index=0, key="bc_axial")
+    is_comp = axial.startswith("Axial compression")
 
-        with col_y:
-            st.markdown("**y-axis  (Mry)**")
-            if sc in (1, 2):
-                st.latex(r"M_{ry} = \phi \cdot Z_y \cdot F_y")
-            else:
-                st.latex(r"M_{ry} = \phi \cdot S_y \cdot F_y")
-            if mod_y_val is not None and Mry_kNm is not None:
-                st.code(
-                    f"= {PHI} × {mod_y_val:,.0f} mm³ × {Fy:.0f} MPa\n"
-                    f"= {Mry_kNm * 1e6:,.0f} N·mm\n"
-                    f"= {Mry_kNm:.1f} kN·m",
-                    language="text",
-                )
-            else:
-                st.warning("Mry could not be computed (Class 4 or missing modulus).")
+    # ---- 4. Lengths and loads ----
+    st.subheader("4. Lengths and Loads")
+    K_TABLE = {
+        "Pinned - Pinned": (1.00, "Pinned", "Pinned"),
+        "Fixed - Fixed": (0.65, "Fixed", "Fixed"),
+        "Fixed - Pinned": (0.80, "Fixed", "Pinned"),
+        "Fixed - Guided (sway)": (1.20, "Fixed", "Guided"),
+        "Pinned - Guided": (2.00, "Pinned", "Guided"),
+        "Fixed - Free (cantilever)": (2.10, "Fixed", "Free"),
+    }
+    e1c, e2c = st.columns(2)
+    with e1c:
+        endx = st.selectbox("End conditions, strong axis",
+                            list(K_TABLE.keys()), 0, key="bc_endx")
+        Kx, xb, xt = K_TABLE[endx]
+        Lx_m = st.number_input("Lx (m)", 0.1, 50.0, 4.3, 0.1, key="bc_lx")
+    with e2c:
+        endy = st.selectbox("End conditions, weak axis",
+                            list(K_TABLE.keys()), 0, key="bc_endy")
+        Ky, yb, yt = K_TABLE[endy]
+        Ly_m = st.number_input("Ly (m)", 0.1, 50.0, 4.3, 0.1, key="bc_ly")
+    st.caption("Kx = %.2f, Ky = %.2f. Cl. 13.8.2 b) i) uses K = 1 for the "
+               "member check itself. K above sets the model supports."
+               % (Kx, Ky))
 
-        with st.expander("📐 Show calculation steps", expanded=True):
-            _steps_mr = [f"**Moment Resistance — CSA S16 Cl. 13.5** (Section Class {sc})"]
-            _mod_lbl = "Z" if sc in (1, 2) else "S"
-            if mod_x_val is not None and Mrx_kNm is not None:
-                _steps_mr += [
-                    f"- Formula: M_rx = φ · {_mod_lbl}x · Fy",
-                    f"- Substitute: M_rx = {PHI} × {mod_x_val:,.0f} mm³ × {Fy:.0f} MPa = {Mrx_kNm * 1e6:,.0f} N·mm",
-                    f"- Result: **M_rx = {Mrx_kNm:.1f} kN·m**",
-                ]
-            else:
-                _steps_mr.append("- M_rx not computed (Class 4 or missing modulus).")
-            if mod_y_val is not None and Mry_kNm is not None:
-                _steps_mr += [
-                    f"- Formula: M_ry = φ · {_mod_lbl}y · Fy",
-                    f"- Substitute: M_ry = {PHI} × {mod_y_val:,.0f} mm³ × {Fy:.0f} MPa = {Mry_kNm * 1e6:,.0f} N·mm",
-                    f"- Result: **M_ry = {Mry_kNm:.1f} kN·m**",
-                ]
-            else:
-                _steps_mr.append("- M_ry not computed (Class 4 or missing modulus).")
-            st.markdown("\n".join(_steps_mr))
-
-        st.markdown("---")
-
-        # ── Step 2 : Tension resistance Tr ────────────────────────────────
-        st.markdown("#### Step 2 — Tension Resistance  *(CSA S16 Cl. 13.2)*")
-        st.latex(r"T_r = \phi \cdot A \cdot F_y")
-        st.code(
-            f"= {PHI} × {A:,.0f} mm² × {Fy:.0f} MPa\n"
-            f"= {Tr_kN * 1000:,.0f} N\n"
-            f"= {Tr_kN:.1f} kN",
-            language="text",
-        )
-
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Tension Resistance Tr — CSA S16 Cl. 13.2**",
-                "- Formula: Tr = φ · A · Fy",
-                f"- Substitute: Tr = {PHI} × {A:,.0f} mm² × {Fy:.0f} MPa = {Tr_kN * 1000:,.0f} N",
-                f"- Result: **Tr = {Tr_kN:.1f} kN**",
-            ]))
-
-        st.markdown("---")
-
-        # ── Step 3 : Cl. 13.9 interaction check ───────────────────────────
-        st.markdown("#### Step 3 — Tension + Bending Interaction  *(CSA S16 Cl. 13.9)*")
-        st.latex(
-            r"\frac{T_f}{\phi T_r} + \frac{M_{fx}}{\phi M_{rx}} "
-            r"+ \frac{M_{fy}}{\phi M_{ry}} \leq 1.0"
-        )
-        mrx_str = f"{Mrx_kNm:.1f}" if Mrx_kNm else "—"
-        mry_str = f"{Mry_kNm:.1f}" if Mry_kNm else "—"
-        st.code(
-            f"  Tf / φTr   = {Tf:.1f} / {Tr_kN:.1f}   = {ratio_T:.4f}\n"
-            f"  Mfx / φMrx = {Mfx:.1f} / {mrx_str}  = {ratio_Mx:.4f}\n"
-            f"  Mfy / φMry = {Mfy:.1f} / {mry_str}  = {ratio_My:.4f}\n"
-            f"  ─────────────────────────────────────────\n"
-            f"  Total       = {ratio_T:.4f} + {ratio_Mx:.4f} + {ratio_My:.4f} = {interaction:.4f}",
-            language="text",
-        )
-        if interaction <= 1.0:
-            st.success(f"✅  PASS   Interaction = {interaction:.3f} ≤ 1.0")
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        if is_comp:
+            Cf = st.number_input("Cf (kN)", 0.0, 1e7, 1250.0, 25.0,
+                                 key="bc_cf")
+            Tf = 0.0
         else:
-            st.error(f"❌  FAIL   Interaction = {interaction:.3f} > 1.0")
+            Tf = st.number_input("Tf (kN)", 0.0, 1e7, 800.0, 25.0,
+                                 key="bc_tf")
+            Cf = 0.0
+    with f2:
+        use_e = st.checkbox("Mfx from eccentricity", value=True,
+                            key="bc_use_e")
+        if use_e:
+            e_mm = st.number_input("e (mm)", 0.0, 2000.0, 130.0, 5.0,
+                                   key="bc_e_mm")
+            Mfx = (Cf if is_comp else Tf) * e_mm / 1000.0
+            st.caption("Mfx = P e = " + num(Mfx, 1) + " kN-m")
+        else:
+            e_mm = 0.0
+            Mfx = st.number_input("Mfx (kN-m)", 0.0, 1e6, 162.5, 5.0,
+                                  key="bc_mfx")
+    with f3:
+        Mfy = st.number_input("Mfy (kN-m)", 0.0, 1e6, 0.0, 5.0,
+                              key="bc_mfy")
 
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Tension + Bending Interaction — CSA S16 Cl. 13.9**",
-                "- Formula: Tf/Tr + Mfx/Mrx + Mfy/Mry ≤ 1.0",
-                f"- Tf/Tr = {Tf:.1f} / {Tr_kN:.1f} = {ratio_T:.4f}",
-                f"- Mfx/Mrx = {Mfx:.1f} / {mrx_str} = {ratio_Mx:.4f}",
-                f"- Mfy/Mry = {Mfy:.1f} / {mry_str} = {ratio_My:.4f}",
-                f"- Substitute: {ratio_T:.4f} + {ratio_Mx:.4f} + {ratio_My:.4f}",
-                f"- Result: **Interaction = {interaction:.4f}** ({'PASS ≤ 1.0' if interaction <= 1.0 else 'FAIL > 1.0'})",
-            ]))
+    # ---- 5. Moment gradient factors ----
+    st.subheader("5. Moment Gradient Factors")
+    st.caption("omega1 per Cl. 13.8.5 feeds U1. omega2 per Cl. 13.6 feeds "
+               "Mu in check c).")
+    w1c, w2c = st.columns(2)
+    with w1c:
+        c1 = st.selectbox("omega1 case, x-axis",
+                          [k for k, _l in OMEGA1_CASES],
+                          format_func=lambda k: dict(OMEGA1_CASES)[k],
+                          key="bc_w1x")
+        kx = (st.number_input("kappa x", -1.0, 1.0, 1.0, 0.1, key="bc_kx")
+              if c1 == "kappa" else 1.0)
+        om1x = omega1_from(c1, kx)
+        st.caption("omega1x = %.3f" % om1x)
+        c2 = st.selectbox("omega1 case, y-axis",
+                          [k for k, _l in OMEGA1_CASES],
+                          format_func=lambda k: dict(OMEGA1_CASES)[k],
+                          key="bc_w1y")
+        ky = (st.number_input("kappa y", -1.0, 1.0, 1.0, 0.1, key="bc_ky")
+              if c2 == "kappa" else 1.0)
+        om1y = omega1_from(c2, ky)
+        st.caption("omega1y = %.3f" % om1y)
+    with w2c:
+        w2mode = st.radio("omega2 method",
+                          ["Linear gradient (kappa)", "Quarter-point"],
+                          key="bc_w2m")
+        if w2mode.startswith("Linear"):
+            k2 = st.number_input("kappa", -1.0, 1.0, 1.0, 0.1, key="bc_k2")
+            om2 = min(2.5, 1.75 + 1.05 * k2 + 0.3 * k2 ** 2)
+        else:
+            q1, q2, q3, q4 = st.columns(4)
+            Mmax = q1.number_input("Mmax", 0.01, 1e6, 200.0, 10.0,
+                                   key="bc_qmax")
+            Ma = q2.number_input("Ma", 0.0, 1e6, 150.0, 10.0, key="bc_qa")
+            Mb = q3.number_input("Mb", 0.0, 1e6, 180.0, 10.0, key="bc_qb")
+            Mc = q4.number_input("Mc", 0.0, 1e6, 160.0, 10.0, key="bc_qc")
+            den = math.sqrt(Mmax ** 2 + 4 * Ma ** 2 + 7 * Mb ** 2
+                            + 4 * Mc ** 2)
+            om2 = min(2.5, 4 * Mmax / den) if den > 0 else 1.0
+        st.caption("omega2 = %.3f" % om2)
+        class4_Se = st.checkbox(
+            "Class 4: compute effective section modulus Se", value=False,
+            key="bc_se",
+            help="Cl. 13.5 c). Without this a Class 4 section reports "
+                 "INCOMPLETE rather than dropping the moment term, which "
+                 "would read as a pass. Se is major-axis only, so a "
+                 "Class 4 section with Mfy stays INCOMPLETE.")
 
-        # ── Step 4 : Cl. 13.9.2 — Laterally unsupported check ────────────
-        if run_136:
+    # ---- run ----
+    sec = {"designation": rec["designation"], "family": rec["family"],
+           "A": rec["A"], "d": rec["d"], "b": rec["b"], "t": rec["t"],
+           "w": rec["w"], "h": rec.get("h"), "rx": rec["rx"],
+           "ry": rec["ry"], "Ix": rec["Ix"], "Iy": rec["Iy"],
+           "Zx": rec["Zx"], "Zy": rec.get("Zy"), "Sx": rec["Sx"],
+           "Sy": rec.get("Sy"), "J": rec.get("J"), "Cw": rec.get("Cw")}
+
+    P = dict(Fy=Fy, E=E, G=G, phi=phi, n=n_col, Kx=Kx, Ky=Ky,
+             Lx=Lx_m * 1000.0, Ly=Ly_m * 1000.0, Cf=Cf, Tf=Tf,
+             Mfx=Mfx, Mfy=Mfy, braced=braced, omega1x=om1x, omega1y=om1y,
+             omega2=om2, class4_use_Se=class4_Se, Lu=Ly_m * 1000.0)
+
+    try:
+        R = check_13_8(sec, P) if is_comp else None
+        T = None if is_comp else check_13_9(sec, P)
+    except Exception as exc:
+        st.error("Calculation error: " + str(exc))
+        st.stop()
+
+    CI = (R or T)["class_info"]
+    section_class = (R or T)["section_class"]
+
+    # ---- 6. Table 1 ----
+    st.divider()
+    st.subheader("6. Local Buckling  -  Table 1")
+    st.caption("Elements in uniform axial compression, Cl. 11.2.  "
+               "sqrt(Fy) = " + num(math.sqrt(Fy), 3))
+    t1_all = table1_elements(rec, Fy)
+    t1_sel = []
+    for c in t1_all:
+        if st.checkbox(c["label"], value=True, key="bc_" + c["key"]):
+            t1_sel.append(c)
+            st.markdown("*" + c["why"] + "*")
+            st.caption(c["clause"])
+            st.latex(c["width"])
+            st.latex(c["ratio_tex"])
+            st.latex(c["limit_tex"])
+            ok = c["ratio"] <= c["limit"]
+            st.latex(tx(c["ratio"], 2) + (r" \leq " if ok else r" > ")
+                     + tx(c["limit"], 2)
+                     + (r"\qquad\textbf{PASS}" if ok
+                        else r"\qquad\textbf{FAIL}"))
+            (st.success if ok else st.error)(
+                "Satisfies Table 1." if ok else
+                "Exceeds Table 1, so the section is Class 4 for axial "
+                "compression, Cl. 11.2.")
             st.markdown("---")
-            st.markdown("#### Step 4 — Laterally Unsupported Check  *(CSA S16 Cl. 13.9.2 / Cl. 13.6)*")
 
-            L_mm_136 = L_unsup * 1000.0
-            Cw_mm6   = Cw_user * 1e9
+    # ---- 7. Table 2 ----
+    st.subheader("7. Section Classification  -  Table 2")
+    st.caption("Cl. 11.2 sends flexural compression to Table 2. The flange "
+               "limits are the beam limits, because the flange is in "
+               "uniform compression either way. The web limits carry the "
+               "axial reduction, which is what makes this a beam-column "
+               "classification rather than a beam one.")
+    if not CI.get("ok"):
+        st.error("Table 2 could not be built for this section.")
+        st.stop()
 
-            res_136 = calc_Mr_clause_13_6(
-                shape       = shape,
-                Fy_MPa      = Fy,
-                omega2      = omega2_val,
-                L_mm        = L_mm_136,
-                E_MPa       = E,
-                G_MPa       = G_STEEL,
-                Cw_override = Cw_mm6,
-            )
+    st.markdown("**Flange**")
+    st.latex(r"\frac{b_{el}}{t} = " + tx(CI["lam_f"], 2)
+             + r"\qquad \frac{145}{\sqrt{F_y}},\ \frac{170}{\sqrt{F_y}},\ "
+               r"\frac{200}{\sqrt{F_y}} = "
+             + tx(CI["flange_limits"][0], 2) + r",\ "
+             + tx(CI["flange_limits"][1], 2) + r",\ "
+             + tx(CI["flange_limits"][2], 2))
+    st.latex(r"\Rightarrow\ \textbf{Class } " + str(CI["flange_class"]))
 
-            if res_136["warning"]:
-                st.warning(res_136["warning"])
+    if CI.get("web_class"):
+        st.markdown("**Web, reduced for the axial load**")
+        st.latex(r"C_y = A F_y = " + tx(CI["Cy_kN"], 1)
+                 + r"\ \mathrm{kN} \qquad \frac{C_f}{\phi C_y} = "
+                 + tx(CI["Cf_over_phiCy"], 4))
+        st.latex(r"\frac{h}{w} \leq \frac{1100}{\sqrt{F_y}}"
+                 r"\left(1 - 0.39\frac{C_f}{\phi C_y}\right),\ "
+                 r"\frac{1700}{\sqrt{F_y}}\left(1 - 0.61\frac{C_f}"
+                 r"{\phi C_y}\right),\ \frac{1900}{\sqrt{F_y}}"
+                 r"\left(1 - 0.65\frac{C_f}{\phi C_y}\right)")
+        st.latex(r"\frac{h}{w} = " + tx(CI["lam_w"], 2) + r"\qquad "
+                 + tx(CI["web_limits"][0], 2) + r",\ "
+                 + tx(CI["web_limits"][1], 2) + r",\ "
+                 + tx(CI["web_limits"][2], 2)
+                 + r"\ \Rightarrow\ \textbf{Class } "
+                 + str(CI["web_class"]))
+    st.latex(r"\text{Section class} = \max = \textbf{Class } "
+             + str(section_class))
 
-            Mp_kNm    = res_136["Mp_kNm"]
-            Mu_kNm    = res_136["Mu_kNm"]
-            Mr136_kNm = res_136["Mr_kNm"]
-            branch    = res_136["branch"]
-            Iy_val    = res_136["Iy_mm4"]
-            J_val     = res_136["J_mm4"]
-
-            st.markdown("**4a — Critical Elastic Moment Mu  (Cl. 13.6)**")
-            st.latex(
-                r"M_u = \frac{\omega_2 \pi}{L}"
-                r"\sqrt{EI_y GJ + \left(\frac{\pi E}{L}\right)^2 I_y C_w}"
-            )
-            st.code(
-                f"  ω₂  = {omega2_val:.3f}\n"
-                f"  L   = {L_mm_136:,.0f} mm\n"
-                f"  E   = {E:,.0f} MPa\n"
-                f"  Iy  = {Iy_val:.3e} mm⁴\n"
-                f"  G   = {G_STEEL:,.0f} MPa\n"
-                f"  J   = {J_val:.3e} mm⁴\n"
-                f"  Cw  = {Cw_mm6:.3e} mm⁶\n"
-                f"  ─────────────────────────────────────\n"
-                f"  Mu  = {Mu_kNm:.1f} kN·m",
-                language="text",
-            )
-
-            with st.expander("📐 Show calculation steps", expanded=True):
-                st.markdown("\n".join([
-                    "**Critical Elastic Moment Mu — CSA S16 Cl. 13.6**",
-                    "- Formula: Mu = (ω₂·π/L)·√(E·Iy·G·J + (π·E/L)²·Iy·Cw)",
-                    f"- Substitute: Mu = ({omega2_val:.3f}·π/{L_mm_136:,.0f})·√({E:,.0f}×{Iy_val:.3e}×{G_STEEL:,.0f}×{J_val:.3e} + (π×{E:,.0f}/{L_mm_136:,.0f})²×{Iy_val:.3e}×{Cw_mm6:.3e})",
-                    f"- Result: **Mu = {Mu_kNm:.1f} kN·m**",
-                ]))
-
-            st.markdown("**4b — Plastic Moment Mp and branch selection**")
-            Zx_val = get_prop(shape, "Zx")
-            st.code(
-                f"  Mp = Fy × Zx = {Fy:.0f} × {Zx_val:,.0f} = {Mp_kNm*1e6:,.0f} N·mm = {Mp_kNm:.1f} kN·m\n"
-                f"  0.67·Mp = {0.67*Mp_kNm:.1f} kN·m\n"
-                f"  Mu = {Mu_kNm:.1f} kN·m  →  {branch}",
-                language="text",
-            )
-
-            with st.expander("📐 Show calculation steps", expanded=True):
-                st.markdown("\n".join([
-                    "**Plastic Moment Mp & Branch Selection — CSA S16 Cl. 13.6**",
-                    "- Formula: Mp = Fy · Zx",
-                    f"- Substitute: Mp = {Fy:.0f} MPa × {Zx_val:,.0f} mm³ = {Mp_kNm*1e6:,.0f} N·mm",
-                    f"- Result: **Mp = {Mp_kNm:.1f} kN·m**",
-                    f"- Threshold: 0.67·Mp = {0.67*Mp_kNm:.1f} kN·m",
-                    f"- Branch: Mu = {Mu_kNm:.1f} kN·m → **{branch}**",
-                ]))
-
-            st.markdown("**4c — Factored Moment Resistance Mr  (Cl. 13.6)**")
-            st.latex(res_136["formula"])
-            if branch.startswith("Mu >"):
-                st.code(
-                    f"  = 1.15 × {PHI} × {Mp_kNm:.1f} × (1 − 0.28 × {Mp_kNm:.1f} / {Mu_kNm:.1f})\n"
-                    f"  = {1.15*PHI*Mp_kNm*(1-0.28*Mp_kNm/Mu_kNm):.1f} kN·m\n"
-                    f"  ≤ φMp = {PHI*Mp_kNm:.1f} kN·m\n"
-                    f"  Mr = {Mr136_kNm:.1f} kN·m",
-                    language="text",
-                )
+    # ================= TENSION =================
+    if not is_comp:
+        st.divider()
+        st.subheader("8. Axial Tension and Bending  -  Cl. 13.9")
+        st.latex(r"T_r = \phi A F_y = " + tx(phi, 2) + r" \times "
+                 + tx(sec["A"], 0) + r" \times " + tx(Fy, 0) + r" = "
+                 + tx(T["Tr_kN"], 1) + r"\ \mathrm{kN}")
+        for nm, mr in ((r"M_{rx}", T["Mrx"]), (r"M_{ry}", T["Mry"])):
+            if mr.get("Mr_kNm") is None:
+                st.warning(str(mr.get("note", "")))
             else:
-                st.code(
-                    f"  = {PHI} × {Mu_kNm:.1f}\n"
-                    f"  Mr = {Mr136_kNm:.1f} kN·m",
-                    language="text",
-                )
+                st.latex(nm + r" = \phi\," + mr["modulus"] + r" F_y = "
+                         + tx(mr["Mr_kNm"], 1) + r"\ \mathrm{kN\,m}"
+                         + r"\quad(\text{" + mr["clause"] + r"})")
+        st.markdown("**Cl. 13.9.1**")
+        st.latex(r"\frac{T_f}{T_r} + \frac{M_{fx}}{M_{rx}}"
+                 r"+ \frac{M_{fy}}{M_{ry}} \leq 1.0")
+        st.code("  Tf/Tr   = %s\n  Mfx/Mrx = %s\n  Mfy/Mry = %s\n"
+                "  ---------------------------\n  total   = %s  %s"
+                % (uc(T["terms_13_9_1"][0]), uc(T["terms_13_9_1"][1]),
+                   uc(T["terms_13_9_1"][2]), uc(T["total_13_9_1"]),
+                   verdict(T["total_13_9_1"])), language="text")
+        v = T["total_13_9_1"]
+        (st.success if (v is not None and v <= 1.0) else st.error)(
+            "Cl. 13.9.1 = " + uc(v) + "  " + verdict(v))
 
-            with st.expander("📐 Show calculation steps", expanded=True):
-                if branch.startswith("Mu >"):
-                    _mr_steps = [
-                        "**Factored Moment Resistance Mr — CSA S16 Cl. 13.6** (Mu > 0.67·Mp)",
-                        "- Formula: Mr = 1.15·φ·Mp·(1 − 0.28·Mp/Mu) ≤ φ·Mp",
-                        f"- Substitute: Mr = 1.15 × {PHI} × {Mp_kNm:.1f} × (1 − 0.28 × {Mp_kNm:.1f} / {Mu_kNm:.1f}) = {1.15*PHI*Mp_kNm*(1-0.28*Mp_kNm/Mu_kNm):.1f} kN·m",
-                        f"- Cap: φ·Mp = {PHI*Mp_kNm:.1f} kN·m",
-                        f"- Result: **Mr = {Mr136_kNm:.1f} kN·m**",
-                    ]
-                else:
-                    _mr_steps = [
-                        "**Factored Moment Resistance Mr — CSA S16 Cl. 13.6** (Mu ≤ 0.67·Mp)",
-                        "- Formula: Mr = φ·Mu",
-                        f"- Substitute: Mr = {PHI} × {Mu_kNm:.1f} kN·m",
-                        f"- Result: **Mr = {Mr136_kNm:.1f} kN·m**",
-                    ]
-                st.markdown("\n".join(_mr_steps))
-
-            st.markdown("**4d — Interaction Check  (Cl. 13.9.2)**")
-            if sc in (1, 2):
-                Zx_v = get_prop(shape, "Zx")
-                assert Zx_v is not None and A is not None and Mr136_kNm > 0
-                interact_136 = Mfx / Mr136_kNm - (Tf * Zx_v) / (Mr136_kNm * 1e3 * A)
-                st.latex(r"\frac{M_f}{M_r} - \frac{T_f Z}{M_r A} \leq 1.0 \quad \text{(Class 1 \& 2)}")
-                st.code(
-                    f"  Mfx / Mr    = {Mfx:.1f} / {Mr136_kNm:.1f}           = {Mfx/Mr136_kNm:.4f}\n"
-                    f"  Tf·Z/(Mr·A) = {Tf:.1f}×{Zx_v:.3e} / ({Mr136_kNm:.1f}×10³×{A:.0f})\n"
-                    f"             = {(Tf*Zx_v)/(Mr136_kNm*1e3*A):.4f}\n"
-                    f"  ─────────────────────────────────────────\n"
-                    f"  Interaction = {interact_136:.4f}",
-                    language="text",
-                )
-            else:
-                Sx_v = get_prop(shape, "Sx")
-                assert Sx_v is not None and A is not None and Mr136_kNm > 0
-                interact_136 = Mfx / Mr136_kNm - (Tf * Sx_v) / (Mr136_kNm * 1e3 * A)
-                st.latex(r"\frac{M_f}{M_r} - \frac{T_f S}{M_r A} \leq 1.0 \quad \text{(Class 3 \& 4)}")
-                st.code(
-                    f"  Mfx / Mr    = {Mfx:.1f} / {Mr136_kNm:.1f}          = {Mfx/Mr136_kNm:.4f}\n"
-                    f"  Tf·S/(Mr·A) = {Tf:.1f}×{Sx_v:.3e} / ({Mr136_kNm:.1f}×10³×{A:.0f})\n"
-                    f"             = {(Tf*Sx_v)/(Mr136_kNm*1e3*A):.4f}\n"
-                    f"  ─────────────────────────────────────────\n"
-                    f"  Interaction = {interact_136:.4f}",
-                    language="text",
-                )
-
-            if interact_136 <= 1.0:
-                st.success(f"✅  PASS   Cl. 13.9.2 Interaction = {interact_136:.3f} ≤ 1.0")
-            else:
-                st.error(f"❌  FAIL   Cl. 13.9.2 Interaction = {interact_136:.3f} > 1.0")
-
-            with st.expander("📐 Show calculation steps", expanded=True):
-                if sc in (1, 2):
-                    _mod_136_n, _mod_136_v = "Z", Zx_v
-                else:
-                    _mod_136_n, _mod_136_v = "S", Sx_v
-                st.markdown("\n".join([
-                    f"**Laterally Unsupported Interaction — CSA S16 Cl. 13.9.2** (Class {sc})",
-                    f"- Formula: Mf/Mr − Tf·{_mod_136_n}/(Mr·A) ≤ 1.0",
-                    f"- Mfx/Mr = {Mfx:.1f} / {Mr136_kNm:.1f} = {Mfx/Mr136_kNm:.4f}",
-                    f"- Tf·{_mod_136_n}/(Mr·A) = {Tf:.1f} × {_mod_136_v:.3e} / ({Mr136_kNm:.1f}×10³ × {A:.0f}) = {(Tf*_mod_136_v)/(Mr136_kNm*1e3*A):.4f}",
-                    f"- Substitute: {Mfx/Mr136_kNm:.4f} − {(Tf*_mod_136_v)/(Mr136_kNm*1e3*A):.4f}",
-                    f"- Result: **Interaction = {interact_136:.4f}** ({'PASS ≤ 1.0' if interact_136 <= 1.0 else 'FAIL > 1.0'})",
-                ]))
-
-    else:  # COMPRESSION — Results
-        missing = [s for s, v in [("A", A), ("rx", rx), ("ry", ry), ("Ix", Ix), ("Iy", Iy)] if v is None]
-        if missing:
-            st.error(f"Missing required section properties: {', '.join(missing)}")
-            st.stop()
-
-        assert A is not None and rx is not None and ry is not None
-        assert Ix is not None and Iy is not None
-
-        # ── Geometry ─────────────────────────────────────────────────────────
-        Lx_mm = Lx * 1000.0
-        Ly_mm = Ly * 1000.0
-        KLr_x = (Kx * Lx_mm) / rx
-        KLr_y = (Ky * Ly_mm) / ry
-
-        # ── Ce (Euler buckling loads) for U1 ─────────────────────────────────
-        Ce_x = Ce_euler(E, Ix, Lx_mm)
-        Ce_y = Ce_euler(E, Iy, Ly_mm)
-
-        # ── λ variants ───────────────────────────────────────────────────────
-        # K=1 slenderness for checks (b) and (c)
-        KLr_x_K1 = Lx_mm / rx
-        KLr_y_K1 = Ly_mm / ry
-        KLr_b    = max(KLr_x_K1, KLr_y_K1)   # Check (b) — governing axis
-        KLr_c    = KLr_y_K1                    # Check (c) — weak axis only
-
-        lam_b    = KLr_b * math.sqrt(Fy / ((math.pi ** 2) * E))
-        lam_c    = KLr_c * math.sqrt(Fy / ((math.pi ** 2) * E))
-
-        # β uses λy with K=1 (same for checks b and c)
-        lam_y_K1 = KLr_y_K1 * math.sqrt(Fy / ((math.pi ** 2) * E))
-        beta_bc  = min(0.85, 0.6 + 0.4 * lam_y_K1)
-
-        # ── Cr variants ──────────────────────────────────────────────────────
-        Cr_a              = PHI * A * Fy / 1000.0              # Check (a): λ=0
-        Cr_b, Fe_b, Fcr_b = calc_Cr(A, Fy, E, KLr_b)          # Check (b): K=1, governing
-        Cr_c, Fe_c, Fcr_c = calc_Cr(A, Fy, E, KLr_c)          # Check (c): K=1, weak-axis
-
-        # ── Mr from Cl. 13.5 — must be first so sc is available for coeff_Mx ──
-        res_x_135 = calc_Mr_clause_13_5(shape, Fy, axis="x")
-        res_y_135 = calc_Mr_clause_13_5(shape, Fy, axis="y")
-        Mrx_135   = res_x_135["Mr_kNm"]
-        Mry_135   = res_y_135["Mr_kNm"]
-        sc    = res_x_135["section_class"]
-        mod_x = res_x_135.get("modulus_used") or "Zx"
-        mod_y = res_y_135.get("modulus_used") or "Zy"
-
-        if res_x_135["warning"]:
-            st.warning(f"Mrx (Cl. 13.5): {res_x_135['warning']}")
-        if res_y_135["warning"]:
-            st.warning(f"Mry (Cl. 13.5): {res_y_135['warning']}")
-
-        # ── U1 — braced frame: always computed, enforced >= 1.0 ──────────────
-        U1x = max(1.0, calc_U1(omega1_x, Cf, Ce_x))
-        U1y = max(1.0, calc_U1(omega1_y, Cf, Ce_y))
-
-        # ── Cl. 13.8.2 vs 13.8.3 — coefficient on U1x*Mfx term ─────────────
-        # Class 1 & 2 I-shaped: Cl. 13.8.2 -> 0.85*U1x
-        # Class 3 & 4:          Cl. 13.8.3 -> 1.00*U1x  (no 0.85 factor)
-        coeff_Mx   = 0.85 if sc in (1, 2) else 1.00
-        clause_ref = "Cl. 13.8.2" if sc in (1, 2) else "Cl. 13.8.3"
-
-        # =====================================================================
-        # STEP 1 — Member Summary + P-delta (U1) + P-Delta note
-        # =====================================================================
-        st.markdown("#### Step 1 — Member Summary & Second-Order Effects")
-
-        # ── Slenderness metrics ───────────────────────────────────────────────
-        s1a, s1b, s1c, s1d = st.columns(4)
-        s1a.metric("KL/r (x)",  f"{KLr_x:.2f}")
-        s1b.metric("KL/r (y)",  f"{KLr_y:.2f}")
-        s1c.metric("Cy = A·Fy (kN)", f"{A * Fy / 1000:.1f}")
-        s1d.metric("Section class",  str(sc))
-
-        st.markdown("---")
-
-        # ── P-delta (member-level) — Ce and U1 derivation ────────────────────
-        st.markdown("**P-δ Effect (member-level) — Cl. 13.8.4**")
-        st.caption(
-            "Axial compression on the deflected member shape amplifies moments between "
-            "member ends. Accounted for by the moment amplification factor U₁."
-        )
-
-        st.latex(r"C_e = rac{\pi^2 E I}{L^2} \qquad U_1 = rac{\omega_1}{1 - C_f/C_e} \geq 1.0")
-
-        ce_col1, ce_col2 = st.columns(2)
-        with ce_col1:
-            st.markdown("**x-axis**")
-            U1x_raw = calc_U1(omega1_x, Cf, Ce_x)
-            st.code(
-                f"  Ce,x = pi^2 x {E:.0f} x {Ix:.3e} / {Lx_mm:.0f}^2\n"
-                f"       = {Ce_x:,.0f} kN\n"
-                f"  U1x  = {omega1_x:.3f} / (1 - {Cf:.1f}/{Ce_x:,.0f})\n"
-                f"       = {U1x_raw:.4f}  ->  {U1x:.4f} (>= 1.0)\n"
-                f"  Amplified Mfx = {U1x:.4f} x {Mfx:.1f} = {U1x*Mfx:.1f} kN*m",
-                language="text",
-            )
-        with ce_col2:
-            st.markdown("**y-axis**")
-            U1y_raw = calc_U1(omega1_y, Cf, Ce_y)
-            st.code(
-                f"  Ce,y = pi^2 x {E:.0f} x {Iy:.3e} / {Ly_mm:.0f}^2\n"
-                f"       = {Ce_y:,.0f} kN\n"
-                f"  U1y  = {omega1_y:.3f} / (1 - {Cf:.1f}/{Ce_y:,.0f})\n"
-                f"       = {U1y_raw:.4f}  ->  {U1y:.4f} (>= 1.0)\n"
-                f"  Amplified Mfy = {U1y:.4f} x {Mfy:.1f} = {U1y*Mfy:.1f} kN*m",
-                language="text",
-            )
-
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Euler Load Ce & Amplification U₁ — CSA S16 Cl. 13.8.4**",
-                f"- Moment gradient factor (Cl. 13.8.5): ω₁x = {omega1_x:.3f}, ω₁y = {omega1_y:.3f}",
-                "- Formula: Ce = π²·E·I / L²",
-                f"- Ce,x = π² × {E:.0f} × {Ix:.3e} / {Lx_mm:.0f}² = {Ce_x:,.0f} kN",
-                f"- Ce,y = π² × {E:.0f} × {Iy:.3e} / {Ly_mm:.0f}² = {Ce_y:,.0f} kN",
-                "- Formula: U₁ = ω₁ / (1 − Cf/Ce) ≥ 1.0",
-                f"- U₁x = {omega1_x:.3f} / (1 − {Cf:.1f}/{Ce_x:,.0f}) = {U1x_raw:.4f} → **{U1x:.4f}** (≥ 1.0)",
-                f"- U₁y = {omega1_y:.3f} / (1 − {Cf:.1f}/{Ce_y:,.0f}) = {U1y_raw:.4f} → **{U1y:.4f}** (≥ 1.0)",
-            ]))
-
-        st.markdown("---")
-
-        # ── P-Delta (system-level) — informational note ───────────────────────
-        st.info(
-            "**P-Δ Effect (system-level):** Caused by vertical loads acting on "
-            "sway displacements of the structure. P-Δ does **not** apply to braced frames "
-            "because lateral sway is prevented by the bracing system. "
-            "This check assumes a **braced frame** — P-Δ is not applicable."
-        )
-
-        st.markdown(f"**Interaction formula:** {clause_ref} "
-                    f"({'Class 1 & 2: 0.85·U1x factor applies' if sc in (1,2) else 'Class 3/4: U1x factor, no 0.85 reduction'})")
-
-        st.markdown("---")
-
-        # =====================================================================
-        # STEP 2 — Moment Resistances (Cl. 13.5)
-        # =====================================================================
-        st.markdown("#### Step 2 — Moment Resistance  *(CSA S16 Cl. 13.5)*")
-        st.markdown(
-            f"Section **Class {sc}** → "
-            + ("use **plastic modulus Z**" if sc in (1, 2) else "use **elastic modulus S**")
-        )
-
-        col_mrx, col_mry = st.columns(2)
-        with col_mrx:
-            st.markdown("**x-axis — Mrx**")
-            st.latex(r"M_{rx} = \phi \cdot Z_x \cdot F_y" if sc in (1, 2) else r"M_{rx} = \phi \cdot S_x \cdot F_y")
-            mod_x_val = get_prop(shape, mod_x)
-            if mod_x_val is not None and Mrx_135 is not None:
-                st.code(
-                    f"= {PHI} × {mod_x_val:,.0f} mm³ × {Fy:.0f} MPa\n"
-                    f"= {Mrx_135 * 1e6:,.0f} N·mm\n"
-                    f"= {Mrx_135:.1f} kN·m",
-                    language="text",
-                )
-            else:
-                st.warning("Mrx could not be computed (Class 4 or missing modulus).")
-
-        with col_mry:
-            st.markdown("**y-axis — Mry**")
-            st.latex(r"M_{ry} = \phi \cdot Z_y \cdot F_y" if sc in (1, 2) else r"M_{ry} = \phi \cdot S_y \cdot F_y")
-            mod_y_val = get_prop(shape, mod_y)
-            if mod_y_val is not None and Mry_135 is not None:
-                st.code(
-                    f"= {PHI} × {mod_y_val:,.0f} mm³ × {Fy:.0f} MPa\n"
-                    f"= {Mry_135 * 1e6:,.0f} N·mm\n"
-                    f"= {Mry_135:.1f} kN·m",
-                    language="text",
-                )
-            else:
-                st.warning("Mry could not be computed (Class 4 or missing modulus).")
-
-        with st.expander("📐 Show calculation steps", expanded=True):
-            _steps_mr_c = [f"**Moment Resistance — CSA S16 Cl. 13.5** (Section Class {sc})"]
-            _mod_lbl_c = "Z" if sc in (1, 2) else "S"
-            if mod_x_val is not None and Mrx_135 is not None:
-                _steps_mr_c += [
-                    f"- Formula: M_rx = φ · {_mod_lbl_c}x · Fy",
-                    f"- Substitute: M_rx = {PHI} × {mod_x_val:,.0f} mm³ × {Fy:.0f} MPa = {Mrx_135 * 1e6:,.0f} N·mm",
-                    f"- Result: **M_rx = {Mrx_135:.1f} kN·m**",
-                ]
-            else:
-                _steps_mr_c.append("- M_rx not computed (Class 4 or missing modulus).")
-            if mod_y_val is not None and Mry_135 is not None:
-                _steps_mr_c += [
-                    f"- Formula: M_ry = φ · {_mod_lbl_c}y · Fy",
-                    f"- Substitute: M_ry = {PHI} × {mod_y_val:,.0f} mm³ × {Fy:.0f} MPa = {Mry_135 * 1e6:,.0f} N·mm",
-                    f"- Result: **M_ry = {Mry_135:.1f} kN·m**",
-                ]
-            else:
-                _steps_mr_c.append("- M_ry not computed (Class 4 or missing modulus).")
-            st.markdown("\n".join(_steps_mr_c))
-
-        st.markdown("---")
-
-        # =====================================================================
-        # STEP 3 — CHECK (a): Cross-Sectional Strength
-        #          λ=0 | β=0.6 | U1 per Cl.13.8.4 ≥ 1.0 | braced only
-        # =====================================================================
-        st.markdown("#### Step 3 — Check (a): Cross-Sectional Strength  *(Cl. 13.8.2a)*")
-        st.caption("Braced frame · λ = 0 → Cr = φAFy · β = 0.6 · U₁ per Cl. 13.8.4 ≥ 1.0")
-        st.latex(
-            r"\frac{C_f}{C_r} + \frac{0.85\,U_{1x}M_{fx}}{M_{rx}}"
-            r"+ \frac{0.6\,U_{1y}M_{fy}}{M_{ry}} \leq 1.0"
-        )
-
-        st.markdown("**Cr — with λ = 0:**")
-        st.latex(r"C_r = \phi A F_y")
-        st.code(
-            f"= {PHI} × {A:,.0f} mm² × {Fy:.0f} MPa\n"
-            f"= {Cr_a:.1f} kN",
-            language="text",
-        )
-
-        ra_C  = Cf / Cr_a if Cr_a > 0 else float("inf")
-        ra_Mx = (coeff_Mx * U1x * Mfx / Mrx_135) if (Mrx_135 and Mrx_135 > 0) else 0.0
-        ra_My = (0.6 * U1y * Mfy / Mry_135) if (Mry_135 and Mry_135 > 0) else 0.0
-        int_a = ra_C + ra_Mx + ra_My
-
-        st.code(
-            f"  Cf / Cr                        = {Cf:.1f} / {Cr_a:.1f}  = {ra_C:.4f}\n"
-            f"  {coeff_Mx}·U1x·Mfx / Mrx  = {coeff_Mx} x {U1x:.4f} x {Mfx:.1f} / {Mrx_135:.1f}  = {ra_Mx:.4f}\n"
-            f"  0.6·U1y·Mfy  / Mry             = 0.60 x {U1y:.4f} x {Mfy:.1f} / {Mry_135:.1f}  = {ra_My:.4f}\n"
-            f"  ──────────────────────────────────────────────────────────\n"
-            f"  Total                           = {ra_C:.4f} + {ra_Mx:.4f} + {ra_My:.4f} = {int_a:.4f}",
-            language="text",
-        )
-        if int_a <= 1.0:
-            st.success(f"✅  PASS   Check (a) = {int_a:.3f} ≤ 1.0")
+        st.markdown("**Cl. 13.9.2, laterally unsupported**")
+        if T.get("total_13_9_2") is None:
+            st.info("Not computed: "
+                    + str(T.get("ltb", {}).get("note", "Cl. 13.6 inputs "
+                                                       "unavailable.")))
         else:
-            st.error(f"❌  FAIL   Check (a) = {int_a:.3f} > 1.0")
+            st.caption(T["sub_13_9_2"])
+            st.latex(r"\frac{M_f}{M_r} - \frac{T_f " + T["modulus_name"]
+                     + r"}{M_r A} \leq 1.0")
+            st.latex(r"M_r\ (\text{Cl. 13.6}) = "
+                     + tx(T["Mr_unsup_kNm"], 1) + r"\ \mathrm{kN\,m}")
+            v2 = T["total_13_9_2"]
+            (st.success if v2 <= 1.0 else st.error)(
+                "Cl. 13.9.2 = " + uc(v2) + "  " + verdict(v2))
 
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Check (a): Cross-Sectional Strength — CSA S16 Cl. 13.8.2a**",
-                "- Compressive resistance (λ = 0): Cr = φ·A·Fy",
-                f"- Substitute: Cr = {PHI} × {A:,.0f} mm² × {Fy:.0f} MPa = {Cr_a:.1f} kN",
-                f"- Result: **Cr = {Cr_a:.1f} kN**",
-                f"- Interaction formula ({clause_ref}): Cf/Cr + {coeff_Mx}·U₁x·Mfx/Mrx + 0.6·U₁y·Mfy/Mry ≤ 1.0",
-                f"- Cf/Cr = {Cf:.1f} / {Cr_a:.1f} = {ra_C:.4f}",
-                f"- {coeff_Mx}·U₁x·Mfx/Mrx = {coeff_Mx} × {U1x:.4f} × {Mfx:.1f} / {Mrx_135:.1f} = {ra_Mx:.4f}",
-                f"- 0.6·U₁y·Mfy/Mry = 0.60 × {U1y:.4f} × {Mfy:.1f} / {Mry_135:.1f} = {ra_My:.4f}",
-                f"- Substitute: {ra_C:.4f} + {ra_Mx:.4f} + {ra_My:.4f}",
-                f"- Result: **Check (a) = {int_a:.4f}** ({'PASS ≤ 1.0' if int_a <= 1.0 else 'FAIL > 1.0'})",
-            ]))
+    # ================= COMPRESSION =================
+    else:
+        C = R["coefficients"]
+        st.divider()
+        st.subheader("8. Moment Resistance  -  Cl. 13.5")
+        st.caption("Governing clause: " + C["clause"] + ".  " + C["note"])
+        for nm, mr in ((r"M_{rx}", R["Mrx"]), (r"M_{ry}", R["Mry"])):
+            if mr.get("Mr_kNm") is None:
+                st.warning(str(mr.get("note", "")))
+            else:
+                st.latex(nm + r" = \phi\," + mr["modulus"] + r" F_y = "
+                         + tx(phi, 2) + r" \times "
+                         + tx(mr["modulus_value"], 0) + r" \times "
+                         + tx(Fy, 0) + r" = " + tx(mr["Mr_kNm"], 1)
+                         + r"\ \mathrm{kN\,m}\quad(\text{" + mr["clause"]
+                         + r"})")
 
-        st.markdown("---")
+        st.divider()
+        st.subheader("9. P-delta  -  Ce and U1, Cl. 13.8.4 and 13.8.5")
+        st.caption("Axial compression acting on the deflected shape of the "
+                   "member between its ends generates a secondary moment. "
+                   "U1 accounts for it. This is a member-level effect and "
+                   "exists in braced frames.")
+        st.latex(r"C_e = \frac{\pi^2 E I}{L^2} \qquad "
+                 r"U_1 = \frac{\omega_1}{1 - C_f/C_e} \geq 1.0")
+        st.latex(r"C_{e,x} = \frac{\pi^2 (" + tx(E, 0) + r")("
+                 + tx(sec["Ix"], 0) + r")}{(" + tx(P["Lx"], 0) + r")^2} = "
+                 + tx(R["Ce_x_kN"], 0) + r"\ \mathrm{kN}")
+        st.latex(r"U_{1x} = \frac{" + tx(om1x, 3) + r"}{1 - " + tx(Cf, 1)
+                 + r"/" + tx(R["Ce_x_kN"], 0) + r"} = " + tx(R["U1x"], 4))
+        if R["u1x"]["forced"]:
+            st.info(R["u1x"]["why"])
+        st.latex(r"U_{1x} M_{fx} = " + tx(R["U1x"] * Mfx, 1)
+                 + r"\ \mathrm{kN\,m}\quad(\text{primary }"
+                 + tx(Mfx, 1) + r")")
+        if Mfy > 0:
+            st.latex(r"C_{e,y} = " + tx(R["Ce_y_kN"], 0)
+                     + r"\ \mathrm{kN} \qquad U_{1y} = " + tx(R["U1y"], 4))
 
-        # =====================================================================
-        # STEP 4 — CHECK (b): Overall Member Strength
-        #          K=1, governing KL/r | β=0.6+0.4λy | U1 per Cl.13.8.4
-        # =====================================================================
-        st.markdown("#### Step 4 — Check (b): Overall Member Strength  *(Cl. 13.8.2b)*")
-        st.caption("K = 1 · governing KL/r · β = 0.6 + 0.4λy ≤ 0.85 · U₁ per Cl. 13.8.4")
-        gov_axis_b = "x" if KLr_x_K1 >= KLr_y_K1 else "y"
-        st.latex(
-            r"\frac{C_f}{C_r} + \frac{0.85\,U_{1x}M_{fx}}{M_{rx}}"
-            r"+ \frac{\beta\,U_{1y}M_{fy}}{M_{ry}} \leq 1.0"
-        )
+        st.info("**P-Delta**, the system-level sway effect, comes from "
+                "vertical load acting through the sway displacement of the "
+                "structure. It does not exist in a braced frame because "
+                "the bracing prevents sway. "
+                + ("This frame is braced, so P-Delta does not apply."
+                   if braced else
+                   "This frame is unbraced, so P-Delta must be carried by "
+                   "the frame analysis that produced Mf. It is not "
+                   "computed here."))
 
-        st.markdown("**Cr — K = 1, governing KL/r:**")
-        st.latex(
-            r"C_r = \frac{\phi A F_y}{(1 + \lambda^{2n})^{1/n}}"
-            r"\qquad \lambda = \frac{KL}{r}\sqrt{\frac{F_y}{\pi^2 E}}"
-        )
-        st.code(
-            f"  KL/r (x, K=1) = {KLr_x_K1:.2f}\n"
-            f"  KL/r (y, K=1) = {KLr_y_K1:.2f}\n"
-            f"  Governing     = {KLr_b:.2f}  ({gov_axis_b}-axis)\n"
-            f"  λ             = {lam_b:.4f}\n"
-            f"  Fe            = {Fe_b:.1f} MPa\n"
-            f"  Fcr           = {Fcr_b:.1f} MPa\n"
-            f"  Cr            = {Cr_b:.1f} kN",
-            language="text",
-        )
+        st.divider()
+        st.subheader("10. Check a)  Cross-sectional strength")
+        A_ = R["check_a"]
+        st.caption("lambda = 0, beta = 0.6.  " + A_["clause"])
+        if not braced:
+            st.warning("Cl. 13.8.2 a) applies to members in braced frames "
+                       "only. Shown for reference, not counted.")
+        st.latex(r"C_r = \phi A F_y = " + tx(A_["Cr_kN"], 1)
+                 + r"\ \mathrm{kN}")
+        st.latex(r"\frac{C_f}{C_r} + \frac{" + tx(A_["coef_x"], 2)
+                 + r"\,U_{1x}M_{fx}}{M_{rx}} + \frac{"
+                 + tx(A_["coef_y"], 2)
+                 + r"\,U_{1y}M_{fy}}{M_{ry}} \leq 1.0")
+        st.code("  Cf/Cr             = %s\n  %.2f U1x Mfx/Mrx  = %s\n"
+                "  %.2f U1y Mfy/Mry  = %s\n"
+                "  --------------------------------\n"
+                "  total             = %s  %s"
+                % (uc(A_["terms"][0]), A_["coef_x"], uc(A_["terms"][1]),
+                   A_["coef_y"], uc(A_["terms"][2]), uc(A_["total"]),
+                   verdict(A_["total"])), language="text")
 
-        st.markdown("**β:**")
-        st.latex(r"\beta = 0.6 + 0.4\lambda_y \leq 0.85")
-        st.code(
-            f"  λy (K=1) = {lam_y_K1:.4f}\n"
-            f"  β        = 0.6 + 0.4 × {lam_y_K1:.4f} = {0.6 + 0.4*lam_y_K1:.4f}  →  capped at {beta_bc:.4f}",
-            language="text",
-        )
+        st.divider()
+        st.subheader("11. Check b)  Overall member strength")
+        B_ = R["check_b"]
+        st.caption("K = 1, Cr on " + B_["axis"] + ".  " + B_["clause"])
+        st.latex(r"\frac{KL}{r} = " + tx(B_["KLr"], 2)
+                 + r"\qquad \lambda = \frac{KL}{r}\sqrt{\frac{F_y}"
+                   r"{\pi^2 E}} = " + tx(B_["lam"], 4))
+        st.latex(r"F_{cr} = \frac{F_y}{\left(1+\lambda^{2n}\right)^{1/n}}"
+                 r" = " + tx(B_["Fcr"], 1) + r"\ \mathrm{MPa}")
+        st.latex(r"C_r = \phi A F_{cr} = " + tx(B_["Cr_kN"], 1)
+                 + r"\ \mathrm{kN}")
+        st.latex(r"\beta = 0.6 + 0.4\lambda_y = 0.6 + 0.4("
+                 + tx(B_["lam_y"], 4) + r") = " + tx(B_["beta"], 4)
+                 + r" \leq 0.85")
+        st.code("  Cf/Cr             = %s\n  %.2f U1x Mfx/Mrx  = %s\n"
+                "  %.2f U1y Mfy/Mry  = %s\n"
+                "  --------------------------------\n"
+                "  total             = %s  %s"
+                % (uc(B_["terms"][0]), B_["coef_x"], uc(B_["terms"][1]),
+                   B_["coef_y"], uc(B_["terms"][2]), uc(B_["total"]),
+                   verdict(B_["total"])), language="text")
 
-        rb_C  = Cf / Cr_b if Cr_b > 0 else float("inf")
-        rb_Mx = (coeff_Mx * U1x * Mfx / Mrx_135) if (Mrx_135 and Mrx_135 > 0) else 0.0
-        rb_My = (beta_bc * U1y * Mfy / Mry_135) if (Mry_135 and Mry_135 > 0) else 0.0
-        int_b = rb_C + rb_Mx + rb_My
-
-        st.code(
-            f"  Cf / Cr                        = {Cf:.1f} / {Cr_b:.1f}  = {rb_C:.4f}\n"
-            f"  {coeff_Mx}·U1x·Mfx / Mrx  = {coeff_Mx} x {U1x:.4f} x {Mfx:.1f} / {Mrx_135:.1f}  = {rb_Mx:.4f}\n"
-            f"  beta·U1y·Mfy / Mry             = {beta_bc:.4f} x {U1y:.4f} x {Mfy:.1f} / {Mry_135:.1f}  = {rb_My:.4f}\n"
-            f"  ──────────────────────────────────────────────────────────\n"
-            f"  Total                           = {rb_C:.4f} + {rb_Mx:.4f} + {rb_My:.4f} = {int_b:.4f}",
-            language="text",
-        )
-        if int_b <= 1.0:
-            st.success(f"✅  PASS   Check (b) = {int_b:.3f} ≤ 1.0")
+        st.divider()
+        st.subheader("12. Check c)  Lateral torsional buckling")
+        C_ = R["check_c"]
+        if not C_["applies"]:
+            st.info("Does not apply. " + C_["note"])
         else:
-            st.error(f"❌  FAIL   Check (b) = {int_b:.3f} > 1.0")
+            st.caption("Cr on the weak axis, Mrx from Cl. 13.6.  "
+                       + C_["clause"])
+            ltb = C_["ltb"]
+            st.latex(r"\left(\frac{KL}{r}\right)_y = " + tx(C_["KLr"], 2)
+                     + r"\qquad C_r = \phi A F_{cr} = "
+                     + tx(C_["Cr_kN"], 1) + r"\ \mathrm{kN}")
+            if ltb.get("Mr_kNm") is None:
+                st.warning(str(ltb.get("note", "Cl. 13.6 unavailable.")))
+            else:
+                st.latex(r"M_u = \frac{\omega_2 \pi}{L}\sqrt{E I_y G J"
+                         r" + \left(\frac{\pi E}{L}\right)^2 I_y C_w} = "
+                         + tx(ltb["Mu_kNm"], 1) + r"\ \mathrm{kN\,m}")
+                st.latex(r"M_p = F_y " + ltb["modulus"] + r" = "
+                         + tx(ltb["Mp_kNm"], 1)
+                         + r"\ \mathrm{kN\,m} \qquad 0.67 M_p = "
+                         + tx(ltb["threshold_kNm"], 1))
+                st.caption("Branch: " + ltb["branch"])
+                st.latex(ltb["formula"])
+                st.latex(r"M_{rx}\ (\text{Cl. 13.6}) = "
+                         + tx(ltb["Mr_kNm"], 1) + r"\ \mathrm{kN\,m}")
+            st.code("  Cf/Cr             = %s\n  %.2f U1x Mfx/Mrx  = %s\n"
+                    "  %.2f U1y Mfy/Mry  = %s\n"
+                    "  --------------------------------\n"
+                    "  total             = %s  %s"
+                    % (uc(C_["terms"][0]), C_["coef_x"], uc(C_["terms"][1]),
+                       C_["coef_y"], uc(C_["terms"][2]), uc(C_["total"]),
+                       verdict(C_["total"])), language="text")
 
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Check (b): Overall Member Strength — CSA S16 Cl. 13.8.2b**",
-                "- Slenderness: KL/r = K·L/r (K = 1)",
-                f"- KL/r (x) = {Lx_mm:.0f} / {rx:.1f} = {KLr_x_K1:.2f}",
-                f"- KL/r (y) = {Ly_mm:.0f} / {ry:.1f} = {KLr_y_K1:.2f}",
-                f"- Governing KL/r = {KLr_b:.2f} ({gov_axis_b}-axis)",
-                "- Non-dimensional slenderness: λ = (KL/r)·√(Fy/(π²·E))",
-                f"- λ = {KLr_b:.2f} × √({Fy:.0f}/(π²×{E:.0f})) = {lam_b:.4f}",
-                "- Euler stress: Fe = π²·E/(KL/r)²",
-                f"- Fe = π² × {E:.0f} / {KLr_b:.2f}² = {Fe_b:.1f} MPa",
-                f"- Column curve (n = {N_CSA}): Fcr = Fy / (1 + λ^(2n))^(1/n)",
-                f"- Fcr = {Fy:.0f} / (1 + {lam_b:.4f}^(2×{N_CSA}))^(1/{N_CSA}) = {Fcr_b:.1f} MPa",
-                "- Compressive resistance: Cr = φ·A·Fcr",
-                f"- Cr = {PHI} × {A:,.0f} × {Fcr_b:.1f} / 1000 = {Cr_b:.1f} kN",
-                "- Coefficient: β = 0.6 + 0.4·λy ≤ 0.85",
-                f"- β = 0.6 + 0.4 × {lam_y_K1:.4f} = {0.6 + 0.4*lam_y_K1:.4f} → **{beta_bc:.4f}**",
-                f"- Interaction formula ({clause_ref}): Cf/Cr + {coeff_Mx}·U₁x·Mfx/Mrx + β·U₁y·Mfy/Mry ≤ 1.0",
-                f"- Cf/Cr = {Cf:.1f} / {Cr_b:.1f} = {rb_C:.4f}",
-                f"- {coeff_Mx}·U₁x·Mfx/Mrx = {coeff_Mx} × {U1x:.4f} × {Mfx:.1f} / {Mrx_135:.1f} = {rb_Mx:.4f}",
-                f"- β·U₁y·Mfy/Mry = {beta_bc:.4f} × {U1y:.4f} × {Mfy:.1f} / {Mry_135:.1f} = {rb_My:.4f}",
-                f"- Substitute: {rb_C:.4f} + {rb_Mx:.4f} + {rb_My:.4f}",
-                f"- Result: **Check (b) = {int_b:.4f}** ({'PASS ≤ 1.0' if int_b <= 1.0 else 'FAIL > 1.0'})",
-            ]))
-
-        # ── Additional moment-only check ──────────────────────────────────────
-        st.markdown("**Additional moment-only check  (Cl. 13.8.2b):**")
+        st.divider()
+        st.subheader("13. Additional moment-only requirement")
+        M_ = R["check_moment"]
         st.latex(r"\frac{M_{fx}}{M_{rx}} + \frac{M_{fy}}{M_{ry}} \leq 1.0")
-        rb_add_x  = Mfx / Mrx_135 if (Mrx_135 and Mrx_135 > 0) else 0.0
-        rb_add_y  = Mfy / Mry_135 if (Mry_135 and Mry_135 > 0) else 0.0
-        int_b_add = rb_add_x + rb_add_y
-        st.code(
-            f"  Mfx / Mrx = {Mfx:.1f} / {Mrx_135:.1f} = {rb_add_x:.4f}\n"
-            f"  Mfy / Mry = {Mfy:.1f} / {Mry_135:.1f} = {rb_add_y:.4f}\n"
-            f"  ──────────────────────────────────\n"
-            f"  Total     = {int_b_add:.4f}",
-            language="text",
-        )
-        if int_b_add <= 1.0:
-            st.success(f"✅  PASS   Moment check = {int_b_add:.3f} ≤ 1.0")
+        st.code("  Mfx/Mrx = %s\n  Mfy/Mry = %s\n"
+                "  ---------------------\n  total   = %s  %s"
+                % (uc(M_["terms"][0]), uc(M_["terms"][1]), uc(M_["total"]),
+                   verdict(M_["total"])), language="text")
+
+        st.divider()
+        st.subheader("14. Governing Check")
+        for name, val, ap in R["rows"]:
+            if not ap:
+                st.markdown("- " + name + "  -  does not apply")
+            elif val is None:
+                st.markdown("- " + name + "  -  **INCOMPLETE**")
+            else:
+                st.markdown("- " + name + "  =  **" + uc(val) + "**  "
+                            + verdict(val))
+        if R["overall"] == "OK":
+            st.success("PASS.  Governing: " + str(R["governing_name"])
+                       + " = " + uc(R["governing_uc"]))
+        elif R["overall"] == "NG":
+            st.error("FAIL.  Governing: " + str(R["governing_name"])
+                     + " = " + uc(R["governing_uc"]))
         else:
-            st.error(f"❌  FAIL   Moment check = {int_b_add:.3f} > 1.0")
+            st.warning("INCOMPLETE. A moment resistance could not be "
+                       "formed, so no interaction value is reported. "
+                       "Dropping the term instead would read as a pass.")
 
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Additional Moment-Only Check — CSA S16 Cl. 13.8.2b**",
-                "- Formula: Mfx/Mrx + Mfy/Mry ≤ 1.0",
-                f"- Mfx/Mrx = {Mfx:.1f} / {Mrx_135:.1f} = {rb_add_x:.4f}",
-                f"- Mfy/Mry = {Mfy:.1f} / {Mry_135:.1f} = {rb_add_y:.4f}",
-                f"- Substitute: {rb_add_x:.4f} + {rb_add_y:.4f}",
-                f"- Result: **Moment check = {int_b_add:.4f}** ({'PASS ≤ 1.0' if int_b_add <= 1.0 else 'FAIL > 1.0'})",
-            ]))
+# ============================================================
+# MODEL
+# ============================================================
+with col_model:
+    st.subheader("Member Model")
+    if not HAS_VIEWER:
+        st.info("3D viewer not loaded. Place section_geometry.py, "
+                "viewer_3d.py, viewer_3d_beamcolumn.py and "
+                "viewer_3d_beamcolumn.html in the repository root.")
+    else:
+        _sec_obj = type("S", (), dict(
+            designation=rec["designation"],
+            family=("W" if rec["kind"] == "I" else "HSS"),
+            family_label=rec["family_label"],
+            hss_kind=("CHS" if rec["kind"] == "CHS"
+                      else ("RHS/SHS" if rec["kind"] == "RHS" else None)),
+            A_mm2=rec["A"], d_mm=rec["d"], b_mm=rec["b"], t_mm=rec["t"],
+            w_mm=rec["w"], h_mm=rec.get("h")))()
 
-        st.markdown("---")
+        _sup = {"x": {"K": float(Kx), "L": float(P["Lx"]),
+                      "bottom": xb, "top": xt},
+                "y": {"K": float(Ky), "L": float(P["Ly"]),
+                      "bottom": yb, "top": yt}}
+        _load = {"Cf_kN": float(Cf), "Tf_kN": float(Tf),
+                 "Mfx_kNm": float(Mfx), "Mfy_kNm": float(Mfy),
+                 "e_mm": float(e_mm),
+                 "axial": "compression" if is_comp else "tension"}
 
-        # =====================================================================
-        # STEP 5 — CHECK (c): Lateral Torsional Buckling
-        #          Cr: weak-axis K=1 | Mrx: Cl.13.6 (L=Ly) | Mry: Cl.13.5
-        #          U1x ≥ 1.0 | β = 0.6+0.4λy
-        # =====================================================================
-        st.markdown("#### Step 5 — Check (c): Lateral Torsional Buckling  *(Cl. 13.8.2c)*")
-        st.caption("Cr: weak-axis KL/r (K=1) · Mrx per Cl. 13.6 (L = Ly) · Mry per Cl. 13.5 · U₁x ≥ 1.0")
-        st.latex(
-            r"\frac{C_f}{C_r} + \frac{0.85\,U_{1x}M_{fx}}{M_{rx}^{(13.6)}}"
-            r"+ \frac{\beta\,U_{1y}M_{fy}}{M_{ry}} \leq 1.0"
-        )
+        _e1 = [{"key": c["key"], "zone": c["zone"],
+                "label": c["label"].split(",")[0],
+                "ok": bool(c["ratio"] <= c["limit"]),
+                "ratio": float(c["ratio"]), "limit": float(c["limit"])}
+               for c in t1_sel]
+        _e2 = []
+        if CI.get("flange_class"):
+            _e2.append({"zone": "flange", "label": "Flange",
+                        "cls": int(CI["flange_class"])})
+        if CI.get("web_class"):
+            _e2.append({"zone": "web", "label": "Web",
+                        "cls": int(CI["web_class"])})
 
-        st.markdown("**Cr — weak-axis KL/r (K = 1):**")
-        st.code(
-            f"  KL/r (y, K=1) = {KLr_c:.2f}\n"
-            f"  λ             = {lam_c:.4f}\n"
-            f"  Fe            = {Fe_c:.1f} MPa\n"
-            f"  Fcr           = {Fcr_c:.1f} MPa\n"
-            f"  Cr            = {Cr_c:.1f} kN",
-            language="text",
-        )
-
-        st.markdown("**Mrx — Cl. 13.6  (unbraced length = Ly):**")
-        Cw_mm6_c  = Cw_user_c * 1e9
-        Ly_mm_ltb = Ly_mm
-
-        try:
-            res_136_c = calc_Mr_clause_13_6(
-                shape       = shape,
-                Fy_MPa      = Fy,
-                omega2      = omega2_c,
-                L_mm        = Ly_mm_ltb,
-                E_MPa       = E,
-                G_MPa       = G_STEEL,
-                Cw_override = Cw_mm6_c,
-            )
-
-            if res_136_c["warning"]:
-                st.warning(res_136_c["warning"])
-
-            Mp_c     = res_136_c["Mp_kNm"]
-            Mu_c     = res_136_c["Mu_kNm"]
-            Mrx_c    = res_136_c["Mr_kNm"]
-            branch_c = res_136_c["branch"]
-
-            st.latex(
-                r"M_u = \frac{\omega_2 \pi}{L}"
-                r"\sqrt{EI_y GJ + \left(\frac{\pi E}{L}\right)^2 I_y C_w}"
-            )
-            st.code(
-                f"  ω₂  = {omega2_c:.3f}\n"
-                f"  L   = {Ly_mm_ltb:,.0f} mm  (= Ly)\n"
-                f"  Iy  = {res_136_c['Iy_mm4']:.3e} mm⁴\n"
-                f"  J   = {res_136_c['J_mm4']:.3e} mm⁴\n"
-                f"  Cw  = {Cw_mm6_c:.3e} mm⁶\n"
-                f"  ─────────────────────────────────────\n"
-                f"  Mu  = {Mu_c:.1f} kN·m\n"
-                f"  Mp  = Fy·Zx = {Mp_c:.1f} kN·m\n"
-                f"  0.67·Mp = {0.67*Mp_c:.1f} kN·m  →  {branch_c}",
-                language="text",
-            )
-            st.latex(res_136_c["formula"])
-            if branch_c.startswith("Mu >"):
-                st.code(
-                    f"  = 1.15 × {PHI} × {Mp_c:.1f} × (1 − 0.28 × {Mp_c:.1f} / {Mu_c:.1f})\n"
-                    f"  = {1.15*PHI*Mp_c*(1-0.28*Mp_c/Mu_c):.1f} kN·m\n"
-                    f"  ≤ φMp = {PHI*Mp_c:.1f} kN·m\n"
-                    f"  Mrx (Cl.13.6) = {Mrx_c:.1f} kN·m",
-                    language="text",
-                )
-            else:
-                st.code(
-                    f"  = {PHI} × {Mu_c:.1f}\n"
-                    f"  Mrx (Cl.13.6) = {Mrx_c:.1f} kN·m",
-                    language="text",
-                )
-
-            rc_C  = Cf / Cr_c if Cr_c > 0 else float("inf")
-            rc_Mx = (coeff_Mx * U1x * Mfx / Mrx_c)  if Mrx_c  > 0              else 0.0
-            rc_My = (beta_bc * U1y * Mfy / Mry_135)  if (Mry_135 and Mry_135 > 0) else 0.0
-            int_c = rc_C + rc_Mx + rc_My
-
-            st.code(
-                f"  Cf / Cr                        = {Cf:.1f} / {Cr_c:.1f}  = {rc_C:.4f}\n"
-                f"  {coeff_Mx}·U1x·Mfx / Mrx  = {coeff_Mx} x {U1x:.4f} x {Mfx:.1f} / {Mrx_c:.1f}  = {rc_Mx:.4f}\n"
-                f"  beta·U1y·Mfy / Mry             = {beta_bc:.4f} x {U1y:.4f} x {Mfy:.1f} / {Mry_135:.1f}  = {rc_My:.4f}\n"
-                f"  ──────────────────────────────────────────────────────────\n"
-                f"  Total                           = {rc_C:.4f} + {rc_Mx:.4f} + {rc_My:.4f} = {int_c:.4f}",
-                language="text",
-            )
-            if int_c <= 1.0:
-                st.success(f"✅  PASS   Check (c) = {int_c:.3f} ≤ 1.0")
-            else:
-                st.error(f"❌  FAIL   Check (c) = {int_c:.3f} > 1.0")
-
-            with st.expander("📐 Show calculation steps", expanded=True):
-                _c_steps = [
-                    "**Check (c): Lateral Torsional Buckling — CSA S16 Cl. 13.8.2c**",
-                    "- Weak-axis slenderness (K = 1): KL/r = Ly/ry",
-                    f"- KL/r (y) = {Ly_mm:.0f} / {ry:.1f} = {KLr_c:.2f}",
-                    "- Non-dimensional slenderness: λ = (KL/r)·√(Fy/(π²·E))",
-                    f"- λ = {KLr_c:.2f} × √({Fy:.0f}/(π²×{E:.0f})) = {lam_c:.4f}",
-                    "- Euler stress: Fe = π²·E/(KL/r)²",
-                    f"- Fe = π² × {E:.0f} / {KLr_c:.2f}² = {Fe_c:.1f} MPa",
-                    f"- Column curve (n = {N_CSA}): Fcr = Fy / (1 + λ^(2n))^(1/n)",
-                    f"- Fcr = {Fy:.0f} / (1 + {lam_c:.4f}^(2×{N_CSA}))^(1/{N_CSA}) = {Fcr_c:.1f} MPa",
-                    "- Compressive resistance: Cr = φ·A·Fcr",
-                    f"- Cr = {PHI} × {A:,.0f} × {Fcr_c:.1f} / 1000 = {Cr_c:.1f} kN",
-                    "- Critical elastic moment (Cl. 13.6): Mu = (ω₂·π/L)·√(E·Iy·G·J + (π·E/L)²·Iy·Cw)",
-                    f"- Mu = {Mu_c:.1f} kN·m (L = Ly = {Ly_mm_ltb:,.0f} mm, ω₂ = {omega2_c:.3f})",
-                    f"- Plastic moment: Mp = Fy·Zx = {Mp_c:.1f} kN·m;  0.67·Mp = {0.67*Mp_c:.1f} kN·m → {branch_c}",
-                    f"- Moment resistance: **Mrx (Cl. 13.6) = {Mrx_c:.1f} kN·m**",
-                    f"- Interaction formula ({clause_ref}): Cf/Cr + {coeff_Mx}·U₁x·Mfx/Mrx + β·U₁y·Mfy/Mry ≤ 1.0",
-                    f"- Cf/Cr = {Cf:.1f} / {Cr_c:.1f} = {rc_C:.4f}",
-                    f"- {coeff_Mx}·U₁x·Mfx/Mrx = {coeff_Mx} × {U1x:.4f} × {Mfx:.1f} / {Mrx_c:.1f} = {rc_Mx:.4f}",
-                    f"- β·U₁y·Mfy/Mry = {beta_bc:.4f} × {U1y:.4f} × {Mfy:.1f} / {Mry_135:.1f} = {rc_My:.4f}",
-                    f"- Substitute: {rc_C:.4f} + {rc_Mx:.4f} + {rc_My:.4f}",
-                    f"- Result: **Check (c) = {int_c:.4f}** ({'PASS ≤ 1.0' if int_c <= 1.0 else 'FAIL > 1.0'})",
-                ]
-                st.markdown("\n".join(_c_steps))
-
-        except Exception as e_ltb:
-            st.error(f"Check (c) could not be computed: {e_ltb}")
-            int_c = float("nan")
-
-        st.markdown("---")
-
-        # =====================================================================
-        # STEP 6 — Governing Summary
-        # =====================================================================
-        st.markdown("#### Step 6 — Governing Check Summary  *(Cl. 13.8.2)*")
-
-        summary_data = {
-            "Check (a) — Cross-section":  int_a,
-            "Check (b) — Overall member": int_b,
-            "Check (b) — Moment-only":    int_b_add,
-            "Check (c) — LTB":            int_c,
-        }
-
-        for label, val in summary_data.items():
-            if math.isnan(val):
-                st.warning(f"⚠️  {label}  — could not be computed")
-                continue
-            icon   = "✅" if val <= 1.0 else "❌"
-            status = "PASS" if val <= 1.0 else "FAIL"
-            st.markdown(f"{icon} **{label}** → {val:.3f}  *({status})*")
-
-        valid_vals = [v for v in summary_data.values() if not math.isnan(v)]
-        if valid_vals:
-            gov_label = max(
-                (k for k in summary_data if not math.isnan(summary_data[k])),
-                key=lambda k: summary_data[k],
-            )
-            gov_val = summary_data[gov_label]
-            st.markdown("---")
-            if gov_val <= 1.0:
-                st.success(f"✅  **OVERALL PASS** — Governing: {gov_label} = {gov_val:.3f} ≤ 1.0")
-            else:
-                st.error(f"❌  **OVERALL FAIL** — Governing: {gov_label} = {gov_val:.3f} > 1.0")
-
-        # =====================================================================
-        # STEP 7 — Interaction Diagram (governing check, M/Mp vs C/Cy)
-        # =====================================================================
-        st.markdown("---")
-        st.markdown("#### Step 7 — Interaction Diagram  *(CSA S16 Cl. 13.8.2)*")
-
-        Cy_kN   = A * Fy / 1000.0                        # squash load kN
-        mod_136_name = "Zx" if sc in (1, 2) else "Sx"
-        Mp_diag = (get_prop(shape, "Zx") if sc in (1, 2) else get_prop(shape, "Sx"))
-        Mp_diag_kNm = (Fy * Mp_diag / 1e6) if Mp_diag else None
-
-        if Mp_diag_kNm and Mp_diag_kNm > 0 and Cy_kN > 0:
-            # Design point from governing check
-            x_pt = Mfx / Mp_diag_kNm         # M/Mp (Mfx only, strong axis)
-            y_pt = Cf  / Cy_kN                # C/Cy
-
-            # Build SVG interaction diagram
-            W, H = 420, 320
-            pad_l, pad_b, pad_r, pad_t = 60, 50, 30, 30
-            cw = W - pad_l - pad_r
-            ch = H - pad_t - pad_b
-
-            def px(xv): return pad_l + xv * cw
-            def py(yv): return pad_t + (1 - yv) * ch
-
-            # CSA curve points: C/Cy = 1.18(1 - M/Mp) for M/Mp >= 0.15
-            #                   C/Cy = 1.0             for M/Mp < 0.15
-            import math as _m
-            curve_pts = []
-            for i in range(101):
-                m = i / 100.0
-                if m < 0.15:
-                    c = 1.0
-                else:
-                    c = max(0.0, 1.18 * (1 - m))
-                curve_pts.append((m, c))
-
-            # SVG polyline for curve
-            poly = " ".join(f"{px(m):.1f},{py(c):.1f}" for m, c in curve_pts)
-
-            # PASS region fill (below curve)
-            fill_pts = poly + f" {px(1):.1f},{py(0):.1f} {px(0):.1f},{py(0):.1f}"
-
-            # Axes tick labels
-            x_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-            y_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-
-            dot_x = px(min(x_pt, 1.0))
-            dot_y = py(min(y_pt, 1.0))
-            dot_col = "#16a34a" if (x_pt <= 1.0 and y_pt <= 1.0 and gov_val <= 1.0) else "#dc2626"
-
-            ticks_x = "".join(
-                f'<line x1="{px(t):.1f}" y1="{py(0)+4}" x2="{px(t):.1f}" y2="{py(0)}" stroke="#6b7280" stroke-width="1"/>'
-                f'<text x="{px(t):.1f}" y="{py(0)+16}" text-anchor="middle" font-size="10" fill="#374151">{t:.1f}</text>'
-                for t in x_ticks
-            )
-            ticks_y = "".join(
-                f'<line x1="{px(0)-4}" y1="{py(t):.1f}" x2="{px(0)}" y2="{py(t):.1f}" stroke="#6b7280" stroke-width="1"/>'
-                f'<text x="{px(0)-8}" y="{py(t)+4:.1f}" text-anchor="end" font-size="10" fill="#374151">{t:.1f}</text>'
-                for t in y_ticks
-            )
-
-            svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" style="font-family:sans-serif;background:#f9fafb;border-radius:8px;">
-  <!-- PASS region -->
-  <polygon points="{fill_pts}" fill="#dcfce7" opacity="0.7"/>
-  <!-- FAIL region (above curve, top-left triangle) -->
-  <polygon points="{px(0):.1f},{py(1):.1f} {poly.split()[0]} {' '.join(poly.split()[:10])} {px(0):.1f},{py(0.9):.1f}" fill="#fee2e2" opacity="0.5"/>
-  <!-- Axes -->
-  <line x1="{px(0)}" y1="{py(0)}" x2="{px(1)+10}" y2="{py(0)}" stroke="#1f2937" stroke-width="1.5"/>
-  <line x1="{px(0)}" y1="{py(0)}" x2="{px(0)}" y2="{py(1)-10}" stroke="#1f2937" stroke-width="1.5"/>
-  {ticks_x}{ticks_y}
-  <!-- Axis labels -->
-  <text x="{px(0.5):.1f}" y="{H-4}" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2937">Mfx / Mp</text>
-  <text x="12" y="{py(0.5):.1f}" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2937" transform="rotate(-90,12,{py(0.5):.1f})">Cf / Cy</text>
-  <!-- CSA curve -->
-  <polyline points="{poly}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
-  <!-- PASS / FAIL labels -->
-  <text x="{px(0.7):.1f}" y="{py(0.15):.1f}" font-size="11" fill="#16a34a" font-weight="bold">PASS</text>
-  <text x="{px(0.1):.1f}" y="{py(0.85):.1f}" font-size="11" fill="#dc2626" font-weight="bold">FAIL</text>
-  <!-- Design point -->
-  <circle cx="{dot_x:.1f}" cy="{dot_y:.1f}" r="7" fill="{dot_col}" stroke="white" stroke-width="2"/>
-  <text x="{dot_x+10:.1f}" y="{dot_y-8:.1f}" font-size="10" fill="{dot_col}" font-weight="bold">({x_pt:.2f}, {y_pt:.2f})</text>
-  <!-- Title -->
-  <text x="{px(0.5):.1f}" y="{pad_t-8}" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2937">CSA S16 Interaction Diagram — {clause_ref}</text>
-</svg>"""
-            st.markdown(svg, unsafe_allow_html=True)
-            st.caption(
-                f"Design point: Mfx/Mp = {x_pt:.3f},  Cf/Cy = {y_pt:.3f}  |  "
-                f"Mp = Fy·{mod_136_name} = {Mp_diag_kNm:.1f} kN·m,  Cy = A·Fy = {Cy_kN:.1f} kN"
-            )
+        if is_comp:
+            _res = {"section_class": section_class,
+                    "clause": R["coefficients"]["clause"], "braced": braced,
+                    "U1x": R["U1x"], "U1y": R["U1y"],
+                    "Ce_x_kN": R["Ce_x_kN"], "Ce_y_kN": R["Ce_y_kN"],
+                    "beta": R["beta"], "Cy_kN": CI.get("Cy_kN"),
+                    "Mrx_kNm": R["Mrx_kNm"], "Mry_kNm": R["Mry_kNm"],
+                    "Cr_kN": R["check_b"]["Cr_kN"],
+                    "KLr": R["check_b"]["KLr"], "lam": R["check_b"]["lam"],
+                    "Fcr": R["check_b"]["Fcr"],
+                    "governing_name": R["governing_name"],
+                    "governing_uc": R["governing_uc"],
+                    "overall": R["overall"]}
         else:
-            st.warning("Interaction diagram unavailable — Mp or Cy could not be computed.")
+            tv = T["total_13_9_1"]
+            _res = {"section_class": section_class, "clause": "Cl. 13.9",
+                    "braced": braced, "U1x": 1.0, "U1y": 1.0,
+                    "Cy_kN": CI.get("Cy_kN"),
+                    "Mrx_kNm": T["Mrx"].get("Mr_kNm"),
+                    "Mry_kNm": T["Mry"].get("Mr_kNm"),
+                    "governing_name": "Cl. 13.9.1", "governing_uc": tv,
+                    "overall": ("OK" if (tv is not None and tv <= 1.0)
+                                else ("NG" if tv is not None
+                                      else "INCOMPLETE"))}
 
-        # =====================================================================
-        # STEP 8 — Cross-Section Stress Distribution
-        # =====================================================================
-        st.markdown("---")
-        st.markdown("#### Step 8 — Cross-Section Stress Distribution")
-        st.caption("Elastic + plastic stress zones under combined axial compression and strong-axis bending")
+        _props = [{"group": r["group"], "symbol": r["symbol"],
+                   "value": num(r["value"], 1), "unit": r["unit"]}
+                  for r in display_rows(rec)]
 
-        _d  = get_raw_prop(shape, "d")   # depth mm
-        _bf = get_raw_prop(shape, "b")   # flange width mm
-        _tf = get_raw_prop(shape, "t")   # flange thickness mm
-        _tw = get_raw_prop(shape, "w")   # web thickness mm
+        viewer_3d_beamcolumn.render_beamcolumn(
+            _sec_obj, length_mm=max(P["Lx"], P["Ly"]), height=680,
+            supports=_sup, load=_load, elements_t1=_e1, elements_t2=_e2,
+            results=_res, props=_props, show_diagnostics=False)
 
-        sigma_a   = (Cf * 1000 / A)  if A else 0.0          # MPa compression
-        sigma_bx  = (Mfx * 1e6 / Sx) if (Sx and Sx > 0) else 0.0  # MPa bending peak
-
-        sigma_top = sigma_a + sigma_bx   # compression flange (worst)
-        sigma_bot = sigma_a - sigma_bx   # tension flange
-
-        yield_ratio_top = min(sigma_top / Fy, 1.5) if Fy > 0 else 0
-        yield_ratio_bot = min(abs(sigma_bot) / Fy, 1.5) if Fy > 0 else 0
-        top_yielded = sigma_top >= Fy
-        bot_yielded = abs(sigma_bot) >= Fy
-
-        # Build stress SVG
-        SW, SH = 560, 360
-        sx0, sy0 = 60, 30     # I-section origin (top-left of bounding box)
-        sW_sec, sH_sec = 110, 260  # section bounding box
-        bf_draw = sW_sec
-        d_draw  = sH_sec
-        tf_draw = max(18, int(d_draw * 0.12))
-        tw_draw = max(8,  int(bf_draw * 0.10))
-        cx_sec  = sx0 + sW_sec // 2
-
-        # stress bar origin (right of section)
-        bx0 = sx0 + sW_sec + 30
-        bH  = sH_sec
-        by0 = sy0
-        bW_max = 160
-
-        def stress_bar_x(sig, maxsig):
-            if maxsig == 0: return bx0
-            return bx0 + int(min(abs(sig) / maxsig, 1.0) * bW_max)
-
-        maxsig = max(abs(sigma_top), abs(sigma_bot), Fy, 1)
-
-        # Stress diagram: linear from top to bottom
-        # x positions at top and bottom of stress bar
-        xt = stress_bar_x(sigma_top, maxsig)
-        xb = stress_bar_x(sigma_bot, maxsig)
-
-        # Colors: red = compression, blue = tension, orange = yielded
-        col_top = "#f97316" if top_yielded else "#dc2626"
-        col_bot = "#3b82f6" if sigma_bot < 0 else "#dc2626"
-        if bot_yielded: col_bot = "#f97316"
-
-        # Fy reference line x
-        fy_x = bx0 + int(min(Fy / maxsig, 1.0) * bW_max)
-
-        stress_svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{SW}" height="{SH}" style="font-family:sans-serif;background:#f9fafb;border-radius:8px;">
-
-  <!-- ── I-section outline ── -->
-  <!-- Top flange -->
-  <rect x="{sx0}" y="{sy0}" width="{bf_draw}" height="{tf_draw}" fill="#cbd5e1" stroke="#334155" stroke-width="1.5"/>
-  <!-- Bottom flange -->
-  <rect x="{sx0}" y="{sy0+d_draw-tf_draw}" width="{bf_draw}" height="{tf_draw}" fill="#cbd5e1" stroke="#334155" stroke-width="1.5"/>
-  <!-- Web -->
-  <rect x="{cx_sec - tw_draw//2}" y="{sy0+tf_draw}" width="{tw_draw}" height="{d_draw-2*tf_draw}" fill="#94a3b8" stroke="#334155" stroke-width="1.5"/>
-
-  <!-- Yield zone top (orange overlay if yielded) -->
-  {"<rect x='" + str(sx0) + "' y='" + str(sy0) + "' width='" + str(bf_draw) + "' height='" + str(tf_draw) + "' fill='#f97316' opacity='0.5'/>" if top_yielded else ""}
-  <!-- Yield zone bottom -->
-  {"<rect x='" + str(sx0) + "' y='" + str(sy0+d_draw-tf_draw) + "' width='" + str(bf_draw) + "' height='" + str(tf_draw) + "' fill='#f97316' opacity='0.5'/>" if bot_yielded else ""}
-
-  <!-- Section label -->
-  <text x="{cx_sec}" y="{sy0+d_draw+20}" text-anchor="middle" font-size="11" fill="#374151">{designation}</text>
-
-  <!-- ── Stress diagram ── -->
-  <!-- Trapezoid fill: top stress to bottom stress -->
-  <polygon points="{bx0},{by0} {xt},{by0} {xb},{by0+bH} {bx0},{by0+bH}"
-           fill="{'#fca5a5' if sigma_bot >= 0 else '#bfdbfe'}" opacity="0.5"/>
-  <!-- Top stress bar -->
-  <rect x="{bx0}" y="{by0}" width="{xt-bx0}" height="{tf_draw}" fill="{col_top}" opacity="0.85"/>
-  <!-- Bottom stress bar -->
-  <rect x="{bx0}" y="{by0+bH-tf_draw}" width="{xb-bx0}" height="{tf_draw}" fill="{col_bot}" opacity="0.85"/>
-  <!-- Fy reference line -->
-  <line x1="{fy_x}" y1="{by0-5}" x2="{fy_x}" y2="{by0+bH+5}" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="4,3"/>
-  <text x="{fy_x}" y="{by0-8}" text-anchor="middle" font-size="9" fill="#6b7280">Fy={Fy:.0f}</text>
-  <!-- Zero line -->
-  <line x1="{bx0}" y1="{by0}" x2="{bx0}" y2="{by0+bH}" stroke="#1f2937" stroke-width="1.5"/>
-
-  <!-- Stress labels -->
-  <text x="{xt+5}" y="{by0+12}" font-size="10" fill="{col_top}" font-weight="bold">{sigma_top:.0f} MPa {'(YIELD)' if top_yielded else ''}</text>
-  <text x="{xb+5}" y="{by0+bH-5}" font-size="10" fill="{col_bot}" font-weight="bold">{sigma_bot:.0f} MPa {'(YIELD)' if bot_yielded else ''}</text>
-
-  <!-- Axis label -->
-  <text x="{bx0 + bW_max//2}" y="{by0+bH+28}" text-anchor="middle" font-size="11" font-weight="bold" fill="#1f2937">Stress (MPa)</text>
-
-  <!-- Legend -->
-  <rect x="{bx0}" y="{by0+bH+38}" width="12" height="10" fill="#dc2626"/>
-  <text x="{bx0+16}" y="{by0+bH+48}" font-size="10" fill="#374151">Compression</text>
-  <rect x="{bx0+100}" y="{by0+bH+38}" width="12" height="10" fill="#3b82f6"/>
-  <text x="{bx0+116}" y="{by0+bH+48}" font-size="10" fill="#374151">Tension</text>
-  <rect x="{bx0+175}" y="{by0+bH+38}" width="12" height="10" fill="#f97316"/>
-  <text x="{bx0+191}" y="{by0+bH+48}" font-size="10" fill="#374151">Yielded</text>
-
-  <!-- Title -->
-  <text x="{bx0 + bW_max//2}" y="{sy0-10}" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2937">Stress Distribution</text>
-</svg>"""
-
-        st.markdown(stress_svg, unsafe_allow_html=True)
-        st.code(
-            f"  sigma_axial    = Cf/A      = {Cf*1000:.0f} N / {A:.0f} mm^2  = {sigma_a:.1f} MPa (compression)\n"
-            f"  sigma_bending  = Mfx/Sx   = {Mfx*1e6:.0f} N*mm / {Sx:.0f} mm^3  = {sigma_bx:.1f} MPa (elastic peak)\n"
-            f"  sigma_top      = {sigma_a:.1f} + {sigma_bx:.1f}  = {sigma_top:.1f} MPa  {'<= Fy OK' if sigma_top < Fy else '> Fy  YIELDED'}\n"
-            f"  sigma_bottom   = {sigma_a:.1f} - {sigma_bx:.1f}  = {sigma_bot:.1f} MPa  {'<= Fy OK' if abs(sigma_bot) < Fy else '> Fy  YIELDED'}",
-            language="text",
-        )
-
-        with st.expander("📐 Show calculation steps", expanded=True):
-            st.markdown("\n".join([
-                "**Cross-Section Stress Distribution — combined axial + strong-axis bending**",
-                "- Axial stress: σ_axial = Cf/A",
-                f"- σ_axial = {Cf*1000:.0f} N / {A:.0f} mm² = **{sigma_a:.1f} MPa** (compression)",
-                "- Bending stress (elastic peak): σ_bending = Mfx/Sx",
-                f"- σ_bending = {Mfx*1e6:.0f} N·mm / {Sx:.0f} mm³ = **{sigma_bx:.1f} MPa**",
-                "- Compression flange: σ_top = σ_axial + σ_bending",
-                f"- σ_top = {sigma_a:.1f} + {sigma_bx:.1f} = **{sigma_top:.1f} MPa** ({'≤ Fy OK' if sigma_top < Fy else '> Fy YIELDED'})",
-                "- Tension flange: σ_bottom = σ_axial − σ_bending",
-                f"- σ_bottom = {sigma_a:.1f} − {sigma_bx:.1f} = **{sigma_bot:.1f} MPa** ({'≤ Fy OK' if abs(sigma_bot) < Fy else '> Fy YIELDED'})",
-            ]))
-
-except Exception as e:
-    st.error(f"Calculation error: {e}")
-    import traceback
-    with st.expander("Full traceback"):
-        st.code(traceback.format_exc())
+        st.caption("The behaviour dropdown maps each calculation onto the "
+                   "member: Table 1, Table 2 class, combined stress, "
+                   "P-delta amplification, LTB and utilisation.")

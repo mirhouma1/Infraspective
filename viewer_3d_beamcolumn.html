@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0d1117;
+    font-family:-apple-system, "Segoe UI", Roboto, sans-serif; color:#e6edf3; }
+  #root { display:flex; flex-direction:column; height:100vh; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; touch-action:none; }
+  #cv { display:block; width:100%; height:100%; }
+  #hud { position:absolute; left:10px; top:8px; font-size:11px; line-height:1.45;
+    color:#8b949e; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  #hud b { color:#e6edf3; font-size:12px; }
+  #legend { position:absolute; right:10px; top:8px; font-size:10.5px;
+    line-height:1.5; color:#c9d1d9; pointer-events:none; text-align:right;
+    text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+    margin-left:5px; vertical-align:middle; }
+  #err { position:absolute; left:10px; bottom:8px; color:#f85149; font-size:11px; }
+  #props { position:absolute; right:8px; bottom:8px; max-height:62%;
+    overflow:auto; background:rgba(13,17,23,.82); border:1px solid #30363d;
+    border-radius:8px; padding:8px 10px; font-size:10.5px; line-height:1.5;
+    color:#c9d1d9; display:none; max-width:60%; }
+  #props .g { color:#6e7681; text-transform:uppercase; letter-spacing:.05em;
+    font-size:9px; margin-top:6px; }
+  #props .g:first-child { margin-top:0; }
+  #props .k { color:#8b949e; display:inline-block; min-width:58px; }
+  #props .v { color:#e6edf3; }
+  #bar { flex:0 0 auto; background:#161b22; border-top:1px solid #30363d;
+    padding:6px 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .row + .row { margin-top:5px; }
+  button.t { background:#21262d; color:#8b949e; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer;
+    white-space:nowrap; }
+  button.t.on { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  button.t:disabled { opacity:0.4; cursor:not-allowed; }
+  button.v { background:#21262d; color:#c9d1d9; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; }
+  button.v:active { background:#1f6feb; color:#fff; }
+  button.t:focus-visible, button.v:focus-visible, select:focus-visible {
+    outline:2px solid #58a6ff; outline-offset:1px; }
+  select { background:#21262d; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:5px 7px; font-size:11px; flex:1 1 190px;
+    min-width:150px; }
+  .lbl { font-size:10px; color:#6e7681; text-transform:uppercase;
+    letter-spacing:.05em; margin-right:2px; }
+  #expl { font-size:11px; color:#8b949e; line-height:1.45; margin-top:6px;
+    padding-top:6px; border-top:1px solid #21262d; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="legend"></div>
+    <div id="props"></div>
+    <div id="err"></div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <span class="lbl">View</span>
+      <button class="v" id="vIso">Iso</button>
+      <button class="v" id="vStrong">Strong axis</button>
+      <button class="v" id="vWeak">Weak axis</button>
+      <button class="v" id="vEnd">Section</button>
+      <button class="v" id="vFit">Fit</button>
+      <button class="t" id="vPan">Pan mode</button>
+      <button class="v" id="vSpin">Spin</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Effects</span>
+      <button class="t" id="tPd">P-delta</button>
+      <button class="t" id="tPD">P-Delta sway</button>
+      <button class="t" id="tLTB">LTB shape</button>
+      <button class="t" id="tGhost">Undeformed ghost</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Show</span>
+      <button class="t" id="tDim">Dimensions</button>
+      <button class="t" id="tProps">Design data</button>
+      <button class="t" id="tLab">Labels</button>
+      <button class="t" id="tSup">Supports and K</button>
+      <button class="t" id="tLoad">Loads</button>
+      <button class="t" id="tMom">Moment diagram</button>
+      <button class="t" id="tBrace">Bracing</button>
+      <button class="t" id="tAx">Axes</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Behaviour</span>
+      <select id="mode"></select>
+    </div>
+    <div id="expl"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+<script>
+var DATA = __GEOMETRY_JSON__;
+
+function fail(m) { document.getElementById("err").textContent = m; }
+
+try {
+
+var D = DATA.dims || {};
+var RES = DATA.results || {};
+var LOAD = DATA.load || {};
+var SUP = DATA.supports || {};
+var BRACED = (RES.braced === undefined) ? true : !!RES.braced;
+var CLS = parseInt(RES.section_class || 0, 10);
+
+var stage = document.getElementById("stage");
+var canvas = document.getElementById("cv");
+
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(DATA.bg || "#0d1117");
+
+function makeEnv() {
+  var c = document.createElement("canvas");
+  c.width = 16; c.height = 256;
+  var g = c.getContext("2d");
+  var grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.00, "#ffffff");
+  grad.addColorStop(0.35, "#c8d2dc");
+  grad.addColorStop(0.55, "#7d8894");
+  grad.addColorStop(0.75, "#3a424b");
+  grad.addColorStop(1.00, "#14181d");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  var tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  var p = new THREE.PMREMGenerator(renderer);
+  p.compileEquirectangularShader();
+  var env = p.fromEquirectangular(tex).texture;
+  p.dispose(); tex.dispose();
+  return env;
+}
+scene.environment = makeEnv();
+
+var key = new THREE.DirectionalLight(0xffffff, 1.35);
+key.position.set(1, 1.4, 1); scene.add(key);
+var fill = new THREE.DirectionalLight(0xffffff, 0.45);
+fill.position.set(-1, 0.3, -0.8); scene.add(fill);
+scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+
+// =====================================================================
+// labels
+// =====================================================================
+function label(text, color, scale) {
+  color = color || "#e6edf3"; scale = scale || 1.0;
+  var pad = 8, fs = 44;
+  var c = document.createElement("canvas");
+  var g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  var wpx = Math.ceil(g.measureText(text).width) + pad * 2;
+  c.width = wpx; c.height = fs + pad * 2;
+  g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  g.fillStyle = "rgba(13,17,23,0.72)";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = color; g.textBaseline = "middle";
+  g.fillText(text, pad, c.height / 2);
+  var tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false }));
+  sp.userData.aspect = c.width / c.height;
+  sp.userData.baseScale = scale;
+  return sp;
+}
+var LABELS = [], labelsOn = true;
+function regLabel(sp) { LABELS.push(sp); sp.visible = labelsOn; return sp; }
+function setLabels(on) {
+  labelsOn = on;
+  for (var i = 0; i < LABELS.length; i++) LABELS[i].visible = on;
+}
+function sizeLabels(root, unit) {
+  root.traverse(function (o) {
+    if (o.isSprite && o.userData.aspect) {
+      var h = unit * o.userData.baseScale;
+      o.scale.set(h * o.userData.aspect, h, 1);
+    }
+  });
+}
+
+// =====================================================================
+// geometry
+// =====================================================================
+function buildShape(outer, holes) {
+  var s = new THREE.Shape();
+  s.moveTo(outer[0][0], outer[0][1]);
+  for (var i = 1; i < outer.length; i++) s.lineTo(outer[i][0], outer[i][1]);
+  s.closePath();
+  for (var h = 0; h < (holes || []).length; h++) {
+    var lp = holes[h];
+    var p = new THREE.Path();
+    p.moveTo(lp[0][0], lp[0][1]);
+    for (var j = 1; j < lp.length; j++) p.lineTo(lp[j][0], lp[j][1]);
+    p.closePath();
+    s.holes.push(p);
+  }
+  return s;
+}
+
+var L = DATA.length_mm;
+var STEPS = 64;
+
+var member = new THREE.Group();
+var ghost = new THREE.Group();
+var overlays = new THREE.Group();
+scene.add(member); scene.add(ghost); scene.add(overlays);
+
+var mat = new THREE.MeshStandardMaterial({
+  color: 0xffffff,
+  metalness: DATA.metalness !== undefined ? DATA.metalness : 0.85,
+  roughness: DATA.roughness !== undefined ? DATA.roughness : 0.3,
+  vertexColors: true, side: THREE.DoubleSide });
+
+var ghostMat = new THREE.MeshBasicMaterial({
+  color: 0x30363d, wireframe: true, transparent: true, opacity: 0.35 });
+
+var meshes = [];
+var loops = [DATA.outer].concat(DATA.extra_loops || []);
+for (var li = 0; li < loops.length; li++) {
+  var shp = buildShape(loops[li], li === 0 ? (DATA.holes || []) : []);
+  var g = new THREE.ExtrudeGeometry(shp, {
+    depth: L, bevelEnabled: false, curveSegments: 12, steps: STEPS });
+  g.translate(0, 0, -L / 2);
+  g.computeVertexNormals();
+  g.userData.base = g.attributes.position.array.slice(0);
+  member.add(new THREE.Mesh(g, mat));
+  meshes.push(member.children[member.children.length - 1]);
+  var gg = g.clone();
+  ghost.add(new THREE.Mesh(gg, ghostMat));
+}
+
+// The extrusion runs along local z. Standing it up so z becomes world y
+// makes this a column, which is what a beam-column is.
+//   local x = weak axis, local y = strong axis, local z = member length
+member.rotation.x = -Math.PI / 2;
+ghost.rotation.x = -Math.PI / 2;
+overlays.rotation.x = -Math.PI / 2;
+ghost.visible = false;
+
+// =====================================================================
+// zones
+// =====================================================================
+var Z = DATA.zones || {};
+var kind = DATA.kind || "I";
+
+function zoneOf(x, y) {
+  if (kind === "I" || kind === "CHANNEL") {
+    if (Math.abs(y) >= (Z.flange_y || 1e9) - 0.51) return "flange";
+    return "web";
+  }
+  if (kind === "TEE") {
+    var top = (D.d || 0) - (D.y_bar || 0);
+    if (y >= top - (D.t || 0) - 0.51) return "flange";
+    return "web";
+  }
+  if (kind === "RHS") {
+    if (Math.abs(y) >= (Z.flange_y || 1e9) - 0.51) return "flange";
+    if (Math.abs(x) >= (Z.web_x || 1e9) - 0.51) return "web";
+    return "flange";
+  }
+  if (kind === "CHS") return "wall";
+  return "leg";
+}
+
+var zoneCache = [];
+for (var mi = 0; mi < meshes.length; mi++) {
+  var pos = meshes[mi].geometry.userData.base;
+  var zc = new Array(pos.length / 3);
+  for (var vi = 0; vi < zc.length; vi++) {
+    zc[vi] = zoneOf(pos[vi * 3], pos[vi * 3 + 1]);
+  }
+  zoneCache.push(zc);
+}
+
+var halfD = (D.d || 100) / 2;
+var halfB = (D.b || D.d || 100) / 2;
+var span = Math.max(halfB, halfD);
+
+// =====================================================================
+// moment along the member
+//
+// The primary moment is taken as constant over the length, which is the
+// case the page's omega1 selection assumes unless told otherwise. The
+// secondary moment is what U1 adds: it peaks at mid-height, where the
+// bow is largest, and dies to zero at both ends where the member is
+// held on line.
+// =====================================================================
+var Mfx = Math.abs(LOAD.Mfx_kNm || 0);
+var Mfy = Math.abs(LOAD.Mfy_kNm || 0);
+var U1x = RES.U1x || 1.0;
+var U1y = RES.U1y || 1.0;
+if (!isFinite(U1x)) U1x = 1.0;
+if (!isFinite(U1y)) U1y = 1.0;
+
+function frac(zz) { return (zz + L / 2) / L; }
+
+// Total moment factor at a point, primary 1.0 plus the secondary hump.
+function momFactor(zz, U1) {
+  var s = Math.max(0, Math.min(1, frac(zz)));
+  return 1.0 + (U1 - 1.0) * Math.sin(Math.PI * s);
+}
+
+function bowShape(zz) {
+  var s = Math.max(0, Math.min(1, frac(zz)));
+  return Math.sin(Math.PI * s);
+}
+
+// Sway grows from zero at the base to its full value at the top.
+function swayShape(zz) {
+  var s = Math.max(0, Math.min(1, frac(zz)));
+  return s * s * (3.0 - 2.0 * s);
+}
+
+var LB = L;
+if (SUP.y && SUP.y.L > 0) LB = Math.min(SUP.y.L, L);
+
+function ltbEnv(zz) {
+  var s = zz + L / 2;
+  var lb = LB > 0 ? LB : L;
+  var k = Math.floor(s / lb - 1e-9);
+  if (k < 0) k = 0;
+  var u = Math.max(0, Math.min(1, (s - k * lb) / lb));
+  return ((k % 2 === 0) ? 1 : -1) * Math.sin(Math.PI * u);
+}
+
+// =====================================================================
+// colours
+// =====================================================================
+var STEEL = new THREE.Color("#9fb0c0");
+var DIMC = new THREE.Color("#4a5568");
+var COMP = new THREE.Color("#f85149");
+var TENS = new THREE.Color("#58a6ff");
+var NEUT = new THREE.Color("#6e7681");
+var PASS = new THREE.Color("#3fb950");
+var FAILC = new THREE.Color("#f85149");
+var CLSC = [new THREE.Color("#3fb950"), new THREE.Color("#58a6ff"),
+            new THREE.Color("#d29922"), new THREE.Color("#f85149")];
+
+function utilColor(u) {
+  if (u === null || u === undefined) return STEEL.clone();
+  var c = new THREE.Color();
+  var x = Math.max(0, Math.min(1.3, u)) / 1.3;
+  c.setHSL((1 - x) * 0.33, 0.75, 0.5);
+  return c;
+}
+function heatColor(f) {
+  var c = new THREE.Color();
+  c.setHSL(0.66 - 0.66 * Math.max(0, Math.min(1, f)), 0.85, 0.52);
+  return c;
+}
+function bendColor(f) {
+  var c = NEUT.clone();
+  var a = Math.max(-1, Math.min(1, f));
+  if (a >= 0) c.lerp(COMP, a); else c.lerp(TENS, -a);
+  return c;
+}
+function elementFor(zone, list) {
+  if (!list) return null;
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].zone === zone) return list[i];
+  }
+  return null;
+}
+
+// Combined axial plus biaxial bending, normalised to the worst fibre.
+// Axial is uniform over the section, bending is linear about each axis,
+// which is exactly the superposition Chapter 5 sets up.
+var axialSign = (String(LOAD.axial || "compression") === "tension") ? -1 : 1;
+var Cf = Math.abs(LOAD.Cf_kN || LOAD.Tf_kN || 0);
+var Cy = RES.Cy_kN || 0;
+function combinedStress(x, y, zz) {
+  var a = Cy > 0 ? (Cf / Cy) : 0.0;
+  var bx = (RES.Mrx_kNm ? Mfx / RES.Mrx_kNm : 0) * momFactor(zz, U1x)
+           * (halfD > 0 ? y / halfD : 0);
+  var by = (RES.Mry_kNm ? Mfy / RES.Mry_kNm : 0) * momFactor(zz, U1y)
+           * (halfB > 0 ? x / halfB : 0);
+  return axialSign * a + bx + by;
+}
+
+function paint(mode) {
+  for (var mi = 0; mi < meshes.length; mi++) {
+    var geo = meshes[mi].geometry;
+    var n = geo.attributes.position.count;
+    var col = new Float32Array(n * 3);
+    var base = geo.userData.base;
+    for (var vi = 0; vi < n; vi++) {
+      var zone = zoneCache[mi][vi];
+      var bx = base[vi * 3], by = base[vi * 3 + 1], bz = base[vi * 3 + 2];
+      var c = STEEL.clone();
+
+      if (mode === "t1") {
+        var e = elementFor(zone, DATA.elements_t1);
+        if (e) {
+          c = e.ok ? PASS.clone() : FAILC.clone();
+          var m = e.limit > 0 ? Math.min(1, e.ratio / e.limit) : 0;
+          c.lerp(new THREE.Color("#0d1117"), 0.35 * (1 - m));
+        } else { c = DIMC.clone(); }
+
+      } else if (mode === "t2") {
+        var e2 = elementFor(zone, DATA.elements_t2);
+        if (e2 && e2.cls) c = CLSC[Math.min(3, e2.cls - 1)].clone();
+        else c = DIMC.clone();
+
+      } else if (mode === "stress") {
+        c = bendColor(combinedStress(bx, by, bz));
+
+      } else if (mode === "pdelta") {
+        // How much the moment at this height has been amplified.
+        var f = (U1x > 1.0001)
+          ? (momFactor(bz, U1x) - 1.0) / (U1x - 1.0) : 0.0;
+        c = heatColor(f);
+
+      } else if (mode === "ltb") {
+        if (zone === "flange" && by > 0) {
+          c = COMP.clone();
+          c.lerp(new THREE.Color("#0d1117"),
+                 0.55 * (1 - Math.abs(ltbEnv(bz))));
+        } else if (zone === "flange") {
+          c = TENS.clone().lerp(new THREE.Color("#0d1117"), 0.45);
+        } else { c = DIMC.clone(); }
+
+      } else if (mode === "util") {
+        c = utilColor(RES.governing_uc === undefined
+                      ? null : RES.governing_uc);
+      }
+      col[vi * 3] = c.r; col[vi * 3 + 1] = c.g; col[vi * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  }
+
+  var html = "";
+  if (mode === "t1" && DATA.elements_t1) {
+    for (var i = 0; i < DATA.elements_t1.length; i++) {
+      var a1 = DATA.elements_t1[i];
+      html += a1.label + " " + a1.ratio.toFixed(2) + " / "
+        + a1.limit.toFixed(2) + "<span class='sw' style='background:"
+        + (a1.ok ? "#3fb950" : "#f85149") + "'></span><br>";
+    }
+  } else if (mode === "t2" && DATA.elements_t2) {
+    for (var j = 0; j < DATA.elements_t2.length; j++) {
+      var a2 = DATA.elements_t2[j];
+      html += a2.label + " Class " + a2.cls
+        + "<span class='sw' style='background:#"
+        + CLSC[Math.min(3, a2.cls - 1)].getHexString() + "'></span><br>";
+    }
+  } else if (mode === "stress") {
+    html = "tension<span class='sw' style='background:#"
+      + TENS.getHexString() + "'></span>"
+      + "<span class='sw' style='background:#" + NEUT.getHexString()
+      + "'></span><span class='sw' style='background:#"
+      + COMP.getHexString() + "'></span> compression";
+  } else if (mode === "pdelta") {
+    html = (U1x > 1.0001)
+      ? ("U1x = " + U1x.toFixed(4) + "<br>secondary moment peaks mid-height")
+      : (BRACED ? "U1x = 1.000, no amplification"
+                : "Unbraced frame, U1 set to 1.0");
+  } else if (mode === "ltb") {
+    html = "compression flange<span class='sw' style='background:#"
+      + COMP.getHexString() + "'></span>";
+  } else if (mode === "util" && RES.governing_uc !== undefined
+             && RES.governing_uc !== null) {
+    html = (RES.governing_name || "governing") + " "
+      + Number(RES.governing_uc).toFixed(3)
+      + "<span class='sw' style='background:#"
+      + utilColor(RES.governing_uc).getHexString() + "'></span>";
+  }
+  document.getElementById("legend").innerHTML = html;
+}
+
+// =====================================================================
+// deformed shapes
+// =====================================================================
+var pdOn = false, pDOn = false, ltbOn = false;
+
+function applyShape() {
+  var bowAmp = pdOn ? Math.max(L * 0.020, span * 0.8) : 0;
+  var swayAmp = pDOn ? Math.max(L * 0.035, span * 1.4) : 0;
+  var ltbAmp = ltbOn ? Math.max(L * 0.025, span * 0.7) : 0;
+  var twist = ltbOn ? 0.20 : 0;
+
+  // Mfx bends about the strong axis, so the bow is in local y.
+  // Mfy bends about the weak axis, so its bow is in local x.
+  var total = Mfx + Mfy;
+  var fx = total > 0 ? Mfx / total : 1.0;
+  var fy = total > 0 ? Mfy / total : 0.0;
+
+  for (var mi = 0; mi < meshes.length; mi++) {
+    var geo = meshes[mi].geometry;
+    var p = geo.attributes.position.array;
+    var b = geo.userData.base;
+    for (var vi = 0; vi < p.length / 3; vi++) {
+      var x = b[vi * 3], y = b[vi * 3 + 1], z = b[vi * 3 + 2];
+      if (ltbOn) {
+        var e = ltbEnv(z), th = twist * e;
+        var ct = Math.cos(th), stt = Math.sin(th);
+        var xr = x * ct - y * stt;
+        y = x * stt + y * ct;
+        x = xr + ltbAmp * e;
+      }
+      if (pdOn) {
+        var bw = bowShape(z);
+        y += bowAmp * fx * bw;
+        x += bowAmp * fy * bw;
+      }
+      if (pDOn) x += swayAmp * swayShape(z);
+      p[vi * 3] = x; p[vi * 3 + 1] = y; p[vi * 3 + 2] = z;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+}
+
+// =====================================================================
+// overlays
+// =====================================================================
+var UNIT = Math.max(L * 0.026, span * 0.30);
+
+function addLine(grp, a, b, color) {
+  grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2])]),
+    new THREE.LineBasicMaterial({ color: color, depthTest: false })));
+}
+function addLabel(grp, text, pos, color, sc) {
+  var sp = regLabel(label(text, color, sc));
+  sp.position.set(pos[0], pos[1], pos[2]);
+  grp.add(sp);
+  return sp;
+}
+
+// ---- dimensions ----
+var gDim = new THREE.Group(); overlays.add(gDim);
+(function () {
+  var off = span * 1.9;
+  addLine(gDim, [off, 0, -L / 2], [off, 0, L / 2], 0x58a6ff);
+  addLabel(gDim, "L = " + (L / 1000).toFixed(2) + " m",
+           [off * 1.25, 0, 0], "#58a6ff");
+  if (D.d) {
+    addLine(gDim, [-halfB - span * 0.5, -halfD, -L / 2],
+                  [-halfB - span * 0.5, halfD, -L / 2], 0x8b949e);
+    addLabel(gDim, "d = " + D.d.toFixed(0),
+             [-halfB - span * 1.0, 0, -L / 2], "#c9d1d9");
+  }
+  if (D.b) {
+    addLine(gDim, [-halfB, -halfD - span * 0.5, -L / 2],
+                  [halfB, -halfD - span * 0.5, -L / 2], 0x8b949e);
+    addLabel(gDim, "b = " + D.b.toFixed(0),
+             [0, -halfD - span * 0.95, -L / 2], "#c9d1d9");
+  }
+  if (D.h) {
+    addLine(gDim, [halfB + span * 0.45, -D.h / 2, -L / 2],
+                  [halfB + span * 0.45, D.h / 2, -L / 2], 0x7ee787);
+    addLabel(gDim, "h = " + D.h.toFixed(1),
+             [halfB + span * 0.95, 0, -L / 2], "#7ee787");
+  }
+})();
+
+// ---- supports ----
+var gSup = new THREE.Group(); overlays.add(gSup);
+function supportSymbol(type, zEnd, sign) {
+  var g = new THREE.Group();
+  var s = span * 0.85;
+  var t = String(type || "").toLowerCase();
+  var col = 0xd29922;
+  if (t.indexOf("fixed") >= 0) {
+    var pl = new THREE.Mesh(new THREE.BoxGeometry(s * 2.4, s * 2.4, s * 0.22),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.2,
+        roughness: 0.7 }));
+    pl.position.set(0, 0, zEnd + sign * s * 0.12);
+    g.add(pl);
+    for (var i = -2; i <= 2; i++) {
+      addLine(g, [i * s * 0.5, -s * 1.2, zEnd + sign * s * 0.45],
+                 [i * s * 0.5 + s * 0.3, s * 1.2, zEnd + sign * s * 0.45], col);
+    }
+  } else if (t.indexOf("guided") >= 0 || t.indexOf("roller") >= 0) {
+    var pl2 = new THREE.Mesh(new THREE.BoxGeometry(s * 2.4, s * 2.4, s * 0.18),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.2,
+        roughness: 0.7 }));
+    pl2.position.set(0, 0, zEnd + sign * s * 0.5);
+    g.add(pl2);
+    for (var k = -1; k <= 1; k++) {
+      var ro = new THREE.Mesh(new THREE.SphereGeometry(s * 0.22, 12, 10),
+        new THREE.MeshStandardMaterial({ color: col }));
+      ro.position.set(k * s * 0.8, 0, zEnd + sign * s * 0.2);
+      g.add(ro);
+    }
+  } else if (t.indexOf("pinned") >= 0) {
+    var cone = new THREE.Mesh(new THREE.ConeGeometry(s * 0.85, s * 1.1, 4),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.2,
+        roughness: 0.7 }));
+    cone.rotation.x = sign > 0 ? -Math.PI / 2 : Math.PI / 2;
+    cone.position.set(0, 0, zEnd + sign * s * 0.55);
+    g.add(cone);
+  }
+  return g;
+}
+(function () {
+  var gov = SUP.y || SUP.x;
+  if (!gov) return;
+  gSup.add(supportSymbol(gov.bottom, -L / 2, -1));
+  gSup.add(supportSymbol(gov.top, L / 2, 1));
+  var txt = [];
+  if (SUP.x) txt.push("Kx = " + Number(SUP.x.K).toFixed(2));
+  if (SUP.y) txt.push("Ky = " + Number(SUP.y.K).toFixed(2));
+  if (SUP.z) txt.push("Kz = " + Number(SUP.z.K).toFixed(2));
+  addLabel(gSup, txt.join("   "), [0, span * 1.7, L / 2 * 0.55], "#d29922");
+  addLabel(gSup, BRACED ? "braced frame" : "unbraced frame",
+           [0, span * 2.2, L / 2 * 0.55],
+           BRACED ? "#7ee787" : "#ff7b72", 0.9);
+})();
+
+// ---- loads: axial arrows, moment arcs, eccentricity ----
+var gLoad = new THREE.Group(); overlays.add(gLoad);
+(function () {
+  var s = span * 0.55;
+  var len = Math.max(L * 0.16, span * 2.2);
+  var tension = axialSign < 0;
+  var col = tension ? 0x58a6ff : 0xff7b72;
+
+  function arrow(zStart, dir) {
+    var g = new THREE.Group();
+    var sh = new THREE.Mesh(
+      new THREE.CylinderGeometry(s * 0.16, s * 0.16, len, 12),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.1,
+        roughness: 0.6 }));
+    sh.rotation.x = Math.PI / 2;
+    sh.position.set(0, 0, zStart + dir * len / 2);
+    g.add(sh);
+    var hd = new THREE.Mesh(new THREE.ConeGeometry(s * 0.42, s * 1.0, 16),
+      new THREE.MeshStandardMaterial({ color: col, metalness: 0.1,
+        roughness: 0.6 }));
+    hd.rotation.x = dir > 0 ? -Math.PI / 2 : Math.PI / 2;
+    hd.position.set(0, 0, zStart + dir * s * 0.5);
+    g.add(hd);
+    return g;
+  }
+
+  if (Cf > 0) {
+    // Compression pushes inward at both ends, tension pulls outward.
+    gLoad.add(arrow(L / 2, tension ? -1 : 1));
+    gLoad.add(arrow(-L / 2, tension ? 1 : -1));
+    var lbl = (tension ? "Tf = " : "Cf = ") + Cf.toFixed(0) + " kN";
+    addLabel(gLoad, lbl, [span * 0.9, 0, L / 2 + len * 0.75],
+             tension ? "#58a6ff" : "#ff7b72");
+  }
+
+  // Eccentricity, the usual way a beam-column picks up its moment.
+  if (LOAD.e_mm) {
+    var e = Number(LOAD.e_mm);
+    addLine(gLoad, [0, 0, L / 2], [0, e, L / 2], 0xd29922);
+    addLabel(gLoad, "e = " + e.toFixed(0) + " mm",
+             [0, e * 1.6 + span * 0.4, L / 2], "#d29922", 0.9);
+  }
+
+  // Moment arcs at the top, one per axis that carries moment.
+  function arc(radius, axis, colr, txt) {
+    var pts = [];
+    for (var i = 0; i <= 40; i++) {
+      var a = -Math.PI * 0.7 + (Math.PI * 1.4) * i / 40;
+      if (axis === "x") {
+        pts.push(new THREE.Vector3(0, radius * Math.cos(a),
+                                   L / 2 + radius * Math.sin(a) * 0.5));
+      } else {
+        pts.push(new THREE.Vector3(radius * Math.cos(a), 0,
+                                   L / 2 + radius * Math.sin(a) * 0.5));
+      }
+    }
+    gLoad.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: colr, depthTest: false })));
+    addLabel(gLoad, txt, [axis === "x" ? 0 : radius * 1.2,
+             axis === "x" ? radius * 1.2 : 0, L / 2 + radius * 0.4],
+             "#" + new THREE.Color(colr).getHexString(), 0.9);
+  }
+  if (Mfx > 0) arc(span * 1.5, "x", 0xa371f7,
+                   "Mfx = " + Mfx.toFixed(1) + " kN-m");
+  if (Mfy > 0) arc(span * 1.9, "y", 0x7ee787,
+                   "Mfy = " + Mfy.toFixed(1) + " kN-m");
+})();
+
+// ---- moment diagram, primary and amplified ----
+var gMom = new THREE.Group(); overlays.add(gMom);
+(function () {
+  if (Mfx <= 0 && Mfy <= 0) return;
+  var base = -halfB - span * 2.2;
+  var scale = span * 1.5;
+  var prim = [], ampl = [];
+  for (var i = 0; i <= 80; i++) {
+    var zz = -L / 2 + i * L / 80;
+    prim.push(new THREE.Vector3(base - scale, 0, zz));
+    ampl.push(new THREE.Vector3(base - scale * momFactor(zz, U1x), 0, zz));
+  }
+  addLine(gMom, [base, 0, -L / 2], [base, 0, L / 2], 0x6e7681);
+  gMom.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(prim),
+    new THREE.LineBasicMaterial({ color: 0x6e7681, depthTest: false })));
+  gMom.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ampl),
+    new THREE.LineBasicMaterial({ color: 0xa371f7, depthTest: false })));
+  addLabel(gMom, "primary Mfx", [base - scale * 0.4, 0, -L / 2 * 0.75],
+           "#6e7681", 0.85);
+  if (U1x > 1.0001) {
+    addLabel(gMom, "amplified U1x Mfx = " + (U1x * Mfx).toFixed(1),
+             [base - scale * 1.45, 0, 0], "#a371f7", 0.9);
+  }
+})();
+
+// ---- bracing rings ----
+var gBrace = new THREE.Group(); overlays.add(gBrace);
+(function () {
+  function ring(zz, color, txt) {
+    var pts = [];
+    for (var a = 0; a <= 36; a++) {
+      var th = a / 36 * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(th) * span * 1.35,
+                                 Math.sin(th) * span * 1.35, zz));
+    }
+    gBrace.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: color, depthTest: false })));
+    if (txt) addLabel(gBrace, txt, [span * 1.6, span * 1.0, zz],
+                      "#" + new THREE.Color(color).getHexString(), 0.85);
+  }
+  [["x", 0xff7b72], ["y", 0x7ee787]].forEach(function (pair) {
+    var sp = SUP[pair[0]];
+    if (!sp || !sp.L || sp.L <= 0) return;
+    var n = Math.round(L / sp.L);
+    if (n <= 1) return;
+    for (var i = 1; i < n; i++) {
+      ring(-L / 2 + i * sp.L, pair[1],
+           pair[0] + " brace at " + (i * sp.L / 1000).toFixed(2) + " m");
+    }
+  });
+})();
+
+// ---- axes ----
+var gAx = new THREE.Group(); overlays.add(gAx);
+(function () {
+  var a = span * 2.2;
+  var defs = [[[a, 0, 0], 0xff7b72, "x weak"], [[0, a, 0], 0x7ee787, "y strong"],
+              [[0, 0, a * 1.6], 0x79c0ff, "z member"]];
+  for (var i = 0; i < defs.length; i++) {
+    addLine(gAx, [0, 0, 0], defs[i][0], defs[i][1]);
+    addLabel(gAx, defs[i][2],
+             [defs[i][0][0] * 1.15, defs[i][0][1] * 1.15, defs[i][0][2] * 1.15],
+             "#" + new THREE.Color(defs[i][1]).getHexString(), 1.05);
+  }
+})();
+
+// =====================================================================
+// camera
+// =====================================================================
+var FOV = 32;
+var radius = Math.sqrt(L * L / 4 + span * span) * 1.05;
+var camera = new THREE.PerspectiveCamera(FOV, 1, radius * 0.004, radius * 400);
+var target = new THREE.Vector3(0, 0, 0);
+var sph = { theta: 0.85, phi: 1.25, dist: radius * 2.6 };
+var spin = false, panMode = false;
+
+function fitDist(objH, objW, margin) {
+  var vt = Math.tan(FOV * Math.PI / 360);
+  var asp = camera.aspect || 1;
+  return Math.max((objH / 2) / vt, (objW / 2) / (asp * vt)) * (margin || 1.15);
+}
+function fitWhole(margin) {
+  var arrow = Cf > 0 ? Math.max(L * 0.16, span * 2.2) * 1.35 : span * 1.6;
+  return fitDist(L + 2 * arrow, span * 6.0, margin || 1.12);
+}
+function applyCamera() {
+  sph.phi = Math.max(0.02, Math.min(Math.PI - 0.02, sph.phi));
+  sph.dist = Math.max(radius * 0.05, Math.min(radius * 40, sph.dist));
+  var sp = Math.sin(sph.phi);
+  camera.position.set(
+    target.x + sph.dist * sp * Math.sin(sph.theta),
+    target.y + sph.dist * Math.cos(sph.phi),
+    target.z + sph.dist * sp * Math.cos(sph.theta));
+  camera.lookAt(target);
+}
+function pan(dxPx, dyPx) {
+  var hpx = stage.clientHeight || 1;
+  var wpp = 2 * sph.dist * Math.tan(FOV * Math.PI / 360) / hpx;
+  var st = Math.sin(sph.theta), ct = Math.cos(sph.theta);
+  var sp = Math.sin(sph.phi), cp = Math.cos(sph.phi);
+  target.x += (-dxPx * ct + dyPx * (-st * cp)) * wpp;
+  target.y += (dyPx * sp) * wpp;
+  target.z += (-dxPx * (-st) + dyPx * (-ct * cp)) * wpp;
+  applyCamera();
+}
+applyCamera();
+
+var ptrs = {}, last = null, pinch0 = null, mid0 = null;
+canvas.addEventListener("pointerdown", function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  if (Object.keys(ptrs).length === 1) last = { x: e.clientX, y: e.clientY };
+  spin = false;
+});
+canvas.addEventListener("pointermove", function (e) {
+  if (!ptrs[e.pointerId]) return;
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var ids = Object.keys(ptrs);
+  if (ids.length === 1 && last) {
+    var dx = e.clientX - last.x, dy = e.clientY - last.y;
+    if (panMode) pan(dx, dy);
+    else { sph.theta -= dx * 0.009; sph.phi -= dy * 0.009; applyCamera(); }
+    last = { x: e.clientX, y: e.clientY };
+  } else if (ids.length === 2) {
+    var a = ptrs[ids[0]], b = ptrs[ids[1]];
+    var d2 = Math.hypot(a.x - b.x, a.y - b.y);
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (pinch0 === null) { pinch0 = d2; mid0 = { x: mx, y: my }; }
+    if (d2 > 0) { sph.dist *= pinch0 / d2; pinch0 = d2; }
+    if (mid0) { pan(mx - mid0.x, my - mid0.y); mid0 = { x: mx, y: my }; }
+    applyCamera();
+  }
+});
+function up(e) {
+  delete ptrs[e.pointerId];
+  if (Object.keys(ptrs).length < 2) { pinch0 = null; mid0 = null; }
+  if (Object.keys(ptrs).length === 0) last = null;
+  var rest = Object.keys(ptrs);
+  if (rest.length === 1) last = { x: ptrs[rest[0]].x, y: ptrs[rest[0]].y };
+}
+canvas.addEventListener("pointerup", up);
+canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  sph.dist *= (1 + (e.deltaY > 0 ? 0.12 : -0.12));
+  applyCamera();
+}, { passive: false });
+
+function setView(th, ph, dist) {
+  spin = false; target.set(0, 0, 0);
+  sph.theta = th; sph.phi = ph; sph.dist = dist;
+  applyCamera();
+  sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+}
+document.getElementById("vIso").onclick = function () {
+  setView(0.85, 1.25, fitWhole(1.22)); };
+// looking at the web, which is the plane strong-axis bending happens in
+document.getElementById("vStrong").onclick = function () {
+  setView(1.5708, 1.5708, fitWhole(1.12)); };
+document.getElementById("vWeak").onclick = function () {
+  setView(0, 1.5708, fitWhole(1.12)); };
+document.getElementById("vEnd").onclick = function () {
+  setView(0, 0.05, fitDist(span * 3.2, span * 3.2, 1.25)); };
+document.getElementById("vFit").onclick = function () {
+  setView(sph.theta, sph.phi, fitWhole(1.16)); };
+document.getElementById("vSpin").onclick = function () { spin = !spin; };
+(function () {
+  var pb = document.getElementById("vPan");
+  pb.onclick = function () {
+    panMode = !panMode; pb.classList.toggle("on", panMode); };
+})();
+
+// =====================================================================
+// toggles
+// =====================================================================
+function bindToggle(id, grp, initial, after) {
+  var b = document.getElementById(id);
+  var on = !!initial;
+  function apply() {
+    b.classList.toggle("on", on);
+    if (grp) grp.visible = on;
+    if (after) after(on);
+  }
+  b.onclick = function () { if (b.disabled) return; on = !on; apply(); };
+  apply();
+  return function (want) { if (want !== on) { on = want; apply(); } };
+}
+
+(function () {
+  var el = document.getElementById("props");
+  var rows = DATA.props || [];
+  if (!rows.length) { el.innerHTML = "<div class='g'>No data</div>"; return; }
+  var cur = null, html = "";
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.group !== cur) { cur = r.group; html += "<div class='g'>" + cur + "</div>"; }
+    var u = r.unit ? (" " + r.unit) : "";
+    html += "<div><span class='k'>" + r.symbol + "</span><span class='v'>"
+         + r.value + u + "</span></div>";
+  }
+  el.innerHTML = html;
+})();
+
+bindToggle("tDim", gDim, false);
+bindToggle("tSup", gSup, true);
+bindToggle("tLoad", gLoad, true);
+bindToggle("tMom", gMom, false);
+bindToggle("tBrace", gBrace, false);
+bindToggle("tAx", gAx, false);
+bindToggle("tProps", null, false, function (on) {
+  document.getElementById("props").style.display = on ? "block" : "none"; });
+bindToggle("tLab", null, true, function (on) { setLabels(on); });
+bindToggle("tGhost", ghost, false);
+
+var setPd = bindToggle("tPd", null, false, function (on) {
+  pdOn = on; applyShape(); paint(currentMode); });
+var setPD = bindToggle("tPD", null, false, function (on) {
+  pDOn = on; applyShape(); paint(currentMode); });
+var setLTB = bindToggle("tLTB", null, false, function (on) {
+  ltbOn = on; applyShape(); paint(currentMode); });
+
+// P-Delta is a sway effect. A braced frame has no sway to show, so the
+// toggle is disabled rather than drawing something that cannot happen.
+if (BRACED) {
+  var bpd = document.getElementById("tPD");
+  bpd.disabled = true;
+  bpd.title = "Braced frame: sway is prevented, so P-Delta does not apply.";
+}
+
+// =====================================================================
+// behaviour dropdown
+// =====================================================================
+var MODES = [
+  ["plain", "Plain steel",
+   "The member as fabricated. No result mapped onto it."],
+  ["t1", "Table 1 local buckling, axial",
+   "Each plate element coloured by its own Table 1 check under uniform "
+   + "axial compression. Green passes, red exceeds the limit. A darker "
+   + "shade means more reserve below the limit."],
+  ["t2", "Table 2 section class, flexure plus axial",
+   "Each element coloured by the class it earns. The flange limits are "
+   + "the beam limits, because the flange is in uniform compression "
+   + "either way. The web limits carry the (1 - 0.39 Cf/phi Cy) "
+   + "reduction, so raising the axial load pushes more web into "
+   + "compression and the web class can drop as you watch."],
+  ["stress", "Combined axial and biaxial bending stress",
+   "Axial stress is uniform over the section and bending is linear about "
+   + "each axis, superposed. Red is compression, blue is tension. Turn "
+   + "on P-delta to see the moment, and so the stress, grow at "
+   + "mid-height."],
+  ["pdelta", "P-delta, secondary moment",
+   "Colour is how much the moment at that height has been amplified by "
+   + "U1. It is zero at both ends, where the member is held on line, and "
+   + "peaks at mid-height where the bow is largest. This is a "
+   + "member-level effect and exists in braced frames."],
+  ["ltb", "Lateral torsional buckling",
+   "The compression flange is the part that swings sideways, so it is "
+   + "picked out in red and the tension flange in blue. Shading peaks "
+   + "midway between lateral braces. Turn on LTB shape to see it move."],
+  ["util", "Utilisation, governing check",
+   "The whole member coloured by the governing interaction value, "
+   + "whichever of a), b) or c) is worst."]
+];
+var sel = document.getElementById("mode");
+for (var i = 0; i < MODES.length; i++) {
+  var o = document.createElement("option");
+  o.value = MODES[i][0]; o.textContent = MODES[i][1];
+  sel.appendChild(o);
+}
+var currentMode = "plain";
+function setMode(m) {
+  currentMode = m;
+  paint(m);
+  for (var i = 0; i < MODES.length; i++) {
+    if (MODES[i][0] === m) {
+      document.getElementById("expl").textContent = MODES[i][2];
+    }
+  }
+  if (m === "pdelta") setPd(true);
+  if (m === "ltb") setLTB(true);
+}
+sel.onchange = function () { setMode(sel.value); };
+setMode("plain");
+
+// =====================================================================
+// hud
+// =====================================================================
+(function () {
+  var h = "<b>" + (DATA.label || "") + "</b><br>";
+  h += (DATA.family_label || "") + "<br>";
+  h += "L = " + (L / 1000).toFixed(2) + " m";
+  if (RES.section_class) h += "<br>Class " + RES.section_class;
+  if (RES.clause) h += "  " + RES.clause;
+  if (Cf > 0) {
+    h += "<br>" + (axialSign < 0 ? "Tf = " : "Cf = ") + Cf.toFixed(0) + " kN";
+  }
+  if (Mfx > 0) h += "<br>Mfx = " + Mfx.toFixed(1) + " kN-m";
+  if (Mfy > 0) h += "   Mfy = " + Mfy.toFixed(1) + " kN-m";
+  if (RES.U1x) h += "<br>U1x = " + Number(RES.U1x).toFixed(4);
+  if (RES.U1y && Mfy > 0) h += "   U1y = " + Number(RES.U1y).toFixed(4);
+  h += "<br>" + (BRACED ? "braced" : "unbraced") + " frame";
+  if (RES.governing_name) {
+    h += "<br>governs: " + RES.governing_name;
+    if (RES.governing_uc !== undefined && RES.governing_uc !== null) {
+      h += " at " + Number(RES.governing_uc).toFixed(3);
+    }
+  }
+  if (RES.overall) {
+    var cc = RES.overall === "OK" ? "#3fb950"
+           : (RES.overall === "NG" ? "#f85149" : "#d29922");
+    h += "<br><span style='color:" + cc + "'>" + RES.overall + "</span>";
+  }
+  document.getElementById("hud").innerHTML = h;
+})();
+
+// =====================================================================
+// resize and loop
+// =====================================================================
+function resize() {
+  var w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+}
+window.addEventListener("resize", resize);
+resize();
+sph.dist = fitWhole(1.22);
+applyCamera();
+sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+
+var lastDist = sph.dist;
+function loop() {
+  requestAnimationFrame(loop);
+  if (spin) { sph.theta += 0.004; applyCamera(); }
+  if (Math.abs(sph.dist - lastDist) > radius * 0.01) {
+    lastDist = sph.dist;
+    sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
+  }
+  renderer.render(scene, camera);
+}
+loop();
+
+} catch (err) {
+  fail("Viewer error: " + err.message);
+}
+</script>
+</body>
+</html>

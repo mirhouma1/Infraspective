@@ -83,8 +83,19 @@ except ImportError:
 
 # The function above tries to load the SVG generation module. If it's unavailable,the app continues without SVG support.
 
+# The 3D member model. Built in plan with the real bolt holes cut through
+# the connected element, so the net fracture and block shear surfaces can
+# be drawn where they actually are. Same wiring as the Compression,
+# Flexure, Beam-Column and Welded pages: a viewer module plus its own
+# HTML template, with viewer_3d.py left alone.
+try:
+    import viewer_3d_tension
+    HAS_TENSION_VIEWER = True
+except ImportError:
+    HAS_TENSION_VIEWER = False
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+
+# -- Constants ----------------------------------------------------------------
 PHI       = 0.90
 PHI_U     = 0.75
 MAX_SLEND = 300
@@ -129,7 +140,7 @@ UT_DEFAULTS = {
 
 #Site table********
 
-# ── Data classes ──────────────────────────────────────────────────────────────
+# -- Data classes -------------------------------------------------------------
 @dataclass
 class Material:
     Fy: float
@@ -267,7 +278,7 @@ def load_angle_table() -> pd.DataFrame:
     return out.dropna(subset=["leg1", "leg2", "t"]).reset_index(drop=True)
 
 
-# ── Shear lag factor (CSA S16-14 Cl. 12.3.3.2) - 1. The numerical U value 2. A sentence explaining why that value was selected ───────────────────────────────
+# -- Shear lag factor (CSA S16-14 Cl. 12.3.3.2) - 1. The numerical U value 2. A sentence explaining why that value was selected ---------------
 def shear_lag(
             section_type:  str,
             n_bolt_rows:   int,
@@ -277,14 +288,14 @@ def shear_lag(
         ) -> Tuple[float, str]:
 
     #Tuple is a collection of items
-    
+
             """Returns (U, explanation_string)."""
             if section_type in ("Single Angle", "Double Angle") or connected_el == "one_leg":
                 if n_bolt_rows >= 4:
                     return 0.80, "One-leg connected angle, >=4 transverse bolt rows => U = 0.80 (Cl. 12.3.3.2b-i)"
                 else:
                     return 0.60, "One-leg connected angle, <4 transverse bolt rows => U = 0.60 (Cl. 12.3.3.2b-ii)"
-        
+
             if section_type == "WT Section":
                 if connected_el == "flange" and b_flange > 0 and d_depth > 0:
                     if b_flange >= (2.0 / 3.0) * d_depth and n_bolt_rows >= 3:
@@ -293,36 +304,36 @@ def shear_lag(
                     return 0.85, "WT stem/flange-connected, >=3 transverse lines => U = 0.85 (Cl. 12.3.3.2c-i)"
                 else:
                     return 0.75, "WT stem/flange-connected, 2 transverse lines => U = 0.75 (Cl. 12.3.3.2c-ii)"
-        
+
             if section_type == "Channel (C / MC)":
                 if n_bolt_rows >= 3:
                     return 0.85, "Channel web-connected, >=3 transverse lines => U = 0.85 (Cl. 12.3.3.2c-i)"
                 else:
                     return 0.75, "Channel web-connected, 2 transverse lines => U = 0.75 (Cl. 12.3.3.2c-ii)"
-        
+
             if section_type == "Plate":
                 return 1.00, "Plate: load distributed to all elements => U = 1.00 (Cl. 12.3.3.1)"
-        
+
             if n_bolt_rows >= 3:
                 return 0.85, ">=3 transverse lines => U = 0.85 (Cl. 12.3.3.2c-i)"
             return 0.75, "2 transverse lines => U = 0.75 (Cl. 12.3.3.2c-ii)"
-    
-    
-# ── Calc Gross Yield - Limit-state calculations ──────────────────────────────────────────────────
+
+
+# -- Calc Gross Yield - Limit-state calculations ------------------------------
 def calc_gross_yield(Ag: float, Fy: float) -> Calc:
     Tr = PHI * Ag * Fy / 1000.0
     return Calc(
         "Gross Section Yielding (Cl. 13.2a-i)", Tr,
         [
-            "**Gross Section Yielding — CSA S16 Cl. 13.2 a) i)**",
-            "- Formula: Tr = φ · Ag · Fy",
-            f"- Substitute: Tr = {PHI} × {Ag:,.1f} mm² × {Fy:.1f} MPa ÷ 1000",
+            "**Gross Section Yielding - CSA S16 Cl. 13.2 a) i)**",
+            "- Formula: Tr = phi * Ag * Fy",
+            f"- Substitute: Tr = {PHI} x {Ag:,.1f} mm2 x {Fy:.1f} MPa / 1000",
             f"- Result: **{Tr:,.1f} kN**",
         ],
     )
 
 
-    # ── Net area paths (Cl. 12.3.1) ──────────────────────────────────────────────
+    # -- Net area paths (Cl. 12.3.1) ------------------------------------------
 def net_paths(
     width: float,
     bolt: BoltPattern,
@@ -334,7 +345,7 @@ def net_paths(
     Enumerate straight and zig-zag net-area paths through
     a connected plate element.
 
-    An = wn × t
+    An = wn x t
     """
     d_eff = hole_dia + allowance
     paths: List[Dict] = []
@@ -362,13 +373,13 @@ def net_paths(
             "pitch_mm": bolt.pitch,
             "gauge_mm": bolt.gauge,
             "description": (
-                f"Straight — {n_holes} "
+                f"Straight - {n_holes} "
                 f"hole{'s' if n_holes > 1 else ''}"
             ),
         })
 
     # Zig-zag paths>>>>>>>>>
-    
+
     if bolt.bolts_per_line >= 2 and bolt.n_lines >= 2:
         for n_holes in range(2, bolt.n_lines + 1):
             n_staggers = n_holes - 1
@@ -401,7 +412,7 @@ def net_paths(
                 "pitch_mm": bolt.pitch,
                 "gauge_mm": bolt.gauge,
                 "description": (
-                    f"Zig-zag — {n_holes} holes, "
+                    f"Zig-zag - {n_holes} holes, "
                     f"{n_staggers} stagger term(s)"
                 ),
             })
@@ -454,7 +465,7 @@ def gross_section_net_paths(
             "pitch_mm": bolt.pitch,
             "gauge_mm": bolt.gauge,
             "description": (
-                f"Straight — {n_holes} "
+                f"Straight - {n_holes} "
                 f"hole{'s' if n_holes > 1 else ''}"
             ),
         })
@@ -507,7 +518,7 @@ def gross_section_net_paths(
                 "pitch_mm": bolt.pitch,
                 "gauge_mm": bolt.gauge,
                 "description": (
-                    f"Zig-zag — {n_holes} holes, "
+                    f"Zig-zag - {n_holes} holes, "
                     f"{n_staggers} stagger term(s)"
                 ),
             })
@@ -515,7 +526,7 @@ def gross_section_net_paths(
     return paths
 
 
-# ── Net fracture calculation ──────────────────────────────────────────────────
+# -- Net fracture calculation -------------------------------------------------
 def calc_net_fracture_paths(
     paths,
     U,
@@ -541,12 +552,12 @@ def calc_net_fracture_paths(
     gov = min(results, key=lambda r: r[3])
 
     steps = [
-        "**Net Section Fracture — CSA S16 Cl. 13.2 a) iii)**",
+        "**Net Section Fracture - CSA S16 Cl. 13.2 a) iii)**",
         "- Resistance equation:",
         r"\[T_r = \phi_u A_{ne}F_u\]",
         "- Effective net area:",
         r"\[A_{ne} = U A_n\]",
-        f"- Resistance factor: φu = {PHI_U:.2f}",
+        f"- Resistance factor: phi_u = {PHI_U:.2f}",
         f"- Shear-lag factor: U = {U:.2f}",
         f"- Ultimate strength: Fu = {Fu:.1f} MPa",
     ]
@@ -558,7 +569,7 @@ def calc_net_fracture_paths(
         results,
         start=1,
     ):
-        tag = "  ← **GOVERNS**" if p is gov[0] else ""
+        tag = "  <-- **GOVERNS**" if p is gov[0] else ""
 
         steps.append("---")
         steps.append(
@@ -585,19 +596,19 @@ def calc_net_fracture_paths(
             if parts == 1:
                 steps.append(
                     f"- Hole deduction:"
-                    f"\n  ΔA_h = n_h × d_eff × t"
-                    f"\n  = {n_holes} × {d_eff:.2f}"
-                    f" × {t:.3f}"
-                    f"\n  = **{hole_area:,.1f} mm²**"
+                    f"\n  dA_h = n_h x d_eff x t"
+                    f"\n  = {n_holes} x {d_eff:.2f}"
+                    f" x {t:.3f}"
+                    f"\n  = **{hole_area:,.1f} mm2**"
                 )
             else:
                 steps.append(
                     f"- Hole deduction:"
-                    f"\n  ΔA_h = connected parts"
-                    f" × n_h × d_eff × t"
-                    f"\n  = {parts} × {n_holes}"
-                    f" × {d_eff:.2f} × {t:.3f}"
-                    f"\n  = **{hole_area:,.1f} mm²**"
+                    f"\n  dA_h = connected parts"
+                    f" x n_h x d_eff x t"
+                    f"\n  = {parts} x {n_holes}"
+                    f" x {d_eff:.2f} x {t:.3f}"
+                    f"\n  = **{hole_area:,.1f} mm2**"
                 )
 
             if stagger_length > 0:
@@ -610,47 +621,47 @@ def calc_net_fracture_paths(
 
                 steps.append(
                     f"- Stagger-length addition:"
-                    f"\n  Σ(s²/4g)"
-                    f" = {n_staggers} × "
-                    f"({pitch:.1f}² / "
-                    f"(4 × {gauge:.1f}))"
+                    f"\n  sum(s2/4g)"
+                    f" = {n_staggers} x "
+                    f"({pitch:.1f}^2 / "
+                    f"(4 x {gauge:.1f}))"
                     f"\n  = **{stagger_length:,.2f} mm**"
                 )
 
                 if parts == 1:
                     steps.append(
                         f"- Stagger-area addition:"
-                        f"\n  ΔA_s = Σ(s²/4g) × t"
+                        f"\n  dA_s = sum(s2/4g) x t"
                         f"\n  = {stagger_length:,.2f}"
-                        f" × {t:.3f}"
-                        f"\n  = **{stagger_area:,.1f} mm²**"
+                        f" x {t:.3f}"
+                        f"\n  = **{stagger_area:,.1f} mm2**"
                     )
                 else:
                     steps.append(
                         f"- Stagger-area addition:"
-                        f"\n  ΔA_s = connected parts"
-                        f" × Σ(s²/4g) × t"
+                        f"\n  dA_s = connected parts"
+                        f" x sum(s2/4g) x t"
                         f"\n  = {parts}"
-                        f" × {stagger_length:,.2f}"
-                        f" × {t:.3f}"
-                        f"\n  = **{stagger_area:,.1f} mm²**"
+                        f" x {stagger_length:,.2f}"
+                        f" x {t:.3f}"
+                        f"\n  = **{stagger_area:,.1f} mm2**"
                     )
 
                 steps.append(
                     f"- Net area:"
-                    f"\n  An = Ag − ΔA_h + ΔA_s"
+                    f"\n  An = Ag - dA_h + dA_s"
                     f"\n  = {Ag:,.1f}"
-                    f" − {hole_area:,.1f}"
+                    f" - {hole_area:,.1f}"
                     f" + {stagger_area:,.1f}"
-                    f"\n  = **{An_i:,.1f} mm²**"
+                    f"\n  = **{An_i:,.1f} mm2**"
                 )
             else:
                 steps.append(
                     f"- Net area:"
-                    f"\n  An = Ag − ΔA_h"
+                    f"\n  An = Ag - dA_h"
                     f"\n  = {Ag:,.1f}"
-                    f" − {hole_area:,.1f}"
-                    f"\n  = **{An_i:,.1f} mm²**"
+                    f" - {hole_area:,.1f}"
+                    f"\n  = **{An_i:,.1f} mm2**"
                 )
 
         else:
@@ -661,33 +672,33 @@ def calc_net_fracture_paths(
 
             steps.append(
                 f"- Net width:"
-                f"\n  wn = width − holes × d_eff + stagger"
+                f"\n  wn = width - holes x d_eff + stagger"
                 f"\n  = {width:.1f}"
-                f" − {p['n_holes']} × {d_eff:.2f}"
+                f" - {p['n_holes']} x {d_eff:.2f}"
                 f" + {stagger:.2f}"
                 f"\n  = **{p['wn_mm']:,.1f} mm**"
             )
 
             steps.append(
                 f"- Net area:"
-                f"\n  An = wn × t"
-                f"\n  = {p['wn_mm']:,.1f} × {t:.3f}"
-                f"\n  = **{An_i:,.1f} mm²**"
+                f"\n  An = wn x t"
+                f"\n  = {p['wn_mm']:,.1f} x {t:.3f}"
+                f"\n  = **{An_i:,.1f} mm2**"
             )
 
         steps.append(
             f"- Effective net area:"
-            f"\n  Ane = U × An"
-            f"\n  = {U:.2f} × {An_i:,.1f}"
-            f"\n  = **{Ane_i:,.1f} mm²**"
+            f"\n  Ane = U x An"
+            f"\n  = {U:.2f} x {An_i:,.1f}"
+            f"\n  = **{Ane_i:,.1f} mm2**"
         )
 
         steps.append(
             f"- Fracture resistance:"
-            f"\n  Tr = φu × Ane × Fu ÷ 1000"
+            f"\n  Tr = phi_u x Ane x Fu / 1000"
             f"\n  = {PHI_U:.2f}"
-            f" × {Ane_i:,.1f}"
-            f" × {Fu:.1f} ÷ 1000"
+            f" x {Ane_i:,.1f}"
+            f" x {Fu:.1f} / 1000"
             f"\n  = **{Tr_i:,.1f} kN**"
         )
 
@@ -719,12 +730,12 @@ def calc_block_shear(
     return Calc(
         "Block Shear (Cl. 13.11)", Tr,
         [
-            "**Block Shear — CSA S16 Cl. 13.11**",
-            "- Formula: Tr = φu · [Ut·Ant·Fu + 0.6·Agv·(Fy+Fu)/2]",
-            f"- Gross shear area: Agv = {n_shear_planes} plane(s) × {Agv:,.1f} mm² = **{Agv_total:,.1f} mm²**",
-            f"- Tension term: Ut·Ant·Fu = {Ut:.2f} × {Ant:,.1f} × {Fu:.1f} = **{term1:,.0f} N**",
-            f"- Shear term: 0.6·Agv·(Fy+Fu)/2 = 0.6 × {Agv_total:,.1f} × ({Fy:.1f}+{Fu:.1f})/2 = **{term2:,.0f} N**",
-            f"- Substitute: Tr = {PHI_U} × ({term1:,.0f} + {term2:,.0f}) ÷ 1000",
+            "**Block Shear - CSA S16 Cl. 13.11**",
+            "- Formula: Tr = phi_u * [Ut*Ant*Fu + 0.6*Agv*(Fy+Fu)/2]",
+            f"- Gross shear area: Agv = {n_shear_planes} plane(s) x {Agv:,.1f} mm2 = **{Agv_total:,.1f} mm2**",
+            f"- Tension term: Ut*Ant*Fu = {Ut:.2f} x {Ant:,.1f} x {Fu:.1f} = **{term1:,.0f} N**",
+            f"- Shear term: 0.6*Agv*(Fy+Fu)/2 = 0.6 x {Agv_total:,.1f} x ({Fy:.1f}+{Fu:.1f})/2 = **{term2:,.0f} N**",
+            f"- Substitute: Tr = {PHI_U} x ({term1:,.0f} + {term2:,.0f}) / 1000",
             f"- Result: **{Tr:,.1f} kN**",
         ],
     )
@@ -736,9 +747,9 @@ def calc_pin(An: float, Fy: float) -> Calc:
     return Calc(
         "Pin Connection (Cl. 13.2b)", Tr,
         [
-            "**Pin Connection — CSA S16 Cl. 13.2 b)**",
-            "- Formula: Tr = 0.75 · φ · An · Fy",
-            f"- Substitute: Tr = 0.75 × {PHI} × {An:,.1f} mm² × {Fy:.1f} MPa ÷ 1000",
+            "**Pin Connection - CSA S16 Cl. 13.2 b)**",
+            "- Formula: Tr = 0.75 * phi * An * Fy",
+            f"- Substitute: Tr = 0.75 x {PHI} x {An:,.1f} mm2 x {Fy:.1f} MPa / 1000",
             f"- Result: **{Tr:,.1f} kN**",
         ],
     )
@@ -801,8 +812,8 @@ def block_shear_paths(
             "pitch_mm": bolt.pitch,
             "gauge_mm": bolt.gauge,
             "tension_formula": (
-                "e2 + (n_lines − 1)g − "
-                "(n_lines − 0.5)d_eff"
+                "e2 + (n_lines - 1)g - "
+                "(n_lines - 0.5)d_eff"
             ),
             "description": (
                 "A: shear on far line, tension to free edge"
@@ -829,7 +840,7 @@ def block_shear_paths(
                 "edge_trans_mm": bolt.edge_trans,
                 "pitch_mm": bolt.pitch,
                 "gauge_mm": bolt.gauge,
-                "tension_formula": "e2 − 0.5d_eff",
+                "tension_formula": "e2 - 0.5d_eff",
                 "description": (
                     "B: shear on edge line, tension to free edge"
                 ),
@@ -858,8 +869,8 @@ def block_shear_paths(
                 "pitch_mm": bolt.pitch,
                 "gauge_mm": bolt.gauge,
                 "tension_formula": (
-                    "(n_lines − 1)g − "
-                    "(n_lines − 1)d_eff"
+                    "(n_lines - 1)g - "
+                    "(n_lines - 1)d_eff"
                 ),
                 "description": (
                     "C: shear on both outer lines, "
@@ -907,7 +918,7 @@ def calc_block_shear_paths(
 
     results = []
 
-    # ── Calculate every candidate pattern ────────────────────────────────
+    # -- Calculate every candidate pattern --------------------------------
     for p in pats:
         Ant_single = p["Ant"]
         Agv_single = p["Agv"]
@@ -957,17 +968,17 @@ def calc_block_shear_paths(
         key=lambda result: result["Tr_kN"],
     )
 
-    # ── General calculation information ──────────────────────────────────
+    # -- General calculation information ----------------------------------
     steps = [
-        "**Block Shear — CSA S16 Cl. 13.11**",
+        "**Block Shear - CSA S16 Cl. 13.11**",
 
         (
             "- Resistance equation:"
-            "\n  Tr = φu × "
-            "[Ut × Ant × Fu + 0.6 × Agv × Fbs]"
+            "\n  Tr = phi_u x "
+            "[Ut x Ant x Fu + 0.6 x Agv x Fbs]"
         ),
 
-        f"- Resistance factor: φu = {PHI_U:.2f}",
+        f"- Resistance factor: phi_u = {PHI_U:.2f}",
 
         f"- Block-shear tension factor: Ut = {Ut:.2f}",
 
@@ -986,14 +997,14 @@ def calc_block_shear_paths(
     if area_label:
         steps.append(f"- {area_label}")
 
-    # ── Show complete work for every pattern ─────────────────────────────
+    # -- Show complete work for every pattern -----------------------------
     for result in results:
         p = result["path"]
 
         key = p["key"]
         governs = key == gov["path"]["key"]
 
-        tag = " ← **GOVERNS**" if governs else ""
+        tag = " <-- **GOVERNS**" if governs else ""
 
         n_rows = p["n_rows"]
         n_lines = p["n_lines"]
@@ -1019,35 +1030,35 @@ def calc_block_shear_paths(
         # Numerical substitution for each tension path
         if key == "A":
             width_formula = (
-                "wnt = e2 + (n_lines − 1)g "
-                "− (n_lines − 0.5)d_eff"
+                "wnt = e2 + (n_lines - 1)g "
+                "- (n_lines - 0.5)d_eff"
             )
 
             width_substitution = (
                 f"{e2:.1f}"
-                f" + ({n_lines} − 1) × {gauge:.1f}"
-                f" − ({n_lines} − 0.5) × {d_eff:.2f}"
+                f" + ({n_lines} - 1) x {gauge:.1f}"
+                f" - ({n_lines} - 0.5) x {d_eff:.2f}"
             )
 
         elif key == "B":
             width_formula = (
-                "wnt = e2 − 0.5d_eff"
+                "wnt = e2 - 0.5d_eff"
             )
 
             width_substitution = (
                 f"{e2:.1f}"
-                f" − 0.5 × {d_eff:.2f}"
+                f" - 0.5 x {d_eff:.2f}"
             )
 
         elif key == "C":
             width_formula = (
-                "wnt = (n_lines − 1)g "
-                "− (n_lines − 1)d_eff"
+                "wnt = (n_lines - 1)g "
+                "- (n_lines - 1)d_eff"
             )
 
             width_substitution = (
-                f"({n_lines} − 1) × {gauge:.1f}"
-                f" − ({n_lines} − 1) × {d_eff:.2f}"
+                f"({n_lines} - 1) x {gauge:.1f}"
+                f" - ({n_lines} - 1) x {d_eff:.2f}"
             )
 
         else:
@@ -1072,18 +1083,18 @@ def calc_block_shear_paths(
         # Shear-path length
         steps.append(
             f"- Shear-path length:"
-            f"\n  Lv = e1 + (n_rows − 1)s"
+            f"\n  Lv = e1 + (n_rows - 1)s"
             f"\n  = {e1:.1f}"
-            f" + ({n_rows} − 1) × {pitch:.1f}"
+            f" + ({n_rows} - 1) x {pitch:.1f}"
             f"\n  = **{Lv:,.1f} mm**"
         )
 
         # Gross shear area for one plane
         steps.append(
             f"- Gross shear area per plane:"
-            f"\n  Agv,1 = Lv × t"
-            f"\n  = {Lv:,.1f} × {t:.3f}"
-            f"\n  = **{result['Agv_single']:,.1f} mm²**"
+            f"\n  Agv,1 = Lv x t"
+            f"\n  = {Lv:,.1f} x {t:.3f}"
+            f"\n  = **{result['Agv_single']:,.1f} mm2**"
         )
 
         # Total gross shear area
@@ -1091,18 +1102,18 @@ def calc_block_shear_paths(
             steps.append(
                 f"- Total gross shear area:"
                 f"\n  Agv = Agv,1"
-                f"\n  = **{result['Agv_total']:,.1f} mm²**"
+                f"\n  = **{result['Agv_total']:,.1f} mm2**"
             )
 
         else:
             steps.append(
                 f"- Total gross shear area:"
                 f"\n  Agv = shear planes"
-                f" × member parts × Agv,1"
+                f" x member parts x Agv,1"
                 f"\n  = {planes}"
-                f" × {area_mult:g}"
-                f" × {result['Agv_single']:,.1f}"
-                f"\n  = **{result['Agv_total']:,.1f} mm²**"
+                f" x {area_mult:g}"
+                f" x {result['Agv_single']:,.1f}"
+                f"\n  = **{result['Agv_total']:,.1f} mm2**"
             )
 
         # Net tension width
@@ -1117,52 +1128,52 @@ def calc_block_shear_paths(
         if area_mult == 1.0:
             steps.append(
                 f"- Net tension area:"
-                f"\n  Ant = wnt × t"
-                f"\n  = {wnt:,.1f} × {t:.3f}"
-                f"\n  = **{result['Ant_total']:,.1f} mm²**"
+                f"\n  Ant = wnt x t"
+                f"\n  = {wnt:,.1f} x {t:.3f}"
+                f"\n  = **{result['Ant_total']:,.1f} mm2**"
             )
 
         else:
             steps.append(
                 f"- Net tension area:"
-                f"\n  Ant = member parts × wnt × t"
+                f"\n  Ant = member parts x wnt x t"
                 f"\n  = {area_mult:g}"
-                f" × {wnt:,.1f} × {t:.3f}"
-                f"\n  = **{result['Ant_total']:,.1f} mm²**"
+                f" x {wnt:,.1f} x {t:.3f}"
+                f"\n  = **{result['Ant_total']:,.1f} mm2**"
             )
 
         # Tension contribution
         steps.append(
             f"- Tension contribution:"
-            f"\n  Rt = Ut × Ant × Fu"
+            f"\n  Rt = Ut x Ant x Fu"
             f"\n  = {Ut:.2f}"
-            f" × {result['Ant_total']:,.1f}"
-            f" × {Fu:.1f}"
+            f" x {result['Ant_total']:,.1f}"
+            f" x {Fu:.1f}"
             f"\n  = **{result['tension_term']:,.0f} N**"
         )
 
         # Shear contribution
         steps.append(
             f"- Shear contribution:"
-            f"\n  Rv = 0.6 × Agv × Fbs"
+            f"\n  Rv = 0.6 x Agv x Fbs"
             f"\n  = 0.6"
-            f" × {result['Agv_total']:,.1f}"
-            f" × {Fbs:,.1f}"
+            f" x {result['Agv_total']:,.1f}"
+            f" x {Fbs:,.1f}"
             f"\n  = **{result['shear_term']:,.0f} N**"
         )
 
         # Final block-shear resistance
         steps.append(
             f"- Block-shear resistance:"
-            f"\n  Tr = φu × (Rt + Rv) ÷ 1000"
+            f"\n  Tr = phi_u x (Rt + Rv) / 1000"
             f"\n  = {PHI_U:.2f}"
-            f" × ({result['tension_term']:,.0f}"
+            f" x ({result['tension_term']:,.0f}"
             f" + {result['shear_term']:,.0f})"
-            f" ÷ 1000"
+            f" / 1000"
             f"\n  = **{result['Tr_kN']:,.1f} kN**"
         )
 
-    # ── Governing result ──────────────────────────────────────────────────
+    # -- Governing result --------------------------------------------------
     gov_description = gov["path"]["description"].split(
         ": ",
         1,
@@ -1177,7 +1188,7 @@ def calc_block_shear_paths(
         f"Tr = **{gov['Tr_kN']:,.1f} kN**"
     )
 
-    # ── Summary table ─────────────────────────────────────────────────────
+    # -- Summary table -----------------------------------------------------
     summary_table = pd.DataFrame([
         {
             "Pattern": result["path"]["key"],
@@ -1199,14 +1210,14 @@ def calc_block_shear_paths(
                 1,
             ),
 
-            "Ant (mm²)": round(
+            "Ant (mm2)": round(
                 result["Ant_total"],
                 1,
             ),
 
             "Shear planes": result["path"]["planes"],
 
-            "Agv (mm²)": round(
+            "Agv (mm2)": round(
                 result["Agv_total"],
                 1,
             ),
@@ -1246,7 +1257,7 @@ def calc_block_shear_paths(
         gov["path"]["key"],
     )
 
-# ── UI helpers ────────────────────────────────────────────────────────────────
+# -- UI helpers ---------------------------------------------------------------
 def _bolt_hole_inputs(key_prefix: str) -> Tuple[str, float, float]:
     ks_bs = f"{key_prefix}_bs"
     ks_hd = f"{key_prefix}_hd"
@@ -1325,7 +1336,7 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
         title = c.name.split("(")[0].strip()
         gov_tag = "  <-- GOVERNS" if c.name == gov else ""
         has_diagram = bool(diagrams and any(k.lower() in c.name.lower() for k in diagrams))
-        with st.expander(f"{title} — Tr = {c.value:,.1f} kN{gov_tag}", expanded=True):
+        with st.expander(f"{title} - Tr = {c.value:,.1f} kN{gov_tag}", expanded=True):
             if show_steps and not has_diagram:
                 # Skip the text-only summary steps when detailed per-path
                 # cards (steps + result + diagram) are rendered below.
@@ -1355,7 +1366,55 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
             st.error(f"FAIL   {lbl}")
 
 
-# ── Section panels ────────────────────────────────────────────────────────────
+def _render_model(section_type, label, bp, hole_dia, d_eff, w_conn, t_conn,
+                  paths, bs_pats, U, Ut, mat, Ag, calcs, Tf,
+                  area_mult=1.0, key_prefix="", **section_kwargs):
+    """The 3D member model, shown at the bottom of every panel.
+
+    Every candidate net-fracture path and every candidate block-shear
+    pattern is passed through, not just the governing one, so the model
+    and the expanders above it always agree on what was considered."""
+    if not HAS_TENSION_VIEWER:
+        st.info("3D viewer not loaded. Place viewer_3d_tension.py and "
+                "viewer_3d_tension.html in the repository root.")
+        return
+
+    st.divider()
+    st.subheader("Member Model")
+    st.caption("Built from the connection geometry above: the connected "
+               "element in plan with its real bolt holes, the outstanding "
+               "elements that make the section what it is, and one overlay "
+               "per limit state. Use the controls under the view to switch "
+               "between gross yielding, every net-fracture path and every "
+               "block-shear pattern.")
+
+    viewer_3d_tension.render_tension_member(
+        section_type=section_type,
+        label=label,
+        bolt=bp,
+        hole_dia=hole_dia,
+        d_eff=d_eff,
+        w_conn=w_conn,
+        t_conn=t_conn,
+        net_paths=paths,
+        block_paths=bs_pats or [],
+        U=U,
+        Ut=Ut,
+        Fy=mat.Fy,
+        Fu=mat.Fu,
+        Ag=Ag,
+        calcs=calcs,
+        Tf=Tf,
+        area_mult=area_mult,
+        bolt_size=st.session_state.get(str(key_prefix) + "_bs"),
+        bolt_dia=BOLT_DIA.get(
+            st.session_state.get(str(key_prefix) + "_bs", ""), None),
+        height=680,
+        **section_kwargs,
+    )
+
+
+# -- Section panels -----------------------------------------------------------
 def render_material():
     st.divider()
     st.subheader("Material")
@@ -1407,7 +1466,7 @@ def render_material():
         Tf = st.number_input("Factored demand Tf (kN)", min_value=0.0,
 
                                 max_value=50000.0, value=0.0, step=10.0,
-                                    help="Optional — shows utilization ratio",
+                                    help="Optional - shows utilization ratio",
                                     key="tm_Tf")
 
     mat = Material(Fy=Fy, Fu=Fu)
@@ -1424,7 +1483,7 @@ def render_material():
 
 
 def panel_plate(render_material) -> None:
-    st.subheader("Section — Flat Plate")
+    st.subheader("Section - Flat Plate")
     c1, c2 = st.columns(2)
     with c1:
         width = st.number_input("Plate width w (mm)", min_value=1.0,
@@ -1502,14 +1561,14 @@ def panel_plate(render_material) -> None:
             "An (mm2)":             round(p["An_mm2"], 1),
             "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
         } for p in paths])
-        
+
         st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
             st.write(f"r_min = min(t,w)/sqrt(12) = {r_min:.1f} mm   |   L/r = {slend:.0f}")
             if slend > MAX_SLEND:
-                st.error(f"L/r = {slend:.0f} > 300 — exceeds maximum slenderness")
+                st.error(f"L/r = {slend:.0f} > 300 - exceeds maximum slenderness")
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
@@ -1547,11 +1606,17 @@ def panel_plate(render_material) -> None:
         )
         components.html(svg, height=340)
 
+    _render_model(
+        "Plate", f"Plate {width:.0f} x {thick:.0f} mm", bp, hole_dia, d_eff,
+        width, thick, paths, bs_pats, U, Ut, mat, Ag, calcs, Tf,
+        key_prefix="pl", gusset_t=0.0,
+    )
+
 
 #Panel Single Angle
 
 def panel_single_angle(render_material) -> None:
-    st.subheader("Section — Single Angle")
+    st.subheader("Section - Single Angle")
     df = load_angle_table()
     if df.empty:
         st.warning("Single angle data not found in the SST12.1 workbook (attached_assets/).")
@@ -1571,7 +1636,7 @@ def panel_single_angle(render_material) -> None:
     with st.expander("Section properties", expanded=True):
         cc = st.columns(4)
     #cc is a list of column objects.
-        
+
         cc[0].metric("Leg 1 (mm)", f"{leg1:.1f}")
         cc[1].metric("Leg 2 (mm)", f"{leg2:.1f}")
         cc[2].metric("t (mm)", f"{t:.1f}")
@@ -1586,6 +1651,7 @@ def panel_single_angle(render_material) -> None:
     st.subheader("Connection Geometry")
     conn_leg = st.radio("Connected leg", ["Leg 1", "Leg 2"], horizontal=True, key="sa_leg")
     w_conn   = leg1 if conn_leg == "Leg 1" else leg2
+    leg_out  = leg2 if conn_leg == "Leg 1" else leg1
 
     _, hole_dia, allowance = _bolt_hole_inputs("sa")
     bp = _bolt_pattern_inputs("sa")
@@ -1620,7 +1686,7 @@ def panel_single_angle(render_material) -> None:
         connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
     )
 
-    
+
     if not paths:
         st.error("No feasible net fracture path.")
         return
@@ -1673,14 +1739,14 @@ calc_gross_yield(Ag, mat.Fy),
             "An (mm2)":             round(p["An_mm2"], 1),
             "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
         } for p in paths])
-        
+
         st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
             st.write(f"r_min = {r_min:.1f} mm   |   L/r = {slend:.0f}")
             if slend > MAX_SLEND:
-                st.error(f"L/r = {slend:.0f} > 300 — exceeds maximum slenderness")
+                st.error(f"L/r = {slend:.0f} > 300 - exceeds maximum slenderness")
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
@@ -1691,7 +1757,7 @@ calc_gross_yield(Ag, mat.Fy),
         st.subheader("Member Detail - Three Views")
         svg3 = single_angle_diagram(
             leg_conn=w_conn,
-            leg_out=(leg2 if conn_leg == "Leg 1" else leg1),
+            leg_out=leg_out,
             t=t,
             n_lines=bp.n_lines,
             bolts_per_line=bp.bolts_per_line,
@@ -1708,9 +1774,15 @@ calc_gross_yield(Ag, mat.Fy),
         )
         components.html(svg3, height=1250, scrolling=True)
 
+    _render_model(
+        "Single Angle", str(chosen), bp, hole_dia, d_eff, w_conn, t,
+        paths, bs_pats, U, Ut, mat, Ag, calcs, Tf,
+        key_prefix="sa", connected="leg", leg_out=leg_out, gusset_t=10.0,
+    )
+
 
 def panel_double_angle(render_material) -> None:
-    st.subheader("Section — Double Angle (Back-to-Back)")
+    st.subheader("Section - Double Angle (Back-to-Back)")
     df = load_double_angle_table()
     if df.empty:
         st.warning(
@@ -1772,6 +1844,7 @@ def panel_double_angle(render_material) -> None:
         horizontal=True, key="da_leg",
     )
     w_conn = legs[0] if "Leg 1" in conn_leg else legs[1]
+    leg_out = legs[1] if "Leg 1" in conn_leg else legs[0]
 
     _, hole_dia, allowance = _bolt_hole_inputs("da")
     bp = _bolt_pattern_inputs("da")
@@ -1796,7 +1869,7 @@ def panel_double_angle(render_material) -> None:
         Ag=Ag / 2.0, t=t, d_eff=d_eff, bolts=grid,
         connected_parts=1, pitch_mm=bp.pitch, gauge_mm=bp.gauge,
     )
-    
+
     if not paths_one:
         st.error("No feasible net fracture path.")
         return
@@ -1807,24 +1880,24 @@ def panel_double_angle(render_material) -> None:
     df_p = pd.DataFrame([{
         "Path": p["description"],
         "Holes": p["n_holes"],
-        "Ag start — per angle (mm²)": round(p["Ag_mm2"], 1),
-        "Hole deduction — per angle (mm²)": round(
+        "Ag start - per angle (mm2)": round(p["Ag_mm2"], 1),
+        "Hole deduction - per angle (mm2)": round(
             p["hole_deduction_mm2"], 1
         ),
         "Stagger length (mm)": round(
             p["stagger_term"], 2
         ),
-        "Stagger addition — per angle (mm²)": round(
+        "Stagger addition - per angle (mm2)": round(
             p["stagger_area_mm2"], 1
         ),
-        "An — pair (mm²)": round(
+        "An - pair (mm2)": round(
             p["An_mm2"] * 2.0, 1
         ),
-        "Ane = UAn — pair (mm²)": round(
+        "Ane = UAn - pair (mm2)": round(
             U * p["An_mm2"] * 2.0, 1
         ),
     } for p in paths_one])
-    
+
 
     calcs = [
         calc_gross_yield(Ag, mat.Fy),
@@ -1832,7 +1905,7 @@ def panel_double_angle(render_material) -> None:
     area_label="Areas doubled: pair of angles (2x per-leg An)",
     table=df_p),
         ]
-    
+
 
     #Table of net fracture paths ^
 
@@ -1872,11 +1945,12 @@ def panel_double_angle(render_material) -> None:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
             st.write(f"ry (s=0) = {r_min:.1f} mm   |   L/r = {slend:.0f}")
             if slend > MAX_SLEND:
-                st.error(f"L/r = {slend:.0f} > 300 — exceeds maximum slenderness")
+                st.error(f"L/r = {slend:.0f} > 300 - exceeds maximum slenderness")
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
-    
+
+    gusset_t = 10.0
     if HAS_SECTION_DIAGRAMS:
         st.subheader("Member Detail - Three Views")
         gusset_t = st.number_input("Gusset plate thickness (mm)",
@@ -1884,7 +1958,7 @@ def panel_double_angle(render_material) -> None:
                                             value=10.0, step=1.0, key="da_gt")
         svg3 = double_angle_diagram(
             leg_conn=w_conn,
-            leg_out=(legs[1] if "Leg 1" in conn_leg else legs[0]),
+            leg_out=leg_out,
             t=t,
             gusset_t=float(gusset_t),
             n_lines=bp.n_lines,
@@ -1902,9 +1976,17 @@ def panel_double_angle(render_material) -> None:
         )
         components.html(svg3, height=1350, scrolling=True)
 
+    # area_mult = 2.0: the pair of angles, matching the Calc list above.
+    _render_model(
+        "Double Angle", str(chosen_label), bp, hole_dia, d_eff, w_conn, t,
+        paths_one, bs_pats, U, Ut, mat, Ag, calcs, Tf,
+        area_mult=2.0, key_prefix="da", connected="leg",
+        leg_out=leg_out, gusset_t=float(gusset_t),
+    )
+
 
 def panel_wt(render_material) -> None:
-    st.subheader("Section — WT (Structural Tee)")
+    st.subheader("Section - WT (Structural Tee)")
     df = load_wt_table()
     if df.empty:
         st.warning(
@@ -2012,7 +2094,7 @@ def panel_wt(render_material) -> None:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
             st.write(f"r_min = min(rx,ry) = {r_min:.1f} mm   |   L/r = {slend:.0f}")
             if slend > MAX_SLEND:
-                st.error(f"L/r = {slend:.0f} > 300 — exceeds maximum slenderness")
+                st.error(f"L/r = {slend:.0f} > 300 - exceeds maximum slenderness")
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
@@ -2074,9 +2156,18 @@ def panel_wt(render_material) -> None:
         )
         components.html(svg, height=340)
 
+    # el.width is the width the path detector actually used, so the model
+    # is built on the same connected element the checks were run on.
+    _render_model(
+        "WT Section", f"{chosen} ({conn_el})", bp, hole_dia, d_eff,
+        float(el.width), t_conn, paths, bs_pats, U, Ut, mat, Ag, calcs, Tf,
+        key_prefix="wt", connected=connected_el, b_flange=b_fl,
+        d_depth=d_dep, t_flange=t_fl, t_stem=t_st, gusset_t=10.0,
+    )
+
 
 def panel_channel(render_material) -> None:
-    st.subheader("Section — Channel (C / MC Shape)")
+    st.subheader("Section - Channel (C / MC Shape)")
     df = load_channel_table()
     if df.empty:
         st.warning(
@@ -2117,7 +2208,7 @@ def panel_channel(render_material) -> None:
     d_eff     = hole_dia + allowance
     U, U_note = shear_lag("Channel (C / MC)", bp.bolts_per_line)
     Ut = st.slider("Block shear Ut", 0.3, 1.0, 0.85, 0.05,
-                            help="Ut ≈ 0.85 web-bolted channel (Cl. 13.11)",
+                            help="Ut = 0.85 for a web-bolted channel (Cl. 13.11)",
                             key="ch_ut")
 
     st.subheader("Slenderness (Cl. 10.4.2)")
@@ -2181,7 +2272,7 @@ def panel_channel(render_material) -> None:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
             st.write(f"r_min = {r_min:.1f} mm   |   L/r = {slend:.0f}")
             if slend > MAX_SLEND:
-                st.error(f"L/r = {slend:.0f} > 300 — exceeds maximum slenderness")
+                st.error(f"L/r = {slend:.0f} > 300 - exceeds maximum slenderness")
             else:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
@@ -2240,8 +2331,15 @@ def panel_channel(render_material) -> None:
         )
         components.html(svg, height=340)
 
+    _render_model(
+        "Channel (C / MC)", str(chosen), bp, hole_dia, d_eff, w_conn, t_conn,
+        paths, bs_pats, U, Ut, mat, Ag, calcs, Tf,
+        key_prefix="ch", connected="web", b_flange=b_fl, d_depth=d_dep,
+        t_flange=t_fl, gusset_t=10.0,
+    )
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+
+# -- Main ---------------------------------------------------------------------
 def main() -> None:
     apply_theme()
     render_sidebar_logo()
@@ -2313,7 +2411,7 @@ def main() -> None:
 
         st.divider()
         st.subheader("Raw Dataset (CISC SST12.1)")
-        with st.expander(f"{label} — selected member data", expanded=False):
+        with st.expander(f"{label} - selected member data", expanded=False):
             try:
                 df_raw = loader()
                 if df_raw is None or df_raw.empty:
@@ -2342,9 +2440,9 @@ def main() -> None:
     st.divider()
     st.subheader("References")
     st.markdown(
-        "- **CSA S16** — governs all calculations "
+        "- **CSA S16** - governs all calculations "
         "(Cl. 10.4, 12.2, 12.3, 13.2, 13.11)\n"
-        "- **CISC SST-12** — source of all section properties\n"
+        "- **CISC SST-12** - source of all section properties\n"
         "- **CISC Handbook of Steel Construction, 11th Edition**\n"
     )
     st.caption(

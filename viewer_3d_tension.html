@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0d1117;
+    font-family:-apple-system, "Segoe UI", Roboto, sans-serif; color:#e6edf3; }
+  #root { display:flex; flex-direction:column; height:100vh; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; touch-action:none; }
+  #cv { display:block; width:100%; height:100%; }
+  #hud { position:absolute; left:10px; top:8px; font-size:11px; line-height:1.45;
+    color:#8b949e; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  #hud b { color:#e6edf3; font-size:12px; }
+  #legend { position:absolute; right:10px; top:8px; font-size:10.5px;
+    line-height:1.5; color:#c9d1d9; pointer-events:none; text-align:right;
+    text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+    margin-left:5px; vertical-align:middle; }
+  #err { position:absolute; left:10px; bottom:8px; color:#f85149; font-size:11px; }
+  #props { position:absolute; right:8px; bottom:8px; max-height:62%;
+    overflow:auto; background:rgba(13,17,23,.82); border:1px solid #30363d;
+    border-radius:8px; padding:8px 10px; font-size:10.5px; line-height:1.5;
+    color:#c9d1d9; display:none; max-width:62%; }
+  #props .g { color:#6e7681; text-transform:uppercase; letter-spacing:.05em;
+    font-size:9px; margin-top:6px; }
+  #props .g:first-child { margin-top:0; }
+  #props .k { color:#8b949e; display:inline-block; min-width:66px; }
+  #props .v { color:#e6edf3; }
+  #bar { flex:0 0 auto; background:#161b22; border-top:1px solid #30363d;
+    padding:6px 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .row + .row { margin-top:5px; }
+  button.t { background:#21262d; color:#8b949e; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer;
+    white-space:nowrap; }
+  button.t.on { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  button.t:disabled { opacity:0.4; cursor:not-allowed; }
+  button.v { background:#21262d; color:#c9d1d9; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; }
+  button.v:active { background:#1f6feb; color:#fff; }
+  button.t:focus-visible, button.v:focus-visible, select:focus-visible {
+    outline:2px solid #58a6ff; outline-offset:1px; }
+  select { background:#21262d; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:5px 7px; font-size:11px; flex:1 1 200px;
+    min-width:150px; }
+  #pickWrap { display:none; }
+  .lbl { font-size:10px; color:#6e7681; text-transform:uppercase;
+    letter-spacing:.05em; margin-right:2px; }
+  #expl { font-size:11px; color:#8b949e; line-height:1.45; margin-top:6px;
+    padding-top:6px; border-top:1px solid #21262d; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="legend"></div>
+    <div id="props"></div>
+    <div id="err"></div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <span class="lbl">View</span>
+      <button class="v" id="vIso">Iso</button>
+      <button class="v" id="vPlan">Plan</button>
+      <button class="v" id="vSide">Side</button>
+      <button class="v" id="vEnd">Section</button>
+      <button class="v" id="vFit">Fit</button>
+      <button class="t" id="vPan">Pan mode</button>
+      <button class="v" id="vSpin">Spin</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Effects</span>
+      <button class="t" id="tTear">Tear out</button>
+      <button class="t" id="tStretch">Elongation</button>
+      <button class="t" id="tGhost">Undeformed ghost</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Show</span>
+      <button class="t" id="tDim">Dimensions</button>
+      <button class="t" id="tBolt">Bolts</button>
+      <button class="t" id="tGus">Gusset</button>
+      <button class="t" id="tLab">Labels</button>
+      <button class="t" id="tLoad">Load</button>
+      <button class="t" id="tProps">Design data</button>
+      <button class="t" id="tAx">Axes</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Limit state</span>
+      <select id="mode"></select>
+    </div>
+    <div class="row" id="pickWrap">
+      <span class="lbl">Path</span>
+      <select id="pick"></select>
+    </div>
+    <div id="expl"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+<script>
+var DATA = __GEOMETRY_JSON__;
+
+function fail(m) { document.getElementById("err").textContent = m; }
+
+try {
+
+var SEC = DATA.sec || {};
+var BOLT = DATA.bolt || {};
+var NET = DATA.net || [];
+var BLK = DATA.block || [];
+var RES = DATA.res || {};
+
+var C_STEEL = 0x8b949e;
+var C_OK    = 0x3fb950;
+var C_WARN  = 0xd29922;
+var C_BAD   = 0xf85149;
+var C_BLUE  = 0x58a6ff;
+var C_PURP  = 0xa371f7;
+var C_DIM   = 0x6e7681;
+
+var stage = document.getElementById("stage");
+var canvas = document.getElementById("cv");
+
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(DATA.bg || "#0d1117");
+
+function makeEnv() {
+  var c = document.createElement("canvas");
+  c.width = 16; c.height = 256;
+  var g = c.getContext("2d");
+  var grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.00, "#ffffff");
+  grad.addColorStop(0.35, "#c8d2dc");
+  grad.addColorStop(0.55, "#7d8894");
+  grad.addColorStop(0.75, "#3a424b");
+  grad.addColorStop(1.00, "#14181d");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  var tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  var p = new THREE.PMREMGenerator(renderer);
+  p.compileEquirectangularShader();
+  var env = p.fromEquirectangular(tex).texture;
+  p.dispose(); tex.dispose();
+  return env;
+}
+scene.environment = makeEnv();
+
+var kl = new THREE.DirectionalLight(0xffffff, 1.35);
+kl.position.set(1, 1.4, 1); scene.add(kl);
+var fl = new THREE.DirectionalLight(0xffffff, 0.45);
+fl.position.set(-1, 0.3, -0.8); scene.add(fl);
+scene.add(new THREE.AmbientLight(0xffffff, 0.32));
+
+// =====================================================================
+// labels
+// =====================================================================
+function labelSprite(text, color, scale) {
+  color = color || "#e6edf3"; scale = scale || 1.0;
+  var pad = 8, fs = 44;
+  var c = document.createElement("canvas");
+  var g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  var wpx = Math.ceil(g.measureText(text).width) + pad * 2;
+  c.width = wpx; c.height = fs + pad * 2;
+  g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  g.fillStyle = "rgba(13,17,23,0.72)";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = color; g.textBaseline = "middle";
+  g.fillText(text, pad, c.height / 2);
+  var tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false }));
+  sp.userData.aspect = c.width / c.height;
+  sp.userData.baseScale = scale;
+  return sp;
+}
+var LABELS = [], labelsOn = true;
+function addLabel(grp, text, pos, color, scale) {
+  var sp = labelSprite(text, color, scale);
+  sp.position.set(pos[0], pos[1], pos[2]);
+  grp.add(sp); LABELS.push(sp); sp.visible = labelsOn;
+  return sp;
+}
+function setLabels(on) {
+  labelsOn = on;
+  for (var i = 0; i < LABELS.length; i++) LABELS[i].visible = on;
+}
+function sizeLabels(root, unit) {
+  root.traverse(function (o) {
+    if (o.isSprite && o.userData.aspect) {
+      var h = unit * o.userData.baseScale;
+      o.scale.set(h * o.userData.aspect, h, 1);
+    }
+  });
+}
+function addLine(grp, a, b, color) {
+  var g = new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2])]);
+  grp.add(new THREE.Line(g, new THREE.LineBasicMaterial({
+    color: color, depthTest: false })));
+}
+function quad(grp, p0, p1, p2, p3, col, op) {
+  var g = new THREE.BufferGeometry();
+  var v = new Float32Array([
+    p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2],
+    p0[0], p0[1], p0[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2]]);
+  g.setAttribute("position", new THREE.BufferAttribute(v, 3));
+  g.computeVertexNormals();
+  var m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    color: col, transparent: true, opacity: (op === undefined ? 0.55 : op),
+    side: THREE.DoubleSide, depthWrite: false }));
+  grp.add(m);
+  return m;
+}
+
+// =====================================================================
+// bolt grid geometry
+//   x  across the connected width, x = 0 is the free edge
+//   y  through the thickness
+//   z  along the member, z = 0 is the cut end, load pulls towards +z
+// =====================================================================
+var W  = SEC.w_conn || 140;
+var T  = SEC.t_conn || 10;
+var NL = Math.max(1, Math.round(BOLT.n_lines || 1));
+var NR = Math.max(1, Math.round(BOLT.bolts_per_line || 2));
+var S  = BOLT.pitch || 80;
+var G  = BOLT.gauge || 60;
+var E1 = BOLT.edge_end || 40;
+var E2 = BOLT.edge_trans || 30;
+var DH = BOLT.hole_dia || 22;
+var DE = BOLT.d_eff || DH;
+
+var xs = [], zs = [];
+for (var j = 0; j < NL; j++) xs.push(E2 + j * G);
+for (var i = 0; i < NR; i++) zs.push(E1 + i * S);
+
+var LV = E1 + (NR - 1) * S;             // block shear plane length
+var TAIL = Math.max(2.2 * S, 0.9 * W, 120);
+var L = LV + TAIL;                       // drawn member length
+
+var SCALE = Math.max(L, W * 1.6, 200);
+var UNIT = SCALE * 0.040;
+
+// =====================================================================
+// groups
+// =====================================================================
+var gMember = new THREE.Group();
+var gBolt = new THREE.Group();
+var gGus = new THREE.Group();
+var gGhost = new THREE.Group();
+var gDim = new THREE.Group();
+var gLoad = new THREE.Group();
+var gAx = new THREE.Group();
+var gFail = new THREE.Group();     // all failure overlays
+var gBlockMove = new THREE.Group();  // the block that tears out
+scene.add(gMember); scene.add(gBolt); scene.add(gGus); scene.add(gGhost);
+scene.add(gDim); scene.add(gLoad); scene.add(gAx); scene.add(gFail);
+scene.add(gBlockMove);
+
+function steelMat(col, op) {
+  return new THREE.MeshStandardMaterial({
+    color: col, metalness: 0.80, roughness: 0.36, side: THREE.DoubleSide,
+    transparent: (op !== undefined), opacity: (op === undefined ? 1 : op) });
+}
+var ghostMat = new THREE.MeshBasicMaterial({
+  color: 0x30363d, wireframe: true, transparent: true, opacity: 0.35 });
+
+// connected element: a plan-view shape with real bolt holes, extruded
+// through the thickness
+var memberMeshes = [];
+(function () {
+  var shp = new THREE.Shape();
+  shp.moveTo(0, 0); shp.lineTo(W, 0); shp.lineTo(W, L); shp.lineTo(0, L);
+  shp.closePath();
+  for (var j = 0; j < NL; j++) {
+    for (var i = 0; i < NR; i++) {
+      var p = new THREE.Path();
+      p.absarc(xs[j], zs[i], DH / 2, 0, Math.PI * 2, true);
+      shp.holes.push(p);
+    }
+  }
+  var g = new THREE.ExtrudeGeometry(shp, {
+    depth: T, bevelEnabled: false, curveSegments: 18, steps: 1 });
+  g.rotateX(Math.PI / 2);
+  g.translate(0, T, 0);
+  g.computeVertexNormals();
+  var m = new THREE.Mesh(g, steelMat(C_STEEL));
+  gMember.add(m); memberMeshes.push(m);
+  gGhost.add(new THREE.Mesh(g.clone(), ghostMat));
+})();
+
+// outstanding elements, so the section reads as the shape it is
+function slab(grp, x0, x1, y0, y1, z0, z1, col) {
+  var g = new THREE.BoxGeometry(Math.abs(x1 - x0), Math.abs(y1 - y0),
+                                Math.abs(z1 - z0));
+  g.translate((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  var m = new THREE.Mesh(g, steelMat(col));
+  grp.add(m); memberMeshes.push(m);
+  gGhost.add(new THREE.Mesh(g.clone(), ghostMat));
+  return m;
+}
+
+var KIND = DATA.kind || "plate";
+var legOut = SEC.leg_out || 0;
+(function () {
+  if (KIND === "angle" || KIND === "double_angle") {
+    // heel at the far edge, outstanding leg standing up from it
+    if (legOut > 0) slab(gMember, W - T, W, T, T + legOut, 0, L, C_STEEL);
+  } else if (KIND === "wt") {
+    if (SEC.connected === "flange") {
+      // flange is the connected plate, stem hangs off the middle
+      var ts = SEC.t_stem || T;
+      var dd = SEC.d_depth || 0;
+      if (dd > 0) slab(gMember, W / 2 - ts / 2, W / 2 + ts / 2,
+                       T, T + (dd - T), 0, L, C_STEEL);
+    } else {
+      // stem is the connected plate, flange caps it at the far edge
+      var tf = SEC.t_flange || T;
+      var bf = SEC.b_flange || 0;
+      if (bf > 0) {
+        slab(gMember, W, W + tf, -(bf - T) / 2, T + (bf - T) / 2, 0, L,
+             C_STEEL);
+      }
+    }
+  } else if (KIND === "channel") {
+    // web is the connected plate, flanges turn off both long edges
+    var tfc = SEC.t_flange || T;
+    var bfc = SEC.b_flange || 0;
+    if (bfc > 0) {
+      slab(gMember, 0, bfc, T, T + tfc, 0, L, C_STEEL);
+      slab(gMember, W - bfc, W, T, T + tfc, 0, L, C_STEEL);
+    }
+  }
+})();
+
+// second angle of a back to back pair, plus the gusset between them
+(function () {
+  var gt = SEC.gusset_t || 0;
+  if (KIND === "double_angle") {
+    var off = -(T + gt);
+    var g2 = new THREE.Group();
+    var shp = new THREE.Shape();
+    shp.moveTo(0, 0); shp.lineTo(W, 0); shp.lineTo(W, L); shp.lineTo(0, L);
+    shp.closePath();
+    for (var j = 0; j < NL; j++) {
+      for (var i = 0; i < NR; i++) {
+        var p = new THREE.Path();
+        p.absarc(xs[j], zs[i], DH / 2, 0, Math.PI * 2, true);
+        shp.holes.push(p);
+      }
+    }
+    var g = new THREE.ExtrudeGeometry(shp, {
+      depth: T, bevelEnabled: false, curveSegments: 18, steps: 1 });
+    g.rotateX(Math.PI / 2);
+    g.translate(0, off + T, 0);
+    g.computeVertexNormals();
+    var m = new THREE.Mesh(g, steelMat(C_STEEL));
+    gMember.add(m); memberMeshes.push(m);
+    if (legOut > 0) slab(gMember, W - T, W, off - legOut, off, 0, L, C_STEEL);
+  }
+  if (gt > 0) {
+    var z0 = (KIND === "double_angle") ? -TAIL * 0.35 : 0;
+    var gm = new THREE.BoxGeometry(W * 1.15, gt, LV + TAIL * 0.5);
+    gm.translate(W / 2, -gt / 2, (LV + TAIL * 0.5) / 2 + z0 - TAIL * 0.15);
+    gGus.add(new THREE.Mesh(gm, steelMat(0x6e7681, 0.55)));
+  }
+})();
+gGus.visible = false;
+gGhost.visible = false;
+
+// bolts through every hole
+(function () {
+  var bd = BOLT.bolt_dia || (DH - 2);
+  var yTop = T + Math.max(legOut > 0 ? 0 : 0, 0);
+  for (var j = 0; j < NL; j++) {
+    for (var i = 0; i < NR; i++) {
+      var shaftLen = T * 2.6 + (SEC.gusset_t || 0);
+      var g = new THREE.CylinderGeometry(bd / 2, bd / 2, shaftLen, 20);
+      g.translate(xs[j], T / 2, zs[i]);
+      gBolt.add(new THREE.Mesh(g, steelMat(0x484f58)));
+      var hg = new THREE.CylinderGeometry(bd * 0.8, bd * 0.8, bd * 0.55, 6);
+      hg.translate(xs[j], T + bd * 0.45, zs[i]);
+      gBolt.add(new THREE.Mesh(hg, steelMat(0x30363d)));
+    }
+  }
+})();
+
+// =====================================================================
+// dimensions
+// =====================================================================
+(function () {
+  var yD = T + Math.max(legOut, T) + UNIT * 0.5;
+  var zD = L - TAIL * 0.28;
+
+  // overall connected width
+  addLine(gDim, [0, yD, zD], [W, yD, zD], C_DIM);
+  addLine(gDim, [0, T, zD], [0, yD, zD], C_DIM);
+  addLine(gDim, [W, T, zD], [W, yD, zD], C_DIM);
+  addLabel(gDim, "w = " + W.toFixed(1) + " mm", [W / 2, yD + UNIT * 0.4, zD],
+           "#c9d1d9", 0.95);
+
+  // transverse edge distance and gauge, on the first bolt row
+  var yG = T + UNIT * 0.30;
+  addLine(gDim, [0, yG, zs[0]], [xs[0], yG, zs[0]], 0x7ee787);
+  addLabel(gDim, "e2 = " + E2.toFixed(0), [xs[0] / 2, yG + UNIT * 0.3, zs[0]],
+           "#7ee787", 0.9);
+  for (var j = 1; j < NL; j++) {
+    addLine(gDim, [xs[j - 1], yG, zs[0]], [xs[j], yG, zs[0]], 0x7ee787);
+    addLabel(gDim, "g = " + G.toFixed(0),
+             [(xs[j - 1] + xs[j]) / 2, yG + UNIT * 0.3, zs[0]],
+             "#7ee787", 0.9);
+  }
+
+  // end distance and pitch, along the first bolt line
+  var xP = -UNIT * 0.55;
+  addLine(gDim, [xP, T, 0], [xP, T, zs[0]], 0x79c0ff);
+  addLabel(gDim, "e1 = " + E1.toFixed(0), [xP - UNIT * 0.2, T, zs[0] / 2],
+           "#79c0ff", 0.9);
+  for (var i = 1; i < NR; i++) {
+    addLine(gDim, [xP, T, zs[i - 1]], [xP, T, zs[i]], 0x79c0ff);
+    addLabel(gDim, "s = " + S.toFixed(0),
+             [xP - UNIT * 0.2, T, (zs[i - 1] + zs[i]) / 2], "#79c0ff", 0.9);
+  }
+
+  // shear path length used by every block shear pattern
+  var xL = W + UNIT * 0.55;
+  addLine(gDim, [xL, T, 0], [xL, T, LV], 0xff7b72);
+  addLabel(gDim, "Lv = e1 + (n-1)s = " + LV.toFixed(1) + " mm",
+           [xL + UNIT * 0.2, T, LV / 2], "#ff7b72", 0.9);
+
+  // thickness and hole
+  addLine(gDim, [-UNIT * 0.2, 0, 0], [-UNIT * 0.2, T, 0], 0xd29922);
+  addLabel(gDim, "t = " + T.toFixed(1) + " mm", [-UNIT * 0.8, T / 2, 0],
+           "#d29922", 0.9);
+  addLabel(gDim, "hole d = " + DH.toFixed(1) + " mm,  d_eff = "
+           + DE.toFixed(1) + " mm",
+           [xs[0], T + UNIT * 0.8, zs[0] - S * 0.35], "#d29922", 0.9);
+})();
+gDim.visible = false;
+
+// =====================================================================
+// load
+// =====================================================================
+(function () {
+  var Tf = Math.abs(RES.Tf || 0);
+  var len = SCALE * 0.30;
+  var y = T / 2;
+  var a = new THREE.Vector3(W / 2, y, L);
+  var b = new THREE.Vector3(W / 2, y, L + len);
+  addLine(gLoad, [a.x, a.y, a.z], [b.x, b.y, b.z], C_BAD);
+  var head = new THREE.Mesh(
+    new THREE.ConeGeometry(SCALE * 0.018, SCALE * 0.055, 16),
+    new THREE.MeshBasicMaterial({ color: C_BAD }));
+  head.position.copy(b);
+  head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0),
+                                     new THREE.Vector3(0, 0, 1));
+  gLoad.add(head);
+  addLabel(gLoad, (Tf > 0 ? "Tf = " + Tf.toFixed(1) + " kN" : "T"),
+           [b.x, b.y + UNIT * 0.7, b.z], "#f85149", 1.05);
+  addLabel(gLoad, "bolts react here", [W / 2, T + UNIT * 0.5, zs[0]],
+           "#8b949e", 0.85);
+})();
+
+(function () {
+  var a = SCALE * 0.30;
+  var defs = [[[a, 0, 0], 0xff7b72, "x  across"],
+              [[0, a, 0], 0x7ee787, "y  thickness"],
+              [[0, 0, a], 0x79c0ff, "z  load"]];
+  for (var i = 0; i < defs.length; i++) {
+    addLine(gAx, [0, 0, 0], defs[i][0], defs[i][1]);
+    addLabel(gAx, defs[i][2],
+             [defs[i][0][0] * 1.1, defs[i][0][1] * 1.1, defs[i][0][2] * 1.1],
+             "#" + new THREE.Color(defs[i][1]).getHexString(), 0.9);
+  }
+})();
+gAx.visible = false;
+
+// =====================================================================
+// failure surfaces
+// =====================================================================
+
+// ---- gross section yielding: the whole length, away from the holes ----
+var gGross = new THREE.Group(); gFail.add(gGross);
+(function () {
+  var z0 = zs[NR - 1] + S * 0.8, z1 = L;
+  if (z1 - z0 < S * 0.4) z0 = LV + S * 0.3;
+  quad(gGross, [0, 0, z0], [W, 0, z0], [W, T, z0], [0, T, z0], C_WARN, 0.6);
+  quad(gGross, [0, 0, z1 - 1], [W, 0, z1 - 1], [W, T, z1 - 1],
+       [0, T, z1 - 1], C_WARN, 0.6);
+  addLabel(gGross, "gross section Ag, yields over the whole length",
+           [W / 2, T + UNIT * 0.6, (z0 + z1) / 2], "#d29922", 1.0);
+})();
+
+// ---- net section fracture: one ribbon per candidate path ----
+var netGroups = [];
+for (var ni = 0; ni < NET.length; ni++) {
+  (function (n, idx) {
+    var grp = new THREE.Group(); gFail.add(grp);
+    var zig = !!n.zig && NR >= 2;
+    var nh = Math.max(1, Math.min(NL, Math.round(n.n_holes || 1)));
+
+    // the tear runs across the full width, dropping through every hole it
+    // takes and stepping one pitch at each stagger
+    var pts = [];
+    var row = 0;
+    pts.push([0, zs[0]]);
+    for (var j = 0; j < nh; j++) {
+      row = zig ? (j % 2) : 0;
+      pts.push([xs[j], zs[row]]);
+    }
+    pts.push([W, zs[row]]);
+
+    var col = n.governs ? C_BAD : 0xf0883e;
+    var op = n.governs ? 0.75 : 0.35;
+    for (var k = 0; k + 1 < pts.length; k++) {
+      var a = pts[k], b = pts[k + 1];
+      quad(grp, [a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], T, b[1]],
+           [a[0], T, a[1]], col, op);
+    }
+    var mx = pts[Math.floor(pts.length / 2)];
+    addLabel(grp, (n.governs ? "GOVERNS  " : "")
+             + (n.desc || "path") + "   An = "
+             + Number(n.An || 0).toFixed(0) + " mm2   Tr = "
+             + Number(n.Tr || 0).toFixed(1) + " kN",
+             [W * 0.5, T + UNIT * (0.55 + 0.35 * idx), mx[1]],
+             n.governs ? "#f85149" : "#f0883e", 1.0);
+    if (n.n_staggers > 0) {
+      addLabel(grp, "stagger term s2/4g adds back "
+               + Number(n.stagger_term || 0).toFixed(2) + " mm of width",
+               [W * 0.5, T + UNIT * (0.55 + 0.35 * idx) - UNIT * 0.28,
+                mx[1] - S * 0.5], "#8b949e", 0.85);
+    }
+    grp.visible = false;
+    netGroups.push(grp);
+  })(NET[ni], ni);
+}
+
+// ---- block shear: shear planes, tension plane, and the block itself ----
+var blockGroups = [], blockBodies = [];
+for (var bi = 0; bi < BLK.length; bi++) {
+  (function (b, idx) {
+    var grp = new THREE.Group(); gFail.add(grp);
+    var body = new THREE.Group(); gBlockMove.add(body);
+
+    var key = String(b.key || "A").toUpperCase();
+    var xLast = xs[NL - 1], xFirst = xs[0];
+    var bx0, bx1, shearX = [];
+    if (key === "B") {
+      bx0 = 0; bx1 = xFirst; shearX = [xFirst];
+    } else if (key === "C" && NL >= 2) {
+      bx0 = xFirst; bx1 = xLast; shearX = [xFirst, xLast];
+    } else {
+      bx0 = 0; bx1 = xLast; shearX = [xLast];
+    }
+    var Lv = b.Lv || LV;
+
+    // shear planes, parallel to the load
+    for (var k = 0; k < shearX.length; k++) {
+      quad(grp, [shearX[k], 0, 0], [shearX[k], 0, Lv],
+           [shearX[k], T, Lv], [shearX[k], T, 0], C_BAD, 0.6);
+      addLabel(grp, "shear plane, Agv", [shearX[k], T + UNIT * 0.35, Lv * 0.5],
+               "#f85149", 0.9);
+    }
+    // tension plane, across the load
+    quad(grp, [bx0, 0, Lv], [bx1, 0, Lv], [bx1, T, Lv], [bx0, T, Lv],
+         C_BLUE, 0.65);
+    addLabel(grp, "tension plane, Ant   wnt = "
+             + Number(b.wnt || 0).toFixed(1) + " mm",
+             [(bx0 + bx1) / 2, T + UNIT * 0.7, Lv], "#58a6ff", 0.95);
+
+    // the block that is pushed out of the member
+    var bg = new THREE.BoxGeometry(Math.max(bx1 - bx0, 1), T, Lv);
+    bg.translate((bx0 + bx1) / 2, T / 2, Lv / 2);
+    var bm = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({
+      color: b.governs ? C_BAD : C_WARN, metalness: 0.6, roughness: 0.5,
+      transparent: true, opacity: b.governs ? 0.55 : 0.3 }));
+    body.add(bm);
+    addLabel(body, (b.governs ? "GOVERNS  " : "") + "Pattern " + key
+             + "   Tr = " + Number(b.Tr || 0).toFixed(1) + " kN",
+             [(bx0 + bx1) / 2, T + UNIT * 0.35, Lv * 0.28],
+             b.governs ? "#f85149" : "#d29922", 1.0);
+
+    grp.visible = false; body.visible = false;
+    blockGroups.push(grp); blockBodies.push(body);
+  })(BLK[bi], bi);
+}
+
+// =====================================================================
+// effects
+// =====================================================================
+var tearOn = false, stretchOn = false;
+function applyEffects() {
+  var d = tearOn ? -Math.max(S * 0.55, 18) : 0;
+  gBlockMove.position.set(0, tearOn ? T * 0.15 : 0, d);
+  var sc = stretchOn ? 1.0 + Math.min(Math.max(RES.util || 0.4, 0.2), 1.4)
+                       * 0.045 : 1.0;
+  gMember.scale.set(1, 1, sc);
+  gBolt.scale.set(1, 1, 1);
+}
+
+// =====================================================================
+// modes
+// =====================================================================
+var MODES = [
+  ["plain", "As detailed",
+   "The connected element with its real bolt holes. Turn on Dimensions to "
+   + "see e1, e2, the pitch, the gauge, the hole size and Lv measured on "
+   + "the steel itself."],
+  ["gross", "Gross section yielding, Cl. 13.2 a) i)",
+   "Tr = phi Ag Fy. This one has nothing to do with the holes. Away from "
+   + "the connection the whole gross area yields and the member simply "
+   + "gets longer, which is why it is a ductile limit state and carries "
+   + "the higher resistance factor of 0.90."],
+  ["net_all", "Net section fracture, every path",
+   "Every candidate tear across the connected element, drawn at once. A "
+   + "straight path takes the holes on one row. A zig-zag takes more "
+   + "holes but buys back s2/4g of width at each stagger, so it is not "
+   + "obvious which is worst until all of them are evaluated. Red is the "
+   + "path that governs."],
+  ["net_one", "Net section fracture, one path",
+   "One candidate at a time, with its net area and resistance. Use the "
+   + "Path selector to step through them."],
+  ["block_all", "Block shear, every pattern",
+   "Each pattern is a different guess at which lump of steel gets pushed "
+   + "out of the member end. Red planes are in shear along the load, the "
+   + "blue plane is in tension across it, and Cl. 13.11 adds the two "
+   + "together. Red block is the pattern that governs."],
+  ["block_one", "Block shear, one pattern",
+   "One pattern at a time. Turn on Tear out to push the block clear of "
+   + "the member and see exactly which surfaces are doing the work."],
+  ["util", "Utilisation, governing limit state",
+   "The member coloured by Tf over the governing Tr, whichever of gross "
+   + "yielding, net fracture or block shear is lowest."]
+];
+
+var sel = document.getElementById("mode");
+for (var mi = 0; mi < MODES.length; mi++) {
+  var o = document.createElement("option");
+  o.value = MODES[mi][0]; o.textContent = MODES[mi][1];
+  sel.appendChild(o);
+}
+var pick = document.getElementById("pick");
+var pickWrap = document.getElementById("pickWrap");
+
+function utilColour(u) {
+  if (u === null || u === undefined || !isFinite(u)) {
+    return new THREE.Color(C_STEEL);
+  }
+  if (u > 1.0) return new THREE.Color(C_BAD);
+  var a = new THREE.Color(0x1f6f3f), b = new THREE.Color(C_OK);
+  if (u <= 0.6) return a.lerp(b, u / 0.6);
+  return new THREE.Color(C_OK).lerp(new THREE.Color(C_WARN), (u - 0.6) / 0.4);
+}
+
+function hideAllFail() {
+  gGross.visible = false;
+  for (var i = 0; i < netGroups.length; i++) netGroups[i].visible = false;
+  for (var k = 0; k < blockGroups.length; k++) {
+    blockGroups[k].visible = false; blockBodies[k].visible = false;
+  }
+}
+
+function memberColour(c) {
+  for (var i = 0; i < memberMeshes.length; i++) {
+    memberMeshes[i].material.color.copy(c);
+  }
+}
+
+var currentMode = "plain";
+function fillPicker(mode) {
+  pick.innerHTML = "";
+  var list = (mode === "net_one") ? NET : BLK;
+  for (var i = 0; i < list.length; i++) {
+    var o = document.createElement("option");
+    o.value = String(i);
+    if (mode === "net_one") {
+      o.textContent = (list[i].governs ? "* " : "") + (list[i].desc || "path")
+                    + "  -  Tr = " + Number(list[i].Tr || 0).toFixed(1)
+                    + " kN";
+    } else {
+      o.textContent = (list[i].governs ? "* " : "") + "Pattern "
+                    + (list[i].key || "?") + "  -  Tr = "
+                    + Number(list[i].Tr || 0).toFixed(1) + " kN";
+    }
+    pick.appendChild(o);
+  }
+  // start on the governing candidate
+  var gi = 0;
+  for (var k = 0; k < list.length; k++) if (list[k].governs) gi = k;
+  pick.value = String(gi);
+}
+
+function showPicked() {
+  var idx = parseInt(pick.value || "0", 10);
+  if (currentMode === "net_one") {
+    for (var i = 0; i < netGroups.length; i++) {
+      netGroups[i].visible = (i === idx);
+    }
+  } else if (currentMode === "block_one") {
+    for (var k = 0; k < blockGroups.length; k++) {
+      blockGroups[k].visible = (k === idx);
+      blockBodies[k].visible = (k === idx);
+    }
+  }
+}
+pick.onchange = showPicked;
+
+function buildLegend(m) {
+  var h = "";
+  function row(txt, col) {
+    h += txt + "<span class='sw' style='background:" + col + "'></span><br>";
+  }
+  if (m === "gross") {
+    row("gross area Ag in yield", "#d29922");
+  } else if (m === "net_all" || m === "net_one") {
+    row("governing tear", "#f85149");
+    if (m === "net_all") row("other candidate paths", "#f0883e");
+  } else if (m === "block_all" || m === "block_one") {
+    row("shear plane Agv", "#f85149");
+    row("tension plane Ant", "#58a6ff");
+    row("governing block", "#f85149");
+  } else if (m === "util") {
+    row("reserve", "#3fb950");
+    row("close to the limit", "#d29922");
+    row("over, Tf > Tr", "#f85149");
+  }
+  document.getElementById("legend").innerHTML = h;
+}
+
+function setMode(m) {
+  currentMode = m;
+  hideAllFail();
+  memberColour(new THREE.Color(C_STEEL));
+  pickWrap.style.display = "none";
+
+  if (m === "gross") {
+    gGross.visible = true;
+    memberColour(new THREE.Color(0x7a5c1f));
+    setStretch(true);
+  } else if (m === "net_all") {
+    for (var i = 0; i < netGroups.length; i++) netGroups[i].visible = true;
+  } else if (m === "net_one") {
+    pickWrap.style.display = "flex";
+    fillPicker(m); showPicked();
+  } else if (m === "block_all") {
+    for (var k = 0; k < blockGroups.length; k++) {
+      blockGroups[k].visible = true; blockBodies[k].visible = true;
+    }
+  } else if (m === "block_one") {
+    pickWrap.style.display = "flex";
+    fillPicker(m); showPicked();
+    setTear(true);
+  } else if (m === "util") {
+    memberColour(utilColour(RES.util));
+  }
+
+  if (m !== "gross") setStretch(false);
+  if (m !== "block_one" && m !== "block_all") setTear(false);
+
+  for (var q = 0; q < MODES.length; q++) {
+    if (MODES[q][0] === m) {
+      document.getElementById("expl").textContent = MODES[q][2];
+    }
+  }
+  buildLegend(m);
+  applyEffects();
+}
+sel.onchange = function () { setMode(sel.value); };
+
+// =====================================================================
+// camera
+// =====================================================================
+var FOV = 32;
+var radius = SCALE * 0.75;
+var camera = new THREE.PerspectiveCamera(FOV, 1, radius * 0.004, radius * 400);
+var target = new THREE.Vector3(W / 2, T / 2, L * 0.42);
+var sph = { theta: 0.75, phi: 1.05, dist: radius * 2.6 };
+var spin = false, panMode = false;
+
+function fitDist(objH, objW, mg) {
+  var vt = Math.tan(FOV * Math.PI / 360);
+  var asp = camera.aspect || 1;
+  return Math.max((objH / 2) / vt, (objW / 2) / (asp * vt)) * (mg || 1.15);
+}
+function fitWhole(mg) { return fitDist(L * 1.05, W * 2.0, mg || 1.18); }
+function applyCamera() {
+  sph.phi = Math.max(0.02, Math.min(Math.PI - 0.02, sph.phi));
+  sph.dist = Math.max(radius * 0.05, Math.min(radius * 40, sph.dist));
+  var sp = Math.sin(sph.phi);
+  camera.position.set(
+    target.x + sph.dist * sp * Math.sin(sph.theta),
+    target.y + sph.dist * Math.cos(sph.phi),
+    target.z + sph.dist * sp * Math.cos(sph.theta));
+  camera.lookAt(target);
+}
+function pan(dxPx, dyPx) {
+  var hpx = stage.clientHeight || 1;
+  var wpp = 2 * sph.dist * Math.tan(FOV * Math.PI / 360) / hpx;
+  var st = Math.sin(sph.theta), ct = Math.cos(sph.theta);
+  var sp = Math.sin(sph.phi), cp = Math.cos(sph.phi);
+  target.x += (-dxPx * ct + dyPx * (-st * cp)) * wpp;
+  target.y += (dyPx * sp) * wpp;
+  target.z += (-dxPx * (-st) + dyPx * (-ct * cp)) * wpp;
+  applyCamera();
+}
+applyCamera();
+
+var ptrs = {}, last = null, pinch0 = null, mid0 = null;
+canvas.addEventListener("pointerdown", function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  if (Object.keys(ptrs).length === 1) last = { x: e.clientX, y: e.clientY };
+  spin = false;
+});
+canvas.addEventListener("pointermove", function (e) {
+  if (!ptrs[e.pointerId]) return;
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var ids = Object.keys(ptrs);
+  if (ids.length === 1 && last) {
+    var dx = e.clientX - last.x, dy = e.clientY - last.y;
+    if (panMode) pan(dx, dy);
+    else { sph.theta -= dx * 0.009; sph.phi -= dy * 0.009; applyCamera(); }
+    last = { x: e.clientX, y: e.clientY };
+  } else if (ids.length === 2) {
+    var a = ptrs[ids[0]], b = ptrs[ids[1]];
+    var d2 = Math.hypot(a.x - b.x, a.y - b.y);
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (pinch0 === null) { pinch0 = d2; mid0 = { x: mx, y: my }; }
+    if (d2 > 0) { sph.dist *= pinch0 / d2; pinch0 = d2; }
+    if (mid0) { pan(mx - mid0.x, my - mid0.y); mid0 = { x: mx, y: my }; }
+    applyCamera();
+  }
+});
+function up(e) {
+  delete ptrs[e.pointerId];
+  if (Object.keys(ptrs).length < 2) { pinch0 = null; mid0 = null; }
+  if (Object.keys(ptrs).length === 0) last = null;
+  var rest = Object.keys(ptrs);
+  if (rest.length === 1) last = { x: ptrs[rest[0]].x, y: ptrs[rest[0]].y };
+}
+canvas.addEventListener("pointerup", up);
+canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  sph.dist *= (1 + (e.deltaY > 0 ? 0.12 : -0.12));
+  applyCamera();
+}, { passive: false });
+
+function setView(th, ph, dist) {
+  spin = false; target.set(W / 2, T / 2, L * 0.42);
+  sph.theta = th; sph.phi = ph; sph.dist = dist;
+  applyCamera();
+  sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+}
+document.getElementById("vIso").onclick = function () {
+  setView(0.75, 1.05, fitWhole(1.2)); };
+document.getElementById("vPlan").onclick = function () {
+  setView(0, 0.04, fitWhole(1.1)); };
+document.getElementById("vSide").onclick = function () {
+  setView(1.5708, 1.5708, fitWhole(1.1)); };
+document.getElementById("vEnd").onclick = function () {
+  setView(0, 1.5708, fitDist(W * 1.4, W * 1.6, 1.3)); };
+document.getElementById("vFit").onclick = function () {
+  setView(sph.theta, sph.phi, fitWhole(1.15)); };
+document.getElementById("vSpin").onclick = function () { spin = !spin; };
+(function () {
+  var pb = document.getElementById("vPan");
+  pb.onclick = function () {
+    panMode = !panMode; pb.classList.toggle("on", panMode); };
+})();
+
+// =====================================================================
+// toggles
+// =====================================================================
+function bindToggle(id, grp, initial, after) {
+  var b = document.getElementById(id);
+  var on = !!initial;
+  function apply() {
+    b.classList.toggle("on", on);
+    if (grp) grp.visible = on;
+    if (after) after(on);
+  }
+  b.onclick = function () { if (b.disabled) return; on = !on; apply(); };
+  apply();
+  return function (want) { if (want !== on) { on = want; apply(); } };
+}
+
+(function () {
+  var el = document.getElementById("props");
+  var rows = DATA.props || [];
+  if (!rows.length) { el.innerHTML = "<div class='g'>No data</div>"; return; }
+  var cur = null, html = "";
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.group !== cur) { cur = r.group; html += "<div class='g'>" + cur + "</div>"; }
+    var u = r.unit ? (" " + r.unit) : "";
+    html += "<div><span class='k'>" + r.symbol + "</span><span class='v'>"
+         + r.value + u + "</span></div>";
+  }
+  el.innerHTML = html;
+})();
+
+bindToggle("tDim", gDim, false);
+bindToggle("tBolt", gBolt, true);
+bindToggle("tGus", gGus, false);
+bindToggle("tLoad", gLoad, true);
+bindToggle("tAx", gAx, false);
+bindToggle("tGhost", gGhost, false);
+bindToggle("tProps", null, false, function (on) {
+  document.getElementById("props").style.display = on ? "block" : "none"; });
+bindToggle("tLab", null, true, function (on) { setLabels(on); });
+var setTear = bindToggle("tTear", null, false, function (on) {
+  tearOn = on; applyEffects(); });
+var setStretch = bindToggle("tStretch", null, false, function (on) {
+  stretchOn = on; applyEffects(); });
+
+if (!(SEC.gusset_t > 0)) {
+  var gb = document.getElementById("tGus");
+  gb.disabled = true;
+  gb.title = "No gusset thickness was given for this connection.";
+}
+
+setMode("plain");
+
+// =====================================================================
+// hud
+// =====================================================================
+(function () {
+  var h = "<b>" + (DATA.label || "Tension member") + "</b><br>";
+  if (DATA.clause) h += DATA.clause + "<br>";
+  h += "connected width w = " + W.toFixed(1) + " mm, t = " + T.toFixed(1)
+     + " mm<br>";
+  h += NL + " line" + (NL === 1 ? "" : "s") + " x " + NR + " row"
+     + (NR === 1 ? "" : "s") + ",  " + (BOLT.size || "bolt") + "<br>";
+  if (RES.U !== undefined && RES.U !== null) {
+    h += "U = " + Number(RES.U).toFixed(2) + "   Ut = "
+       + Number(RES.Ut || 0).toFixed(2) + "<br>";
+  }
+  if (RES.Tr_gross) h += "gross yield  Tr = " + Number(RES.Tr_gross).toFixed(1)
+                       + " kN<br>";
+  if (RES.Tr_net) h += "net fracture Tr = " + Number(RES.Tr_net).toFixed(1)
+                     + " kN<br>";
+  if (RES.Tr_block) h += "block shear  Tr = " + Number(RES.Tr_block).toFixed(1)
+                       + " kN<br>";
+  if (RES.gov_name) h += "governs: " + RES.gov_name + "<br>";
+  if (RES.util !== undefined && RES.util !== null && isFinite(RES.util)) {
+    h += "Tf / Tr = " + Number(RES.util).toFixed(3) + "<br>";
+  }
+  if (RES.overall) {
+    var cc = RES.overall === "OK" ? "#3fb950"
+           : (RES.overall === "NG" ? "#f85149" : "#d29922");
+    h += "<span style='color:" + cc + "'>" + RES.overall + "</span>";
+  }
+  document.getElementById("hud").innerHTML = h;
+})();
+
+// =====================================================================
+// resize and loop
+// =====================================================================
+function resize() {
+  var w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+}
+window.addEventListener("resize", resize);
+resize();
+sph.dist = fitWhole(1.2);
+applyCamera();
+sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+
+var lastDist = sph.dist;
+function loop() {
+  requestAnimationFrame(loop);
+  if (spin) { sph.theta += 0.004; applyCamera(); }
+  if (Math.abs(sph.dist - lastDist) > radius * 0.01) {
+    lastDist = sph.dist;
+    sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+  }
+  renderer.render(scene, camera);
+}
+loop();
+
+} catch (err) {
+  fail("Viewer error: " + err.message);
+}
+</script>
+</body>
+</html>

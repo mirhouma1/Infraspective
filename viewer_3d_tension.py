@@ -32,13 +32,17 @@ outstanding elements that make the section what it is, the bolts, the
 gusset, and then one selectable overlay per limit state:
 
   gross yielding   the full section, away from every hole
-  net fracture     one ribbon per candidate tear path, governing in red
+  net fracture     one surface per candidate tear path, governing in red
   block shear      shear planes plus a tension plane per pattern, and
                    the block that tears out of the member
   utilisation      the member coloured by Tf / Tr
 
 Every candidate path is passed through, not just the governing one, so
 the page and the model always agree on what was considered.
+
+Each net path also carries wn, the net width behind An. The template
+draws only the net material along a path, so it can compare what it
+drew against the width the calculation used and say so on screen.
 """
 
 import json
@@ -108,8 +112,8 @@ def _attr(obj, name, default=None):
 # per-path resistances
 #
 # These mirror calc_net_fracture_paths and calc_block_shear_paths on the
-# page, so the number on a ribbon in the model is the same number in the
-# expander above it. If either clause changes on the page, change it
+# page, so the number on a surface in the model is the same number in
+# the expander above it. If either clause changes on the page, change it
 # here too.
 # ===========================================================
 
@@ -159,6 +163,7 @@ def build_payload(section_type, label, bolt, hole_dia, d_eff, w_conn,
 
     dh = _num(hole_dia, 22.0)
     de = _num(d_eff, dh)
+    t_v = _num(t_conn, 10.0) or 10.0
 
     # ---- net section fracture, every candidate path ----
     net_out = []
@@ -166,12 +171,20 @@ def build_payload(section_type, label, bolt, hole_dia, d_eff, w_conn,
         An = _num(p.get("An_mm2"), 0.0)
         desc = str(p.get("description", "path"))
         n_stag = int(p.get("n_staggers", 0) or 0)
+
+        # the net width behind An, so the template can check the surface
+        # it drew against the area the calculation used
+        wn = _num(p.get("wn_mm"))
+        if wn is None and t_v > 0:
+            wn = An / t_v
+
         net_out.append({
             "desc": desc,
             "n_holes": int(p.get("n_holes", 1) or 1),
             "n_staggers": n_stag,
             "stagger_term": _num(p.get("stagger_term"), 0.0),
             "An": An * area_mult,
+            "wn": wn,
             "Tr": net_path_Tr_kN(An, U, Fu, area_mult, phi_u),
             "zig": bool(n_stag > 0 or "zig" in desc.lower()),
             "governs": False,
@@ -272,6 +285,7 @@ def build_payload(section_type, label, bolt, hole_dia, d_eff, w_conn,
         "label": label or str(section_type),
         "clause": clause or ("Cl. 13.2, 12.3.3 and 13.11"),
         "bg": bg,
+        "area_mult": _num(area_mult, 1.0),
         "sec": {
             "w_conn": _num(w_conn, 140.0),
             "t_conn": _num(t_conn, 10.0),

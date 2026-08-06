@@ -276,6 +276,15 @@ def build_payload(section_type, label, bolt, hole_dia, d_eff, w_conn,
         if v2 is not None:
             props.append({"group": "Resistances", "symbol": nm2,
                           "value": "{:,.1f}".format(v2), "unit": "kN"})
+    if gov_name:
+        props.append({"group": "Resistances", "symbol": "governs",
+                      "value": str(gov_name), "unit": ""})
+    if Tr_gov is not None:
+        props.append({"group": "Resistances", "symbol": "Tr",
+                      "value": "{:,.1f}".format(Tr_gov), "unit": "kN"})
+    if Tf_v:
+        props.append({"group": "Resistances", "symbol": "Tf",
+                      "value": "{:,.1f}".format(Tf_v), "unit": "kN"})
     if util is not None:
         props.append({"group": "Resistances", "symbol": "Tf/Tr",
                       "value": "%.3f" % util, "unit": ""})

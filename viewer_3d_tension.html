@@ -394,50 +394,176 @@ gGhost.visible = false;
 // =====================================================================
 // dimensions
 // =====================================================================
+// =====================================================================
+// dimensions
+//
+// These are member sizes only - the things you would find on a shop
+// drawing. Anything derived from a limit state (Lv, wnt, An) belongs
+// to that limit state's overlay, not here, so switching to "As
+// detailed" leaves a clean dimensioned member.
+//
+// Each one is a proper dimension: extension lines, a dimension line
+// with arrowheads, and the measurement sitting on the line.
+// =====================================================================
+var DIM_SCALE = 0.95;
+var DIM_C = 0xc9d1d9;
+
+// arrowhead at p pointing along (ux, uy, uz)
+function dimArrow(grp, p, u, col) {
+  var h = UNIT * 0.16;
+  // build two barbs in whichever plane the arrow is not running along
+  var n1, n2;
+  if (Math.abs(u[1]) < 0.9) { n1 = [0, 1, 0]; }
+  else { n1 = [1, 0, 0]; }
+  n2 = [u[1] * n1[2] - u[2] * n1[1],
+        u[2] * n1[0] - u[0] * n1[2],
+        u[0] * n1[1] - u[1] * n1[0]];
+  var L2 = Math.sqrt(n2[0] * n2[0] + n2[1] * n2[1] + n2[2] * n2[2]) || 1;
+  n2 = [n2[0] / L2, n2[1] / L2, n2[2] / L2];
+  for (var s = -1; s <= 1; s += 2) {
+    addLine(grp, p, [p[0] - u[0] * h + n2[0] * h * 0.42 * s,
+                     p[1] - u[1] * h + n2[1] * h * 0.42 * s,
+                     p[2] - u[2] * h + n2[2] * h * 0.42 * s], col);
+  }
+}
+
+// full dimension between two points, offset clear of the steel
+function dimension(grp, a, b, off, text, hex, col) {
+  col = (col === undefined) ? DIM_C : col;
+  var A = [a[0] + off[0], a[1] + off[1], a[2] + off[2]];
+  var B = [b[0] + off[0], b[1] + off[1], b[2] + off[2]];
+  // extension lines back to the feature
+  addLine(grp, a, A, col);
+  addLine(grp, b, B, col);
+  // dimension line
+  addLine(grp, A, B, col);
+  var d = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
+  var len = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) || 1;
+  var u = [d[0] / len, d[1] / len, d[2] / len];
+  dimArrow(grp, A, [-u[0], -u[1], -u[2]], col);
+  dimArrow(grp, B, u, col);
+  // measurement sits on the line, nudged clear along the offset
+  var m = Math.sqrt(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]) || 1;
+  var ou = [off[0] / m, off[1] / m, off[2] / m];
+  var t = UNIT * 0.34;
+  addLabel(grp, text,
+           [(A[0] + B[0]) / 2 + ou[0] * t,
+            (A[1] + B[1]) / 2 + ou[1] * t,
+            (A[2] + B[2]) / 2 + ou[2] * t], hex || "#c9d1d9", DIM_SCALE);
+}
+
+// ---- bolt layout, dimensioned on the plan ----
 (function () {
-  var yD = T + Math.max(legOut, T) + UNIT * 0.5;
-  var zD = L - TAIL * 0.28;
+  var yT = T + UNIT * 0.05;
 
-  addLine(gDim, [0, yD, zD], [W, yD, zD], C_DIM);
-  addLine(gDim, [0, T, zD], [0, yD, zD], C_DIM);
-  addLine(gDim, [W, T, zD], [W, yD, zD], C_DIM);
-  addLabel(gDim, "w = " + W.toFixed(1) + " mm", [W / 2, yD + UNIT * 0.4, zD],
-           "#c9d1d9", 0.95);
-
-  var yG = T + UNIT * 0.30;
-  addLine(gDim, [0, yG, zs[0]], [xs[0], yG, zs[0]], 0x7ee787);
-  addLabel(gDim, "e2 = " + E2.toFixed(0), [xs[0] / 2, yG + UNIT * 0.3, zs[0]],
-           "#7ee787", 0.9);
-  for (var j = 1; j < NL; j++) {
-    addLine(gDim, [xs[j - 1], yG, zs[0]], [xs[j], yG, zs[0]], 0x7ee787);
-    addLabel(gDim, "g = " + G.toFixed(0),
-             [(xs[j - 1] + xs[j]) / 2, yG + UNIT * 0.3, zs[0]],
-             "#7ee787", 0.9);
+  // gauge and transverse edge, on the first bolt row, running clear of
+  // the member towards the cut end
+  var zG = -UNIT * 0.55;
+  dimension(gDim, [0, yT, 0], [xs[0], yT, 0], [0, 0, zG],
+            "e2 = " + E2.toFixed(0), "#7ee787", 0x7ee787);
+  if (NL >= 2) {
+    dimension(gDim, [xs[0], yT, 0], [xs[1], yT, 0], [0, 0, zG - UNIT * 0.55],
+              "g = " + G.toFixed(0), "#7ee787", 0x7ee787);
   }
 
+  // end distance and pitch, down the left hand side
   var xP = -UNIT * 0.55;
-  addLine(gDim, [xP, T, 0], [xP, T, zs[0]], 0x79c0ff);
-  addLabel(gDim, "e1 = " + E1.toFixed(0), [xP - UNIT * 0.2, T, zs[0] / 2],
-           "#79c0ff", 0.9);
-  for (var i = 1; i < NR; i++) {
-    addLine(gDim, [xP, T, zs[i - 1]], [xP, T, zs[i]], 0x79c0ff);
-    addLabel(gDim, "s = " + S.toFixed(0),
-             [xP - UNIT * 0.2, T, (zs[i - 1] + zs[i]) / 2], "#79c0ff", 0.9);
+  dimension(gDim, [0, yT, 0], [0, yT, zs[0]], [xP, 0, 0],
+            "e1 = " + E1.toFixed(0), "#79c0ff", 0x79c0ff);
+  if (NR >= 2) {
+    dimension(gDim, [0, yT, zs[0]], [0, yT, zs[1]], [xP - UNIT * 0.55, 0, 0],
+              "s = " + S.toFixed(0), "#79c0ff", 0x79c0ff);
   }
 
-  var xL = W + UNIT * 0.55;
-  addLine(gDim, [xL, T, 0], [xL, T, LV], 0xff7b72);
-  addLabel(gDim, "Lv = e1 + (n-1)s = " + LV.toFixed(1) + " mm",
-           [xL + UNIT * 0.2, T, LV / 2], "#ff7b72", 0.9);
+  // overall connected width, out past the tail
+  var zW = L - TAIL * 0.30;
+  dimension(gDim, [0, yT, zW], [W, yT, zW], [0, UNIT * 0.75, 0],
+            "w = " + W.toFixed(1), "#c9d1d9", DIM_C);
 
-  addLine(gDim, [-UNIT * 0.2, 0, 0], [-UNIT * 0.2, T, 0], 0xd29922);
-  addLabel(gDim, "t = " + T.toFixed(1) + " mm", [-UNIT * 0.8, T / 2, 0],
-           "#d29922", 0.9);
-  addLabel(gDim, "hole d = " + DH.toFixed(1) + " mm,  d_eff = "
-           + DE.toFixed(1) + " mm",
-           [xs[0], T + UNIT * 0.8, zs[0] - S * 0.35], "#d29922", 0.9);
+  // hole size, called off the first hole with a leader
+  var lx = xs[0] + DH * 0.75, lz = zs[0] - DH * 0.75;
+  addLine(gDim, [xs[0], yT, zs[0]],
+                [lx + UNIT * 0.30, yT, lz - UNIT * 0.30], 0xd29922);
+  addLabel(gDim, "hole " + DH.toFixed(1) + " dia" +
+           (Math.abs(DE - DH) > 0.05
+            ? "  (d_eff " + DE.toFixed(1) + ")" : ""),
+           [lx + UNIT * 0.70, yT, lz - UNIT * 0.45], "#d29922", DIM_SCALE);
+})();
+
+// ---- cross section, dimensioned on the cut end ----
+(function () {
+  var zC = -Math.max(TAIL * 0.16, DH * 1.6);
+  var bf = SEC.b_flange || 0, tf = SEC.t_flange || 0;
+  var dd = SEC.d_depth || 0, tst = SEC.t_stem || 0;
+  var ox = -UNIT * 0.55;
+
+  // thickness of the connected element, on every section type
+  dimension(gDim, [0, 0, zC], [0, T, zC], [ox, 0, 0],
+            "t = " + T.toFixed(1), "#d29922", 0xd29922);
+
+  if (KIND === "angle" || KIND === "double_angle") {
+    dimension(gDim, [0, T, zC], [W, T, zC], [0, UNIT * 0.55, 0],
+              "leg " + W.toFixed(0), "#a371f7", 0xa371f7);
+    if (legOut > 0) {
+      dimension(gDim, [W, T, zC], [W, T + legOut, zC], [UNIT * 0.55, 0, 0],
+                "leg " + legOut.toFixed(0), "#a371f7", 0xa371f7);
+    }
+    if (KIND === "double_angle" && SEC.gusset_t > 0) {
+      dimension(gDim, [W * 0.35, -SEC.gusset_t, zC], [W * 0.35, 0, zC],
+                [-UNIT * 1.40, 0, 0],
+                "gusset " + Number(SEC.gusset_t).toFixed(1),
+                "#6e7681", 0x6e7681);
+    }
+  } else if (KIND === "wt" && SEC.connected === "flange") {
+    dimension(gDim, [0, T, zC], [W, T, zC], [0, UNIT * 0.55, 0],
+              "b = " + W.toFixed(0), "#a371f7", 0xa371f7);
+    if (dd > 0) {
+      dimension(gDim, [W / 2, 0, zC], [W / 2, dd, zC], [UNIT * 1.10, 0, 0],
+                "d = " + dd.toFixed(0), "#a371f7", 0xa371f7);
+    }
+    if (tst > 0) {
+      dimension(gDim, [W / 2 - tst / 2, dd, zC], [W / 2 + tst / 2, dd, zC],
+                [0, UNIT * 0.55, 0], "stem " + tst.toFixed(1),
+                "#7ee787", 0x7ee787);
+    }
+  } else if (KIND === "wt") {
+    dimension(gDim, [0, T, zC], [W, T, zC], [0, UNIT * 0.55, 0],
+              "stem d = " + W.toFixed(0), "#a371f7", 0xa371f7);
+    if (bf > 0) {
+      dimension(gDim, [W + tf, -(bf - T) / 2, zC],
+                      [W + tf, T + (bf - T) / 2, zC], [UNIT * 0.55, 0, 0],
+                "b = " + bf.toFixed(0), "#a371f7", 0xa371f7);
+    }
+    if (tf > 0) {
+      dimension(gDim, [W, T + (bf - T) / 2, zC],
+                      [W + tf, T + (bf - T) / 2, zC], [0, UNIT * 0.55, 0],
+                "flange " + tf.toFixed(1), "#7ee787", 0x7ee787);
+    }
+  } else if (KIND === "channel") {
+    dimension(gDim, [0, T, zC], [W, T, zC], [0, UNIT * 1.10, 0],
+              "d = " + W.toFixed(0), "#a371f7", 0xa371f7);
+    if (bf > 0) {
+      dimension(gDim, [0, T + tf, zC], [bf, T + tf, zC], [0, UNIT * 0.45, 0],
+                "b = " + bf.toFixed(0), "#a371f7", 0xa371f7);
+    }
+    if (tf > 0) {
+      dimension(gDim, [bf, T, zC], [bf, T + tf, zC], [UNIT * 0.55, 0, 0],
+                "flange " + tf.toFixed(1), "#7ee787", 0x7ee787);
+    }
+  } else {
+    dimension(gDim, [0, T, zC], [W, T, zC], [0, UNIT * 0.55, 0],
+              "w = " + W.toFixed(0), "#a371f7", 0xa371f7);
+  }
 })();
 gDim.visible = false;
+
+// ---- dimensions that belong to a limit state, not to the member ----
+var gDimLv = new THREE.Group(); gFail.add(gDimLv);
+(function () {
+  dimension(gDimLv, [W, T, 0], [W, T, LV], [UNIT * 0.60, 0, 0],
+            "Lv = " + LV.toFixed(1), "#ff7b72", 0xff7b72);
+})();
+gDimLv.visible = false;
 
 // =====================================================================
 // load
@@ -573,29 +699,60 @@ var gGross = new THREE.Group(); gFail.add(gGross);
 // zig-zag steps one pitch at every stagger. Only net material is drawn,
 // so the shaded sheet is An itself.
 // =====================================================================
-var netGroups = [], netInfo = [];
+var netGroups = [], netDetails = [], netInfo = [];
+var blockDetails = [];
 var DODGE = (NR >= 2) ? S * 0.5 : Math.max(DH * 1.3, E1 * 0.6);
+
+// A label like "Zig-zag: L1/R1 - L2/R3" names the exact hole taken on
+// every bolt line. That is the only thing separating three zig-zags
+// that all take two holes, so it is read straight off the description.
+// If the label carries no L#/R# tokens, fall back to n_holes with the
+// old alternating-row guess.
+function parseNodes(desc) {
+  var re = /L\s*(\d+)\s*\/\s*R\s*(\d+)/gi, raw = [], m;
+  while ((m = re.exec(String(desc || ""))) !== null) {
+    var li = parseInt(m[1], 10) - 1, ri = parseInt(m[2], 10) - 1;
+    if (li < 0 || li > NL - 1 || ri < 0 || ri > NR - 1) continue;
+    raw.push([li, ri]);
+  }
+  raw.sort(function (a, b) { return a[0] - b[0]; });
+  var seen = {}, out = [];
+  for (var i = 0; i < raw.length; i++) {
+    if (seen[raw[i][0]]) continue;
+    seen[raw[i][0]] = 1; out.push(raw[i]);
+  }
+  return out;
+}
 
 for (var ni = 0; ni < NET.length; ni++) {
   (function (n, idx) {
     var grp = new THREE.Group(); gFail.add(grp);
-    var zig = !!n.zig && NR >= 2;
-    var k = Math.max(1, Math.min(NL, Math.round(n.n_holes || 1)));
-
-    function rowOf(j) { return zig ? (j % 2) : 0; }
+    var det = new THREE.Group(); grp.add(det);   // shown one-at-a-time only
+    var nodes = parseNodes(n.desc);
+    if (!nodes.length) {
+      var zg = !!n.zig && NR >= 2;
+      var k0 = Math.max(1, Math.min(NL, Math.round(n.n_holes || 1)));
+      for (var j0 = 0; j0 < k0; j0++) nodes.push([j0, zg ? (j0 % 2) : 0]);
+    }
+    var k = nodes.length;
+    var lastLine = nodes[k - 1][0], lastRow = nodes[k - 1][1];
+    var zig = false;
+    for (var zj = 1; zj < k; zj++) {
+      if (nodes[zj][1] !== nodes[zj - 1][1]) zig = true;
+    }
 
     var pts = [], onHole = [];
-    pts.push([0, zs[rowOf(0)]]); onHole.push(false);
+    pts.push([0, zs[nodes[0][1]]]); onHole.push(false);
     for (var j = 0; j < k; j++) {
-      pts.push([xs[j], zs[rowOf(j)]]); onHole.push(true);
+      pts.push([xs[nodes[j][0]], zs[nodes[j][1]]]); onHole.push(true);
     }
-    if (k < NL) {
-      var zd = zs[rowOf(k - 1)] + DODGE;
-      var xmid = (xs[k - 1] + xs[k]) / 2;
+    if (lastLine < NL - 1) {
+      var zd = zs[lastRow] + DODGE;
+      var xmid = (xs[lastLine] + xs[lastLine + 1]) / 2;
       pts.push([xmid, zd]); onHole.push(false);
       pts.push([W, zd]); onHole.push(false);
     } else {
-      pts.push([W, zs[rowOf(k - 1)]]); onHole.push(false);
+      pts.push([W, zs[lastRow]]); onHole.push(false);
     }
 
     var col = n.governs ? C_BAD : C_ORNG;
@@ -614,32 +771,35 @@ for (var ni = 0; ni < NET.length; ni++) {
     }
 
     for (var q = 0; q < k; q++) {
-      holeRing(grp, xs[q], zs[rowOf(q)], col, order + 4);
+      holeRing(grp, xs[nodes[q][0]], zs[nodes[q][1]], col, order + 4);
     }
 
+    // short label always, the rest only when this path is on its own
     var mid = pts[Math.floor(pts.length / 2)];
     var yLab = T + UNIT * (0.60 + 0.34 * idx);
-    addLabel(grp, (n.governs ? "GOVERNS   " : "")
-             + (n.desc || "path") + "   An = "
-             + Number(n.An || 0).toFixed(0) + " mm2   Tr = "
-             + Number(n.Tr || 0).toFixed(1) + " kN",
+    addLabel(grp, (n.governs ? "GOVERNS  " : "") + (n.desc || "path")
+             + "   Tr = " + Number(n.Tr || 0).toFixed(1) + " kN",
              [W * 0.5, yLab, mid[1]],
              n.governs ? "#f85149" : "#f0883e", 1.0);
+    addLabel(det, "An = " + Number(n.An || 0).toFixed(0) + " mm2,  "
+             + k + " hole(s) deducted",
+             [W * 0.5, yLab - UNIT * 0.30, mid[1]], "#c9d1d9", 0.9);
     if (n.n_staggers > 0) {
-      addLabel(grp, n.n_staggers + " stagger(s), s2/4g adds back "
+      addLabel(det, n.n_staggers + " stagger(s), s2/4g adds back "
                + Number(n.stagger_term || 0).toFixed(1) + " mm of width",
-               [W * 0.5, yLab - UNIT * 0.27, mid[1] - S * 0.45],
+               [W * 0.5, yLab - UNIT * 0.58, mid[1] - S * 0.45],
                "#8b949e", 0.85);
     }
-    if (k < NL) {
-      addLabel(grp, "clears the remaining " + (NL - k)
+    if (lastLine < NL - 1) {
+      addLabel(det, "clears the remaining " + (NL - 1 - lastLine)
                + " hole line(s), so they are not deducted",
-               [W * 0.82, yLab - UNIT * 0.27, zs[rowOf(k - 1)] + DODGE],
+               [W * 0.82, yLab - UNIT * 0.30, zs[lastRow] + DODGE],
                "#8b949e", 0.85);
     }
 
+    det.visible = false;
     grp.visible = false;
-    netGroups.push(grp);
+    netGroups.push(grp); netDetails.push(det);
     netInfo.push({ drawn_wn: drawn, k: k, zig: zig });
   })(NET[ni], ni);
 }
@@ -647,33 +807,97 @@ for (var ni = 0; ni < NET.length; ni++) {
 // =====================================================================
 // block shear, one distinct pattern per candidate
 //
-// A shears on the far bolt line and tears in tension to the free edge,
-// B shears on the edge line, C shears on both outside lines and tears
-// between them. The tension plane is drawn with the hole gaps taken
-// out, so the drawn width is wnt and not the gross width.
+// The detector names its patterns however it likes - A / B / C on the
+// built-in generator, NEAR-1 / FAR-2 on the geometry-driven one - so
+// the key is not a reliable way to place the block. Instead every
+// physically possible block is enumerated, its net tension width is
+// measured with the hole gaps taken out, and the one that reproduces
+// the reported wnt is the one drawn. The picture then agrees with the
+// number in the expander by construction, whatever the detector calls
+// the pattern.
 // =====================================================================
 var blockGroups = [], blockBodies = [], blockInfo = [];
+
+// net tension width across [x0, x1] at the last bolt row, with a
+// d_eff gap removed at every bolt line the span crosses
+function netSpan(x0, x1) {
+  var gaps = [];
+  for (var j = 0; j < NL; j++) {
+    var g0 = xs[j] - DE / 2, g1 = xs[j] + DE / 2;
+    if (g1 <= x0 || g0 >= x1) continue;
+    gaps.push([Math.max(g0, x0), Math.min(g1, x1)]);
+  }
+  gaps.sort(function (p, q) { return p[0] - q[0]; });
+  var cur = x0, w = 0, segs = [];
+  for (var i = 0; i < gaps.length; i++) {
+    if (gaps[i][0] > cur) { segs.push([cur, gaps[i][0]]); w += gaps[i][0] - cur; }
+    cur = Math.max(cur, gaps[i][1]);
+  }
+  if (cur < x1) { segs.push([cur, x1]); w += x1 - cur; }
+  return { w: w, segs: segs };
+}
+
+// every block a bolt group of this shape can tear out
+function blockCandidates() {
+  var out = [];
+  for (var j = 0; j < NL; j++) {
+    out.push({ x0: 0, x1: xs[j], shear: [xs[j]],
+               tag: "tension to the near edge, shear on line " + (j + 1) });
+    out.push({ x0: xs[j], x1: W, shear: [xs[j]],
+               tag: "tension to the far edge, shear on line " + (j + 1) });
+  }
+  for (var a = 0; a < NL - 1; a++) {
+    for (var c = a + 1; c < NL; c++) {
+      out.push({ x0: xs[a], x1: xs[c], shear: [xs[a], xs[c]],
+                 tag: "tension between lines " + (a + 1) + " and " + (c + 1)
+                      + ", shear on both" });
+    }
+  }
+  return out;
+}
+
+function resolveBlock(b) {
+  var planes = Math.max(1, Math.round(b.planes || 1));
+  var wnt = Number(b.wnt || 0);
+  var key = String(b.key || "");
+  var wantNear = /near/i.test(key), wantFar = /far/i.test(key);
+  var all = blockCandidates();
+
+  var pool = [];
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].shear.length === planes) pool.push(all[i]);
+  }
+  if (!pool.length) pool = all;
+
+  var best = null, bestScore = Infinity;
+  for (var k2 = 0; k2 < pool.length; k2++) {
+    var c = pool[k2];
+    var r = netSpan(c.x0, c.x1);
+    // width is the real test; the key only breaks ties
+    var score = Math.abs(r.w - wnt);
+    if (wantNear && c.x0 !== 0) score += 0.05;
+    if (wantFar && c.x1 !== W) score += 0.05;
+    if (score < bestScore) {
+      bestScore = score; best = c; best.calc = r;
+    }
+  }
+  if (!best) {
+    best = { x0: 0, x1: xs[NL - 1], shear: [xs[NL - 1]], tag: "default block" };
+    best.calc = netSpan(best.x0, best.x1);
+  }
+  best.err = Math.abs(best.calc.w - wnt);
+  return best;
+}
 
 for (var bi = 0; bi < BLK.length; bi++) {
   (function (b, idx) {
     var grp = new THREE.Group(); gFail.add(grp);
+    var det = new THREE.Group(); grp.add(det);   // shown one-at-a-time only
     var body = new THREE.Group(); gBlockMove.add(body);
 
-    var key = String(b.key || "A").toUpperCase();
-    var xFirst = xs[0], xLast = xs[NL - 1];
-    var planes = Math.max(1, Math.round(b.planes || 1));
-    var bx0, bx1, shearX;
-
-    if (key === "B") {
-      bx0 = 0; bx1 = xFirst; shearX = [xFirst];
-    } else if (key === "C" && NL >= 2) {
-      bx0 = xFirst; bx1 = xLast; shearX = [xFirst, xLast];
-    } else {
-      bx0 = 0; bx1 = xLast; shearX = [xLast];
-    }
-    if (planes === 2 && shearX.length === 1 && NL >= 2) {
-      shearX = [xFirst, xLast]; bx0 = xFirst; bx1 = xLast;
-    }
+    var key = String(b.key || "?");
+    var geo = resolveBlock(b);
+    var bx0 = geo.x0, bx1 = geo.x1, shearX = geo.shear;
     var Lv = b.Lv || LV;
     var col = b.governs ? C_BAD : C_WARN;
     var order = b.governs ? 16 : 10;
@@ -683,33 +907,18 @@ for (var bi = 0; bi < BLK.length; bi++) {
       sheet(grp, shearX[s], 0, shearX[s], Lv, C_BAD,
             b.governs ? 0.60 : 0.32, order);
       slideArrow(grp, shearX[s], Lv * 0.55, 0, C_BAD, order + 2);
-      addLabel(grp, "shear plane, Agv = Lv x t = " + Lv.toFixed(0)
-               + " x " + T.toFixed(1) + " mm2",
-               [shearX[s], T + UNIT * (0.42 + 0.30 * s), Lv * 0.45],
+      addLabel(det, "shear plane, Agv = Lv x t = " + Lv.toFixed(0)
+               + " x " + T.toFixed(1) + " = "
+               + (Lv * T).toFixed(0) + " mm2",
+               [shearX[s], T + UNIT * (0.45 + 0.32 * s), Lv * 0.45],
                "#f85149", 0.9);
     }
 
     // tension plane at the last bolt row, hole gaps removed
-    var gaps = [];
-    for (var j = 0; j < NL; j++) {
-      var g0 = xs[j] - DE / 2, g1 = xs[j] + DE / 2;
-      if (g1 <= bx0 || g0 >= bx1) continue;
-      gaps.push([Math.max(g0, bx0), Math.min(g1, bx1)]);
-    }
-    gaps.sort(function (p, q) { return p[0] - q[0]; });
-
-    var cur = bx0, drawnW = 0;
-    for (var q2 = 0; q2 < gaps.length; q2++) {
-      if (gaps[q2][0] > cur) {
-        sheet(grp, cur, Lv, gaps[q2][0], Lv, C_BLUE,
-              b.governs ? 0.68 : 0.34, order);
-        drawnW += gaps[q2][0] - cur;
-      }
-      cur = Math.max(cur, gaps[q2][1]);
-    }
-    if (cur < bx1) {
-      sheet(grp, cur, Lv, bx1, Lv, C_BLUE, b.governs ? 0.68 : 0.34, order);
-      drawnW += bx1 - cur;
+    var segs = geo.calc.segs, drawnW = geo.calc.w;
+    for (var q2 = 0; q2 < segs.length; q2++) {
+      sheet(grp, segs[q2][0], Lv, segs[q2][1], Lv, C_BLUE,
+            b.governs ? 0.68 : 0.34, order);
     }
     for (var q3 = 0; q3 < NL; q3++) {
       if (xs[q3] >= bx0 - DE && xs[q3] <= bx1 + DE) {
@@ -719,9 +928,12 @@ for (var bi = 0; bi < BLK.length; bi++) {
     slideArrow(grp, (bx0 + bx1) / 2, Lv, Lv - Math.max(S * 0.35, DH),
                C_BLUE, order + 2);
 
-    addLabel(grp, "tension plane, wnt = " + drawnW.toFixed(1)
-             + " mm drawn (" + Number(b.wnt || 0).toFixed(1) + " reported)",
-             [(bx0 + bx1) / 2, T + UNIT * 0.78, Lv], "#58a6ff", 0.95);
+    addLabel(det, "tension plane, wnt = " + drawnW.toFixed(1)
+             + " mm,  Ant = " + (drawnW * T).toFixed(0) + " mm2",
+             [(bx0 + bx1) / 2, T + UNIT * 0.82, Lv], "#58a6ff", 0.95);
+    addLabel(det, geo.tag,
+             [(bx0 + bx1) / 2, T + UNIT * 0.55, Lv - Math.max(S * 0.5, DH)],
+             "#8b949e", 0.85);
 
     // the block that is pushed out, with its own holes
     var shp = new THREE.Shape();
@@ -746,16 +958,46 @@ for (var bi = 0; bi < BLK.length; bi++) {
       transparent: true, opacity: b.governs ? 0.75 : 0.40 }));
     body.add(bm);
 
-    addLabel(body, (b.governs ? "GOVERNS   " : "") + "Pattern " + key
-             + "   " + shearX.length + " shear plane(s)   Tr = "
+    // short label rides with the block, so patterns stay legible when
+    // they are all on screen together
+    addLabel(body, (b.governs ? "GOVERNS  " : "") + key + "   "
+             + shearX.length + " plane(s)   Tr = "
              + Number(b.Tr || 0).toFixed(1) + " kN",
-             [(bx0 + bx1) / 2, T + UNIT * (0.35 + 0.30 * idx), Lv * 0.24],
+             [(bx0 + bx1) / 2, T + UNIT * (0.38 + 0.32 * idx), Lv * 0.22],
              b.governs ? "#f85149" : "#d29922", 1.0);
 
+    det.visible = false;
     grp.visible = false; body.visible = false;
-    blockGroups.push(grp); blockBodies.push(body);
-    blockInfo.push({ drawn_wnt: drawnW, planes: shearX.length, key: key });
+    blockGroups.push(grp); blockBodies.push(body); blockDetails.push(det);
+    blockInfo.push({ drawn_wnt: drawnW, planes: shearX.length, key: key,
+                     tag: geo.tag, err: geo.err });
   })(BLK[bi], bi);
+}
+
+// =====================================================================
+// fanning
+//
+// Candidates share geometry by nature: every net path leaves the same
+// free edge, and patterns A, B and C all put their tension plane on the
+// last bolt row. Shown all at once they land on top of each other and
+// read as a single surface. In the "every" modes each candidate is
+// nudged a few millimetres along the member so they can be told apart.
+// The single-candidate modes are never fanned, so anything measured off
+// the model there is in its true position.
+// =====================================================================
+var NET_FAN = Math.max(DH * 0.32, 3.0);
+var BLK_FAN = Math.max(DH * 0.60, 6.0);
+
+function fanGroups(groups, on, step) {
+  var n = groups.length;
+  for (var i = 0; i < n; i++) {
+    groups[i].position.z = on ? (i - (n - 1) / 2) * step : 0;
+  }
+}
+function clearFans() {
+  fanGroups(netGroups, false, 0);
+  fanGroups(blockGroups, false, 0);
+  fanGroups(blockBodies, false, 0);
 }
 
 // =====================================================================
@@ -838,9 +1080,13 @@ function utilColour(u) {
 
 function hideAllFail() {
   gGross.visible = false;
-  for (var i = 0; i < netGroups.length; i++) netGroups[i].visible = false;
+  gDimLv.visible = false;
+  for (var i = 0; i < netGroups.length; i++) {
+    netGroups[i].visible = false; netDetails[i].visible = false;
+  }
   for (var k = 0; k < blockGroups.length; k++) {
     blockGroups[k].visible = false; blockBodies[k].visible = false;
+    blockDetails[k].visible = false;
   }
 }
 
@@ -898,15 +1144,16 @@ function pickNote() {
     return s;
   }
   if (currentMode === "block_one" && blockInfo[idx]) {
-    var b = BLK[idx] || {};
-    var dw = blockInfo[idx].drawn_wnt;
-    var rw = Number(b.wnt || 0);
-    var s2 = "Pattern " + blockInfo[idx].key + ": " + blockInfo[idx].planes
-           + " shear plane(s), drawn tension width " + dw.toFixed(1)
-           + " mm against wnt = " + rw.toFixed(1) + " mm.";
-    if (Math.abs(dw - rw) <= Math.max(0.5, rw * 0.03)) {
-      s2 += "  <span class='chk'>Surface agrees with Ant.</span>";
-    }
+    var bi2 = blockInfo[idx];
+    var rw = Number((BLK[idx] || {}).wnt || 0);
+    var s2 = bi2.key + ": " + bi2.tag + ". Drawn tension width "
+           + bi2.drawn_wnt.toFixed(1) + " mm against the reported wnt = "
+           + rw.toFixed(1) + " mm.";
+    s2 += (bi2.err <= Math.max(0.5, rw * 0.03))
+          ? "  <span class='chk'>Block matches the pattern the check "
+            + "used.</span>"
+          : "  <span class='bad'>No candidate block reproduces this wnt, "
+            + "so the closest one is drawn.</span>";
     return s2;
   }
   return "";
@@ -927,11 +1174,13 @@ function showPicked() {
   if (currentMode === "net_one") {
     for (var i = 0; i < netGroups.length; i++) {
       netGroups[i].visible = (i === idx);
+      netDetails[i].visible = (i === idx);
     }
   } else if (currentMode === "block_one") {
     for (var k = 0; k < blockGroups.length; k++) {
       blockGroups[k].visible = (k === idx);
       blockBodies[k].visible = (k === idx);
+      blockDetails[k].visible = (k === idx);
     }
   }
   writeExpl();
@@ -964,6 +1213,7 @@ function buildLegend(m) {
 function setMode(m) {
   currentMode = m;
   hideAllFail();
+  clearFans();
   memberColour(new THREE.Color(C_STEEL));
   pickWrap.style.display = "none";
 
@@ -975,6 +1225,7 @@ function setMode(m) {
     setStretch(true);
   } else if (m === "net_all") {
     for (var i = 0; i < netGroups.length; i++) netGroups[i].visible = true;
+    fanGroups(netGroups, true, NET_FAN);
   } else if (m === "net_one") {
     pickWrap.style.display = "flex";
     fillPicker(m); showPicked();
@@ -982,9 +1233,13 @@ function setMode(m) {
     for (var k = 0; k < blockGroups.length; k++) {
       blockGroups[k].visible = true; blockBodies[k].visible = true;
     }
+    fanGroups(blockGroups, true, BLK_FAN);
+    fanGroups(blockBodies, true, BLK_FAN);
+    gDimLv.visible = true;
   } else if (m === "block_one") {
     pickWrap.style.display = "flex";
     fillPicker(m); showPicked();
+    gDimLv.visible = true;
     setTear(true);
   } else if (m === "util") {
     memberColour(utilColour(RES.util));
@@ -1193,19 +1448,13 @@ setMode("plain");
      + (NR === 1 ? "" : "s") + ",  " + (BOLT.size || "bolt") + "<br>";
   h += NET.length + " net path" + (NET.length === 1 ? "" : "s") + ",  "
      + BLK.length + " block pattern" + (BLK.length === 1 ? "" : "s") + "<br>";
-  if (RES.U !== undefined && RES.U !== null) {
-    h += "U = " + Number(RES.U).toFixed(2) + "   Ut = "
-       + Number(RES.Ut || 0).toFixed(2) + "<br>";
-  }
-  if (RES.Tr_gross) h += "gross yield  Tr = " + Number(RES.Tr_gross).toFixed(1)
-                       + " kN<br>";
-  if (RES.Tr_net) h += "net fracture Tr = " + Number(RES.Tr_net).toFixed(1)
-                     + " kN<br>";
-  if (RES.Tr_block) h += "block shear  Tr = " + Number(RES.Tr_block).toFixed(1)
-                       + " kN<br>";
-  if (RES.gov_name) h += "governs: " + RES.gov_name + "<br>";
-  if (RES.util !== undefined && RES.util !== null && isFinite(RES.util)) {
-    h += "Tf / Tr = " + Number(RES.util).toFixed(3) + "<br>";
+  // every resistance, U, Ut and Tf/Tr already live in the Design data
+  // panel, so the corner carries only what identifies the check
+  if (RES.gov_name) {
+    h += "governs: <span style='color:#e6edf3'>" + RES.gov_name
+       + "</span>";
+    if (RES.Tr) h += "  " + Number(RES.Tr).toFixed(1) + " kN";
+    h += "<br>";
   }
   if (RES.overall) {
     var cc = RES.overall === "OK" ? "#3fb950"

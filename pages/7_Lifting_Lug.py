@@ -12,11 +12,11 @@ out of step with anything else.
 
 import streamlit as st
 
-st.set_page_config(page_title="Lifting Lug - CSA S16",
+st.set_page_config(page_title="Lifting Lug - Infraspective",
                    page_icon=":link:", layout="wide")
 
 from _theme import (apply_theme, render_sidebar_logo, render_footer,
-                    gate_disclaimer)
+                    gate_disclaimer, render_page_title)
 
 gate_disclaimer()
 apply_theme()
@@ -26,8 +26,12 @@ render_footer()
 import lug_design
 import viewer_3d_lug
 
-st.title("Lifting Lug Design")
-st.caption("CSA S16 - lug plate, weld, cap plate with bolt prying, and pin")
+render_page_title(
+    "Lifting Lug Design",
+    clauses=("Cl. 13.2 (gross and net section)  |  Cl. 13.11 (tear-out)  |  "
+             "Cl. 13.10 (pin bearing)  |  Cl. 13.13 (weld to the base)"),
+    intro=("Lug plate, weld, cap plate with bolt prying, and pin."),
+)
 
 DEF = lug_design.SOURCE_CASE
 

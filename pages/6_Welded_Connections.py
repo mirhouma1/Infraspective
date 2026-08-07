@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as st_html
 
 from _theme import (apply_theme, render_sidebar_logo, render_footer,
-                    gate_disclaimer)
+                    gate_disclaimer, render_page_title)
 
 try:
     import viewer_3d_welded
@@ -34,7 +34,7 @@ PHI_W = 0.67   # weld resistance factor, Cl. 13.13.1
 PHI = 0.90     # base metal yielding
 PHI_U = 0.75   # base metal fracture
 
-APP_TITLE = "CSA S16 - Welded Connection Solver"
+APP_TITLE = "Welded Connection Design"
 
 # Table 4, matching electrodes for G40.21 steels
 STEEL_GRADES: Dict[int, tuple] = {
@@ -405,10 +405,14 @@ gate_disclaimer()
 # from _theme import beta_lock_page
 # beta_lock_page("Welded Connections")
 
-st.title(APP_TITLE)
-st.caption("Cl. 13.13  |  fillet, CJP and PJP groove, flare bevel  |  "
-           "phi_w = 0.67  |  detailing per Cl. 6.2.3  |  forces in kN, "
-           "geometry in mm")
+render_page_title(
+    "Welded Connection Design",
+    clauses=("Cl. 13.13 (shear and tension on welds)  |  Cl. 13.13.2.2 "
+             "(fillet welds)  |  Cl. 13.13.1 (groove welds)  |  Cl. 6.2.3 "
+             "(detailing)"),
+    intro=("Fillet, CJP groove, PJP groove and flare bevel welds. "
+           "phi_w = 0.67. Forces in kN, geometry in mm."),
+)
 
 col_calc, col_model = st.columns([1.15, 1], gap="large")
 

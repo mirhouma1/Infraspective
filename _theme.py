@@ -338,107 +338,55 @@ button, input, select, textarea, .stMarkdown {
                 0 0 34px rgba(96,165,250,0.55),
                 inset 0 1px 0 rgba(255,255,255,0.5);
 }
-.ins-tagline {
-    text-align: center;
-    color: #7FA9F0 !important;
-    font-size: 0.58rem;
-    font-weight: 700;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    margin: 2px 0 14px;
-}
 .ins-sidebar-divider {
     height: 1px;
     margin: 2px 14px 14px;
     background: linear-gradient(90deg, transparent, rgba(127,169,240,0.5), transparent);
 }
-.ins-nav-label {
-    color: #7FA9F0 !important;
-    font-size: 0.60rem;
+/* -- Page title block (title + clause reference strip) -- */
+.ins-ptitle {
+    margin: 0 0 1.1rem;
+    padding: 0 0 0.7rem;
+    border-bottom: 1px solid #E2E8F0;
+}
+.ins-ptitle h1 {
+    font-size: 1.62rem !important;
+    font-weight: 800 !important;
+    color: #0F172A !important;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    margin: 0 0 0.35rem !important;
+    padding: 0 !important;
+}
+.ins-ptitle .ins-ref {
+    display: inline-flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 8px;
+    padding: 5px 11px;
+    font-size: 0.74rem;
+    color: #1E40AF;
+    line-height: 1.45;
+}
+.ins-ptitle .ins-ref b {
     font-weight: 800;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 2px 12px 8px;
-    margin: 0;
+    font-size: 0.64rem;
+    color: #2563EB;
 }
-
-/* -- Custom page-link nav (icons + smooth hover) -- */
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"],
-[data-testid="stSidebar"] [data-testid="stPageLink"] a {
-    color: #CBD5E1 !important;
-    font-weight: 600 !important;
-    border-radius: 11px !important;
-    padding: 0.62rem 0.85rem !important;
-    margin: 3px 4px !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 11px !important;
-    border: 1px solid transparent !important;
-    transition: transform .18s ease, background .18s ease,
-                border-color .18s ease, color .18s ease !important;
+.ins-ptitle .ins-intro {
+    margin: 0.55rem 0 0;
+    font-size: 0.86rem;
+    color: #475569;
+    line-height: 1.6;
 }
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]:hover,
-[data-testid="stSidebar"] [data-testid="stPageLink"] a:hover {
-    background: rgba(37,99,235,0.18) !important;
-    border-color: rgba(37,99,235,0.45) !important;
-    color: #FFFFFF !important;
-    transform: translateX(4px) !important;
-}
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][aria-current="page"],
-[data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"] {
-    background: linear-gradient(90deg, rgba(37,99,235,0.42), rgba(37,99,235,0.14)) !important;
-    border-color: rgba(96,165,250,0.6) !important;
-    color: #FFFFFF !important;
-    box-shadow: inset 3px 0 0 #60A5FA, 0 6px 16px rgba(37,99,235,0.25) !important;
-}
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"][aria-current="page"] span[data-testid="stIconMaterial"] {
-    color: #FFFFFF !important;
-}
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] p,
-[data-testid="stSidebar"] [data-testid="stPageLink"] a p {
-    font-weight: 600 !important;
-    color: inherit !important;
-}
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] span[data-testid="stIconMaterial"] {
-    color: #7FA9F0 !important;
-    transition: color .18s ease !important;
-}
-[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]:hover span[data-testid="stIconMaterial"] {
-    color: #FFFFFF !important;
-}
-[data-testid="stSidebar"] svg { fill: #93C5FD !important; }
-
-/* -- Locked (coming-soon) calculators -- */
-.ins-nav-locked {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 0.62rem 0.85rem;
-    margin: 3px 4px;
-    border-radius: 11px;
-    color: #5B6B85 !important;
-    font-weight: 600;
-    font-size: 0.875rem;
-    cursor: not-allowed;
-    border: 1px dashed rgba(91,107,133,0.35);
-    background: rgba(15,23,42,0.25);
-}
-.ins-nav-locked .lock-ic {
-    font-family: 'Material Symbols Outlined';
-    font-size: 1.05rem;
-    color: #5B6B85 !important;
-}
-.ins-nav-locked .lk-label { flex: 1; color: #5B6B85 !important; }
-.ins-nav-locked .lk-soon {
-    font-size: 0.55rem;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: #7FA9F0 !important;
-    background: rgba(37,99,235,0.18);
-    border: 1px solid rgba(37,99,235,0.35);
-    padding: 2px 7px;
-    border-radius: 10px;
+@media (max-width: 640px) {
+    .ins-ptitle h1 { font-size: 1.28rem !important; }
+    .ins-ptitle .ins-ref { font-size: 0.7rem; }
 }
 
 /* ===== TOP HEADER BAR - clean and minimal ============================== */
@@ -781,6 +729,15 @@ input:focus,
         0 2px 6px rgba(15,23,42,0.06),
         inset 0 1px 0 rgba(255,255,255,0.9);
 }
+.dis-tagline {
+    text-align: center;
+    color: #1E3A8A;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    margin: 1.1rem 0 0;
+}
 .dis-beta {
     display: inline-block;
     background: linear-gradient(135deg,#1E40AF,#2563EB);
@@ -790,7 +747,7 @@ input:focus,
     padding: 3px 12px;
     border-radius: 20px;
     letter-spacing: 0.16em;
-    margin-top: 0.9rem;
+    margin-top: 1.5rem;
     box-shadow: 0 4px 12px rgba(37,99,235,0.35);
 }
 .dis-box {
@@ -851,6 +808,175 @@ input:focus,
     /* let long tables / diagrams scroll internally, never the page */
     [data-testid="stDataFrame"] { overflow-x: auto !important; }
 }
+
+/* ===== DIRECTORY TREE =================================================
+   Three accordion levels, shared by the home page and the sidebar. This
+   block sits at the end of the stylesheet on purpose: the global
+   .stButton gradient above would otherwise win the cascade and leave
+   dark label text on a blue fill. ==================================== */
+
+.ins-grouphead {
+    font-size: 0.64rem; font-weight: 800; letter-spacing: 0.16em;
+    text-transform: uppercase; color: #2563EB; margin: 0.4rem 0 0.5rem;
+}
+
+/* The home wordmark: no plate, no card, sitting on the page itself. */
+.ins-brand-bare {
+    text-align: center;
+    padding: 0 0 0.7rem;
+    margin-top: -0.6rem;
+}
+.ins-brand-bare img {
+    width: 46vw;
+    max-width: 210px;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+}
+/* Only needed when the artwork could not be keyed: multiply drops the
+   light rectangle baked into the raw file. */
+.ins-brand-bare img.blend { mix-blend-mode: multiply; }
+@media (max-width: 640px) {
+    .ins-brand-bare img { width: 54vw; max-width: 190px; }
+}
+
+/* -- shared geometry -- */
+[class*="st-key-accL1"] button,
+[class*="st-key-accL2"] button,
+[class*="st-key-accL3"] button {
+    width: 100% !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0 !important;
+    box-shadow: none !important;
+    transition: background .16s ease, border-color .16s ease !important;
+}
+[class*="st-key-accL1"] button p,
+[class*="st-key-accL2"] button p,
+[class*="st-key-accL3"] button p {
+    text-align: left !important;
+    color: inherit !important;
+    font-weight: 700 !important;
+    margin: 0 !important;
+}
+[class*="st-key-accL1"] button:hover,
+[class*="st-key-accL2"] button:hover,
+[class*="st-key-accL3"] button:hover { transform: none !important; }
+
+/* -- main area (home page) -- */
+[data-testid="stMain"] [class*="st-key-accL1"] button {
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+    border: 1px solid #E2E8F0 !important;
+    border-left: 4px solid #2563EB !important;
+    padding: 0.9rem 1.05rem !important;
+    font-size: 1.02rem !important;
+    box-shadow: 0 4px 14px rgba(15,23,42,0.06) !important;
+}
+[data-testid="stMain"] [class*="st-key-accL1"] button:hover {
+    background: #F8FAFC !important;
+    border-color: #93C5FD !important;
+}
+[data-testid="stMain"] [class*="st-key-accL2"] button {
+    background: #EFF6FF !important;
+    color: #1E40AF !important;
+    border: 1px solid #BFDBFE !important;
+    border-left: 4px solid #60A5FA !important;
+    padding: 0.72rem 0.95rem !important;
+    font-size: 0.94rem !important;
+    margin-left: 1.1rem !important;
+    width: calc(100% - 1.1rem) !important;
+}
+[data-testid="stMain"] [class*="st-key-accL3"] button {
+    background: #F8FAFC !important;
+    color: #1E293B !important;
+    border: 1px solid #E2E8F0 !important;
+    border-left: 3px solid #BFDBFE !important;
+    padding: 0.62rem 0.9rem !important;
+    font-size: 0.88rem !important;
+    margin-left: 2.2rem !important;
+    width: calc(100% - 2.2rem) !important;
+}
+[data-testid="stMain"] [class*="st-key-accL2"] button:hover,
+[data-testid="stMain"] [class*="st-key-accL3"] button:hover {
+    background: #DBEAFE !important;
+    border-color: #60A5FA !important;
+}
+/* calculator links on the home page */
+[data-testid="stMain"] [data-testid="stPageLink"] a {
+    color: #1E293B !important;
+    font-weight: 600 !important;
+    border-radius: 10px !important;
+    padding: 0.5rem 0.8rem !important;
+    margin-left: 3.1rem !important;
+    border: 1px solid transparent !important;
+    border-left: 2px solid #DBEAFE !important;
+}
+[data-testid="stMain"] [data-testid="stPageLink"] a:hover {
+    background: #EFF6FF !important;
+    border-color: #BFDBFE !important;
+    border-left-color: #2563EB !important;
+}
+[data-testid="stMain"] [data-testid="stPageLink"] a p {
+    font-weight: 600 !important;
+    color: inherit !important;
+}
+
+/* -- sidebar: same tree, dark surface -- */
+[data-testid="stSidebar"] [class*="st-key-accL1"] button,
+[data-testid="stSidebar"] [class*="st-key-accL2"] button,
+[data-testid="stSidebar"] [class*="st-key-accL3"] button {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    padding: 0.55rem 0.8rem !important;
+}
+[data-testid="stSidebar"] [class*="st-key-accL1"] button {
+    color: #E2E8F0 !important;
+    font-size: 0.92rem !important;
+    border-left: 3px solid #2563EB !important;
+    background: rgba(37,99,235,0.14) !important;
+}
+[data-testid="stSidebar"] [class*="st-key-accL2"] button {
+    color: #BFDBFE !important;
+    font-size: 0.86rem !important;
+    margin-left: 0.7rem !important;
+    width: calc(100% - 0.7rem) !important;
+    border-left: 2px solid rgba(147,197,253,0.45) !important;
+}
+[data-testid="stSidebar"] [class*="st-key-accL3"] button {
+    color: #93C5FD !important;
+    font-size: 0.82rem !important;
+    margin-left: 1.4rem !important;
+    width: calc(100% - 1.4rem) !important;
+    border-left: 2px solid rgba(147,197,253,0.30) !important;
+}
+[data-testid="stSidebar"] [class*="st-key-accL1"] button:hover,
+[data-testid="stSidebar"] [class*="st-key-accL2"] button:hover,
+[data-testid="stSidebar"] [class*="st-key-accL3"] button:hover {
+    background: rgba(37,99,235,0.28) !important;
+    color: #FFFFFF !important;
+}
+/* Sidebar page links keep the existing nav treatment. They are not
+   indented: a sibling selector would be needed to tell the Home link
+   apart from the calculator links, and that breaks the moment Streamlit
+   changes its DOM. The accordion rows above already carry the levels. */
+
+@media (max-width: 640px) {
+    [data-testid="stMain"] [class*="st-key-accL3"] button {
+        margin-left: 1.4rem !important;
+        width: calc(100% - 1.4rem) !important;
+    }
+    [data-testid="stMain"] [data-testid="stPageLink"] a {
+        margin-left: 2rem !important;
+    }
+}
 </style>
 """
 
@@ -860,17 +986,223 @@ def apply_theme() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-# Sidebar navigation - single source of truth.
-# (path, label, material icon, unlocked?)
-_NAV = [
-    ("pages/1_Tension_Members.py",     "Tension Members",      ":material/open_in_full:",           True),
-    ("app.py",                         "Beam Flexure",         ":material/architecture:",           True),
-    ("pages/2_Compression.py",         "Compression",          ":material/compress:",               True),
-    ("pages/4_Beam_Column_Members.py", "Beam-Column Members",  ":material/view_column:",            True),
-    ("pages/5_Bolted_Connections.py",  "Bolted Connections",   ":material/build:",                  False),
-    ("pages/6_Welded_Connections.py",  "Welded Connections",   ":material/local_fire_department:",  True),
-    ("pages/7_Lifting_Lug.py",         "Lifting Lug",          ":material/link:",                   True),
+# ---------------------------------------------------------------------------
+# CALCULATOR CATALOGUE - single source of truth for the sidebar and for the
+# home directory page. The tree is:
+#
+#     standard  ->  discipline  ->  calculator
+#
+# Every calculator entry is:
+#     (path, label, material icon, unlocked?, one-line description)
+#
+# Adding a calculator means adding one row here. Nothing else changes.
+# ---------------------------------------------------------------------------
+
+_CSA_STANDARD = [
+    {
+        "key": "csa",
+        "name": "Canadian Standards",
+        "short": "CSA",
+        "blurb": "Design to the CSA suite for buildings and industrial "
+                 "structures.",
+        "icon": ":material/flag:",
+        "unlocked": True,
+        "disciplines": [
+            {
+                "key": "steel",
+                "name": "Structural Steel",
+                "code": "CSA S16",
+                "blurb": "Limit states design of steel structures. Members, "
+                         "connections and lifting devices.",
+                "icon": ":material/foundation:",
+                "unlocked": True,
+                "calcs": [
+                    ("pages/1_Tension_Members.py", "Tension Members",
+                     ":material/open_in_full:", True,
+                     "Gross yielding, net fracture with shear lag, block "
+                     "shear and slenderness."),
+                    ("pages/3_Beam_Flexure.py", "Beam Flexure",
+                     ":material/architecture:", True,
+                     "Moment resistance, lateral torsional buckling, shear "
+                     "and deflection."),
+                    ("pages/2_Compression.py", "Compression",
+                     ":material/compress:", True,
+                     "Axial compressive resistance, effective lengths and "
+                     "local buckling."),
+                    ("pages/4_Beam_Column_Members.py", "Beam-Column Members",
+                     ":material/view_column:", True,
+                     "Combined axial and bending interaction, U1 "
+                     "amplification and the three Cl. 13.8.2 checks."),
+                    ("pages/5_Bolted_Connections.py", "Bolted Connections",
+                     ":material/build:", False,
+                     "Bolt shear and bearing, plate fracture, block shear "
+                     "and prying action."),
+                    ("pages/6_Welded_Connections.py", "Welded Connections",
+                     ":material/local_fire_department:", True,
+                     "Fillet, CJP, PJP and flare bevel welds with joint "
+                     "diagrams."),
+                    ("pages/7_Lifting_Lug.py", "Lifting Lug",
+                     ":material/link:", True,
+                     "Pin bearing, tear-out, gross and net section of a "
+                     "lifting lug plate."),
+                ],
+            },
+            {
+                "key": "concrete",
+                "name": "Reinforced Concrete",
+                "code": "CSA A23.3",
+                "blurb": "Flexure, shear, columns and development lengths.",
+                "icon": ":material/domain:",
+                "unlocked": False,
+                "calcs": [],
+            },
+            {
+                "key": "foundations",
+                "name": "Foundations",
+                "code": "CFEM / CSA A23.3",
+                "blurb": "Bearing capacity, footing design and anchorage.",
+                "icon": ":material/layers:",
+                "unlocked": False,
+                "calcs": [],
+            },
+            {
+                "key": "timber",
+                "name": "Timber",
+                "code": "CSA O86",
+                "blurb": "Sawn lumber and glulam members and connections.",
+                "icon": ":material/park:",
+                "unlocked": False,
+                "calcs": [],
+            },
+        ],
+    },
 ]
+
+# The top level is a service, not a standard. The site will carry more
+# services than calculators later, so the tree starts one level higher:
+#
+#     service  ->  standard  ->  discipline  ->  calculator
+SERVICES = [
+    {
+        "key": "calc",
+        "name": "Structural Design Calculator",
+        "standards": _CSA_STANDARD,
+    },
+]
+
+# Kept as the standards list so anything that walked the old tree still
+# works. CATALOGUE is now one level below SERVICES.
+CATALOGUE = _CSA_STANDARD
+
+HOME_PAGE = "app.py"
+
+
+def catalogue_standard(key):
+    for std in CATALOGUE:
+        if std["key"] == key:
+            return std
+    return None
+
+
+def catalogue_discipline(std_key, disc_key):
+    std = catalogue_standard(std_key)
+    if not std:
+        return None
+    for d in std.get("disciplines", []):
+        if d["key"] == disc_key:
+            return d
+    return None
+
+
+# Flat list kept for anything that still expects it.
+_NAV = [(p, lb, ic, ul)
+        for svc in SERVICES
+        for std in svc.get("standards", [])
+        for disc in std.get("disciplines", [])
+        for p, lb, ic, ul, _d in disc.get("calcs", [])]
+
+
+def _acc_button(box, key: str, label: str, flag: str, level: int) -> bool:
+    """One expandable row of the directory tree.
+
+    The open/shut flag is shared between the sidebar and the home page on
+    purpose: open a branch in one and it is open in the other, and it
+    stays open while navigating, because session state survives a page
+    change within a session. The widget key is prefixed per surface, since
+    Streamlit needs those unique.
+    """
+    open_ = bool(st.session_state.get(flag, False))
+    mark = "-  " if open_ else "+  "
+    if box.button(mark + label, key="accL" + str(level) + "_" + key,
+                  use_container_width=True):
+        st.session_state[flag] = not open_
+        st.rerun()
+    return open_
+
+
+def _locked_row(box, label: str, indent_rem: float) -> None:
+    """A calculator that is not open yet. Inline styles here rather than a
+    class, so the row cannot collapse into its neighbour if the stylesheet
+    is overridden."""
+    box.markdown(
+        '<div style="display:flex;align-items:center;gap:8px;'
+        'padding:0.42rem 0.6rem;margin:2px 0 2px ' + str(indent_rem)
+        + 'rem;opacity:0.55;font-size:0.88rem;font-weight:600;">'
+        '<span style="flex:0 0 auto;">'
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" '
+        'stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" '
+        'rx="2" ry="2"></rect>'
+        '<path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>'
+        '<span style="flex:1 1 auto;">' + label + '</span>'
+        '<span style="flex:0 0 auto;font-size:0.56rem;font-weight:800;'
+        'letter-spacing:0.1em;text-transform:uppercase;border:1px solid '
+        'currentColor;border-radius:20px;padding:1px 6px;">Soon</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_directory(box, key_prefix: str) -> None:
+    """The whole catalogue as a three-level accordion.
+
+    One function drives both the sidebar and the home page, so the two can
+    never drift apart. Pass st.sidebar or st as the container.
+    """
+    for svc in SERVICES:
+        svc_flag = "diropen_svc_" + svc["key"]
+        svc_open = _acc_button(box, key_prefix + svc["key"], svc["name"],
+                               svc_flag, 1)
+        if not svc_open:
+            continue
+
+        for std in svc.get("standards", []):
+            std_flag = "diropen_std_" + svc["key"] + "_" + std["key"]
+            std_open = _acc_button(box, key_prefix + svc["key"] + "_"
+                                   + std["key"], std["name"], std_flag, 2)
+            if not std_open:
+                continue
+
+            for disc in std.get("disciplines", []):
+                live = [c for c in disc.get("calcs", []) if c[3]]
+                label = disc["name"] + " Design  -  " + disc["code"]
+                if not live:
+                    _locked_row(box, label, 1.6)
+                    continue
+
+                disc_flag = ("diropen_disc_" + svc["key"] + "_"
+                             + std["key"] + "_" + disc["key"])
+                disc_open = _acc_button(
+                    box, key_prefix + svc["key"] + "_" + std["key"] + "_"
+                    + disc["key"], label, disc_flag, 3)
+                if not disc_open:
+                    continue
+
+                for path, lab, icon, unlocked, _desc in disc["calcs"]:
+                    if unlocked:
+                        box.page_link(path, label=lab, icon=icon)
+                    else:
+                        _locked_row(box, lab, 2.4)
 
 
 def render_sidebar_logo() -> None:
@@ -884,31 +1216,18 @@ def render_sidebar_logo() -> None:
         st.sidebar.markdown(
             '<div class="ins-logo">'
             '<img src="' + src + '" alt="Infraspective Solutions"/>'
-            '</div>'
-            '<div class="ins-tagline">Structural Suite</div>'
-            '<div class="ins-sidebar-divider"></div>',
+            '</div>',
             unsafe_allow_html=True,
         )
-    st.sidebar.markdown('<p class="ins-nav-label">Calculators</p>', unsafe_allow_html=True)
-    for path, label, icon, unlocked in _NAV:
-        if unlocked:
-            st.sidebar.page_link(path, label=label, icon=icon)
-        else:
-            _lock_svg = (
-                '<svg class="lock-ic" width="15" height="15" viewBox="0 0 24 24" '
-                'fill="none" stroke="#5B6B85" stroke-width="2" stroke-linecap="round" '
-                'stroke-linejoin="round" style="flex:none;">'
-                '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>'
-                '<path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>'
-            )
-            st.sidebar.markdown(
-                '<div class="ins-nav-locked" title="Coming soon">'
-                + _lock_svg
-                + '<span class="lk-label">' + label + '</span>'
-                '<span class="lk-soon">Soon</span>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+
+    # The way back to the catalogue from anywhere in the app.
+    st.sidebar.page_link(HOME_PAGE, label="Home", icon=":material/home:")
+    st.sidebar.markdown('<div class="ins-sidebar-divider"></div>',
+                        unsafe_allow_html=True)
+
+    # Same tree, same open/shut state as the home page.
+    render_directory(st.sidebar, "sb_")
+
 
 
 def render_footer() -> None:
@@ -919,6 +1238,83 @@ def render_footer() -> None:
         '<span class="sep">|</span>'
         'Beta Software &mdash; All outputs must be independently verified by a licensed P.Eng. '
         'Not for direct project use without professional review.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _brand_plate_html() -> str:
+    """The wordmark on its blue plate.
+
+    Single source for the disclaimer gate and the home page, so the two
+    are the same artwork treated the same way. The blended source is the
+    wordmark keyed to transparency before it reaches the browser, which
+    is what lets it sit ON the plate instead of bringing its own grey
+    rectangle along.
+    """
+    src, is_transparent, _dbg = _wordmark_blended_src()
+    if src and is_transparent:
+        return ('<div class="dis-logo-plate">'
+                '<img class="wm" src="' + src
+                + '" alt="Infraspective Solutions"/></div>')
+    if src:
+        return ('<img class="wm-raw" src="' + src
+                + '" alt="Infraspective Solutions"/>')
+    return ('<div style="font-size:1.8rem;font-weight:900;color:#0F172A;'
+            'letter-spacing:0.06em">'
+            'INFRASPECTIVE<br><span style="color:#2563EB">SOLUTIONS</span>'
+            '</div>')
+
+
+def render_brand_logo() -> None:
+    """The home page leads with the brand, sitting on the page background
+    with no card behind it.
+
+    Same keyed artwork as the agreement page, just smaller, higher and
+    unplated. If the artwork could not be keyed to transparency it is
+    multiplied into the background instead, which drops the light
+    rectangle the raw file carries.
+    """
+    src, is_transparent, _dbg = _wordmark_blended_src()
+    if not src:
+        st.markdown(
+            '<div class="ins-brand-bare">'
+            '<div style="font-size:1.5rem;font-weight:900;color:#0F172A;'
+            'letter-spacing:0.06em">INFRASPECTIVE'
+            '<br><span style="color:#2563EB">SOLUTIONS</span></div></div>',
+            unsafe_allow_html=True,
+        )
+        return
+    cls = "bare" if is_transparent else "bare blend"
+    st.markdown(
+        '<div class="ins-brand-bare">'
+        '<img class="' + cls + '" src="' + src
+        + '" alt="Infraspective Solutions"/></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_page_title(title: str, clauses: str = "", intro: str = "",
+                      standard: str = "CSA S16") -> None:
+    """Standard page title for every calculator.
+
+    The title carries the engineering task only - "Beam Flexure Design",
+    not "CSA S16 - Beam Flexure Design". The standard and the clauses the
+    page works to are stated on the reference strip directly underneath,
+    which is where an engineer looks for them.
+    """
+    ref_html = ""
+    if clauses or standard:
+        body = standard
+        if clauses:
+            body = standard + "  " + clauses if standard else clauses
+        ref_html = ('<div class="ins-ref"><b>Reference</b>'
+                    '<span>' + body + '</span></div>')
+    intro_html = ('<p class="ins-intro">' + intro + '</p>') if intro else ""
+    st.markdown(
+        '<div class="ins-ptitle">'
+        '<h1>' + title + '</h1>'
+        + ref_html + intro_html +
         '</div>',
         unsafe_allow_html=True,
     )
@@ -982,28 +1378,14 @@ def disclaimer_page() -> None:
         unsafe_allow_html=True,
     )
 
-    src, is_transparent, dbg_note = _wordmark_blended_src()
-    if src and is_transparent:
-        # Keyed-out artwork sits inside the blue plate.
-        logo_img = ('<div class="dis-logo-plate">'
-                    '<img class="wm" src="' + src
-                    + '" alt="Infraspective Solutions"/></div>')
-    elif src:
-        # Raw file carries its own plate via the wm-raw class.
-        logo_img = ('<img class="wm-raw" src="' + src
-                    + '" alt="Infraspective Solutions"/>')
-    else:
-        logo_img = (
-            '<div style="font-size:1.8rem;font-weight:900;color:#0F172A;'
-            'letter-spacing:0.06em">'
-            'INFRASPECTIVE<br><span style="color:#2563EB">SOLUTIONS</span>'
-            '</div>'
-        )
+    _src, _is_transparent, dbg_note = _wordmark_blended_src()
+    logo_img = _brand_plate_html()
 
     st.markdown(
         '<div class="dis-logo-block">'
         + logo_img
-        + '<div><span class="dis-beta">BETA</span></div>'
+        + '<div class="dis-tagline">Structural Design Calculator</div>'
+        '<div><span class="dis-beta">BETA</span></div>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -1056,9 +1438,10 @@ def disclaimer_page() -> None:
                 log_event("agreement_accepted")
             except Exception:
                 pass
-            # Beta: Tension Members is the only unlocked calculator - open it.
+            # Land on the home directory, not on a calculator, so the
+            # first thing after the agreement is the catalogue.
             try:
-                st.switch_page("pages/1_Tension_Members.py")
+                st.switch_page(HOME_PAGE)
             except Exception:
                 st.rerun()
     if not accept:
@@ -1091,8 +1474,18 @@ def disclaimer_page() -> None:
                     }
                 } catch(e) {}
             }
-            setTimeout(scrollToAccept, 300);
-            setTimeout(scrollToAccept, 800);
+            // Two passes, exactly as before, just held back so the
+            // wordmark registers first. HOLD_MS is the only number to
+            // touch if the pause needs retuning; the second pass covers
+            // the case where the button had not rendered yet.
+            //
+            // Every DOM access stays inside the try/catch above on
+            // purpose: reaching window.parent.document at this level can
+            // throw in a sandboxed frame, and that would abort the script
+            // before either timer was ever scheduled.
+            var HOLD_MS = 1500;
+            setTimeout(scrollToAccept, HOLD_MS);
+            setTimeout(scrollToAccept, HOLD_MS + 600);
         })();
         </script>
         """,
@@ -1136,17 +1529,17 @@ def beta_lock_page(label: str) -> None:
         '<div style="font-size:1.25rem;font-weight:800;color:#0F172A;margin-top:.4rem;">'
         + label + '</div>'
         '<div style="font-size:0.85rem;color:#475569;margin-top:.6rem;line-height:1.6;">'
-        'This calculator is <b>coming soon</b>. During the Beta, only '
-        '<b>Tension Members</b> is available.</div>'
+        'This calculator is <b>coming soon</b>. Everything already '
+        'available is listed on the home directory.</div>'
         '</div>',
         unsafe_allow_html=True,
     )
     c1, c2, c3 = st.columns([1, 1, 1])
     with c2:
         st.write("")
-        if st.button("Open Tension Members", type="primary",
-                     use_container_width=True, key="_lock_go_tension"):
-            st.switch_page("pages/1_Tension_Members.py")
+        if st.button("Back to Home", type="primary",
+                     use_container_width=True, key="_lock_go_home"):
+            st.switch_page(HOME_PAGE)
     st.stop()
 
 

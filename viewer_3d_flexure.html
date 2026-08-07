@@ -745,36 +745,200 @@ var gMom = new THREE.Group(); overlays.add(gMom);
 (function () {
   // Sagging is plotted below the baseline and hogging above it, so a
   // fixed end shows the diagram crossing over near the support.
+  //
+  // A one pixel line vanishes on a phone, so the diagram is built as a
+  // lit rod instead. Each side of the baseline carries its own colour,
+  // red above the axis for hogging and blue below it for sagging, and
+  // each side is drawn three times over: a bright core tube for the
+  // outline, a wider additive tube around it that reads as the glow,
+  // and the enclosed area filled with a translucent wash plus ruled
+  // lines running back to the baseline.
   var base = -halfD - span * 2.8;
   var scale = span * 1.6;
-  var pts = [];
-  var n = 120;
+
+  var R_CORE = span * 0.042;
+  var R_GLOW = span * 0.125;
+
+  var HOG = { core: 0xffe3e0, glow: 0xff4d3d, rule: 0xff8a7a,
+              css: "#ff7b72" };
+  var SAG = { core: 0xdcefff, glow: 0x2f8fff, rule: 0x79c0ff,
+              css: "#58a6ff" };
+
+  function yOf(v) { return base - scale * v; }
+
+  // ---- primitives ---------------------------------------------------
+  function tube(vecs, radius, color, opacity, additive) {
+    if (vecs.length < 2) return;
+    var curve = new THREE.CatmullRomCurve3(vecs);
+    var geo = new THREE.TubeGeometry(
+      curve, Math.max(12, vecs.length * 2), radius, 8, false);
+    var mat = new THREE.MeshBasicMaterial({
+      color: color, depthTest: false, transparent: opacity < 1,
+      opacity: opacity });
+    if (additive) {
+      mat.blending = THREE.AdditiveBlending;
+      mat.depthWrite = false;
+    }
+    var m = new THREE.Mesh(geo, mat);
+    m.renderOrder = additive ? 3 : 4;
+    gMom.add(m);
+  }
+
+  // A straight rod, used for the baseline and for closing the diagram
+  // down to the axis at a fixed end.
+  function rod(y0, z0, y1, z1, radius, color, opacity, additive) {
+    tube([new THREE.Vector3(0, y0, z0), new THREE.Vector3(0, y1, z1)],
+         radius, color, opacity, additive);
+  }
+
+  // ---- split the envelope into runs of one sign ---------------------
+  // Zero crossings are inserted so every run starts and finishes exactly
+  // on the baseline, which keeps the fill closed and stops the red and
+  // the blue from bleeding into each other at the crossover.
+  var n = 160;
+  var zs = [], vs = [];
   for (var i = 0; i <= n; i++) {
     var zz = -L / 2 + i * L / n;
-    pts.push(new THREE.Vector3(0, base - scale * momEnv(zz), zz));
+    zs.push(zz);
+    vs.push(momEnv(zz));
   }
-  gMom.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: 0xa371f7, depthTest: false })));
-  addLine(gMom, [0, base, -L / 2], [0, base, L / 2], 0x6e7681);
-  addLine(gMom, [0, base, -L / 2], [0, base - scale * momEnv(-L / 2), -L / 2],
-          0xa371f7);
-  addLine(gMom, [0, base, L / 2], [0, base - scale * momEnv(L / 2), L / 2],
-          0xa371f7);
+
+  var runs = [];
+  var cur = { z: [], v: [], sign: 0 };
+
+  function sgn(x) { return x > 1e-9 ? 1 : (x < -1e-9 ? -1 : 0); }
+  function push(zz, vv) { cur.z.push(zz); cur.v.push(vv); }
+  function closeRun() {
+    if (cur.sign !== 0 && cur.z.length > 1) runs.push(cur);
+  }
+
+  for (var i = 0; i <= n; i++) {
+    var s = sgn(vs[i]);
+    if (cur.sign === 0) {
+      push(zs[i], vs[i]);
+      cur.sign = s;
+    } else if (s === cur.sign) {
+      push(zs[i], vs[i]);
+    } else if (s === 0) {
+      // The envelope touches the axis exactly on a sample. Several of
+      // the standard cases land here, fix - pin under a UDL crosses at
+      // s = 0.25 for instance, so this branch has to close the run
+      // rather than wait for a change of sign that never arrives.
+      push(zs[i], 0);
+      closeRun();
+      cur = { z: [zs[i]], v: [0], sign: 0 };
+    } else {
+      var a = vs[i - 1], b = vs[i];
+      var t = a / (a - b);
+      var zc = zs[i - 1] + t * (zs[i] - zs[i - 1]);
+      push(zc, 0);
+      closeRun();
+      cur = { z: [zc, zs[i]], v: [0, vs[i]], sign: s };
+    }
+  }
+  closeRun();
+
+  // ---- fill and rules -----------------------------------------------
+  function fillRun(run, color) {
+    var pos = [];
+    for (var i = 0; i + 1 < run.z.length; i++) {
+      var z0 = run.z[i], z1 = run.z[i + 1];
+      var y0 = yOf(run.v[i]), y1 = yOf(run.v[i + 1]);
+      pos.push(0, base, z0, 0, y0, z0, 0, y1, z1);
+      pos.push(0, base, z0, 0, y1, z1, 0, base, z1);
+    }
+    if (!pos.length) return;
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position",
+      new THREE.Float32BufferAttribute(pos, 3));
+    var mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: color, transparent: true, opacity: 0.22,
+      side: THREE.DoubleSide, depthTest: false, depthWrite: false,
+      blending: THREE.AdditiveBlending }));
+    mesh.renderOrder = 1;
+    gMom.add(mesh);
+  }
+
+  function ruleRun(run, color) {
+    var pos = [];
+    var span_z = Math.abs(run.z[run.z.length - 1] - run.z[0]);
+    var want = Math.max(3, Math.round(28 * span_z / L));
+    var step = Math.max(1, Math.floor((run.z.length - 1) / want));
+    for (var i = 0; i < run.z.length; i += step) {
+      if (Math.abs(run.v[i]) < 1e-6) continue;
+      pos.push(0, base, run.z[i], 0, yOf(run.v[i]), run.z[i]);
+    }
+    if (!pos.length) return;
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position",
+      new THREE.Float32BufferAttribute(pos, 3));
+    var seg = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      color: color, transparent: true, opacity: 0.60,
+      depthTest: false, depthWrite: false,
+      blending: THREE.AdditiveBlending }));
+    seg.renderOrder = 2;
+    gMom.add(seg);
+  }
+
+  // ---- baseline ------------------------------------------------------
+  rod(base, -L / 2, base, L / 2, span * 0.016, 0x8b949e, 1.0, false);
+
+  // ---- draw every run ------------------------------------------------
+  for (var r = 0; r < runs.length; r++) {
+    var run = runs[r];
+    if (run.sign === 0 || run.z.length < 2) continue;
+    var C = run.sign < 0 ? HOG : SAG;
+
+    fillRun(run, C.glow);
+    ruleRun(run, C.rule);
+
+    var vecs = [];
+    for (var i = 0; i < run.z.length; i++) {
+      vecs.push(new THREE.Vector3(0, yOf(run.v[i]), run.z[i]));
+    }
+    tube(vecs, R_GLOW, C.glow, 0.30, true);
+    tube(vecs, R_CORE, C.core, 1.0, false);
+
+    // Close the shape at a member end where the moment is not zero,
+    // which is what a fixed end looks like.
+    var iEnd = run.z.length - 1;
+    if (Math.abs(run.z[0] + L / 2) < 1e-6 && Math.abs(run.v[0]) > 1e-6) {
+      rod(base, run.z[0], yOf(run.v[0]), run.z[0], R_GLOW, C.glow, 0.30, true);
+      rod(base, run.z[0], yOf(run.v[0]), run.z[0], R_CORE, C.core, 1.0, false);
+    }
+    if (Math.abs(run.z[iEnd] - L / 2) < 1e-6
+        && Math.abs(run.v[iEnd]) > 1e-6) {
+      rod(base, run.z[iEnd], yOf(run.v[iEnd]), run.z[iEnd],
+          R_GLOW, C.glow, 0.30, true);
+      rod(base, run.z[iEnd], yOf(run.v[iEnd]), run.z[iEnd],
+          R_CORE, C.core, 1.0, false);
+    }
+  }
+
+  // ---- labels ---------------------------------------------------------
+  // Each side gets its own call-out at its own peak, so a fix - pin beam
+  // reads hogging over the support and sagging in the back span without
+  // the two labels landing on top of each other.
+  var pkP = 0, zP = 0, pkN = 0, zN = 0;
+  for (var j = 0; j <= 240; j++) {
+    var zz = -L / 2 + j * L / 240;
+    var vv = momEnv(zz);
+    if (vv > pkP) { pkP = vv; zP = zz; }
+    if (vv < pkN) { pkN = vv; zN = zz; }
+  }
+
+  if (pkP > 1e-6) {
+    addLabel(gMom, "sagging", [0, yOf(pkP) - span * 0.60, zP], SAG.css);
+  }
+  if (pkN < -1e-6) {
+    addLabel(gMom, "hogging", [0, yOf(pkN) + span * 0.60, zN], HOG.css);
+  }
 
   var mtxt = (RES.Mf_kNm !== undefined && RES.Mf_kNm !== null)
     ? ("max |M| = " + Number(RES.Mf_kNm).toFixed(1) + " kN-m")
     : "bending moment";
-  addLabel(gMom, mtxt, [0, base - scale * 1.6, 0], "#a371f7");
-
-  // Call out the peak, and the hogging end when there is one.
-  var sPk = 0, vPk = 0;
-  for (var j = 0; j <= 200; j++) {
-    var vv = momEnv(-L / 2 + j * L / 200);
-    if (Math.abs(vv) > Math.abs(vPk)) { vPk = vv; sPk = j / 200; }
-  }
-  var zPk = -L / 2 + sPk * L;
-  addLabel(gMom, vPk < 0 ? "hogging" : "sagging",
-           [0, base - scale * vPk * 1.25, zPk], "#a371f7");
+  var mcss = Math.abs(pkN) > pkP ? HOG.css : SAG.css;
+  addLabel(gMom, mtxt, [0, yOf(1) - span * 1.55, 0], mcss);
 })();
 
 // ---- lateral bracing ------------------------------------------------
@@ -821,7 +985,7 @@ function fitDist(objH, objW, margin) {
 // The beam runs horizontally, so the span sets the width and the section
 // plus the load arrows and moment diagram set the height.
 function fitWhole(margin) {
-  return fitDist(span * 9.0, L * 1.08, margin || 1.12);
+  return fitDist(span * 11.0, L * 1.08, margin || 1.12);
 }
 
 function applyCamera() {

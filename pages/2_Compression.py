@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+from _theme import (apply_theme, render_sidebar_logo, render_footer,
+                    gate_disclaimer, render_page_title)
 
 import sys as _sys
 _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -1177,9 +1178,13 @@ render_sidebar_logo()
 render_footer()
 gate_disclaimer()
 
-md("<h2 style='margin-bottom:0'>CSA S16 &mdash; Compression Member Design</h2>")
-note("Factored axial compressive resistance per Clauses 11, 13.3.1, 13.3.2 "
-     "and 13.3.3.")
+render_page_title(
+    "Compression Member Design",
+    clauses=("Cl. 11 (local buckling, Tables 1 and 2)  |  Cl. 13.3.1 "
+             "(flexural buckling)  |  Cl. 13.3.2 (torsional and flexural "
+             "torsional buckling)  |  Cl. 13.3.3 (Class 4 sections)"),
+    intro="Factored axial compressive resistance of a column.",
+)
 
 DATA = load_families()
 if not DATA:
@@ -1273,37 +1278,11 @@ except Exception as exc:
 
 st.caption("Families available here are those sst12.py reads. " + NOT_AVAILABLE)
 
-with st.expander("Section properties  -  " + sec.designation, expanded=False):
-    note("Only the values the checks below consume are listed. Each row "
-         "states where it is used.")
-    _rows = display_rows(sec)
-    if not _rows:
-        st.warning("No properties available for this section.")
-    else:
-        _cur = None
-        _html = ["<table style='border-collapse:collapse;width:100%'>"]
-        for _row in _rows:
-            if _row["group"] != _cur:
-                _cur = _row["group"]
-                _html.append(
-                    "<tr><td colspan='3' style='padding:10px 0 3px 0;"
-                    "font-weight:600'>" + _cur + "</td></tr>")
-            _unit = (" " + _row["unit"]) if _row["unit"] else ""
-            _unit = (_unit.replace("mm2", "mm<sup>2</sup>")
-                     .replace("mm4", "mm<sup>4</sup>")
-                     .replace("mm6", "mm<sup>6</sup>"))
-            _html.append(
-                "<tr>"
-                "<td style='padding:3px 16px 3px 14px;white-space:nowrap'>"
-                + _row["symbol"] + "</td>"
-                "<td style='padding:3px 16px 3px 0;white-space:nowrap'>"
-                + num(_row["value"], 2) + _unit + "</td>"
-                "<td style='padding:3px 0;color:#8b949e;font-size:0.88em'>"
-                + _row["why"] + "</td></tr>")
-        _html.append("</table>")
-        md("".join(_html))
-    st.caption("Source: CISC Structural Section Tables SST12.1, read at run "
-               "time through sst12.py. Only calculation inputs are shown.")
+st.caption("Section properties are read from the CISC SST12.1 workbook at "
+           "run time. Turn on Section data on the member model at the "
+           "bottom of the page to see them against the shape they belong "
+           "to.")
+
 
 # ---- 2. effective lengths ----
 section_heading("2. Effective Lengths")

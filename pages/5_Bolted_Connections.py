@@ -3,7 +3,8 @@ import re
 from enum import Enum
 import streamlit as st
 import streamlit.components.v1 as components
-from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+from _theme import (apply_theme, render_sidebar_logo, render_footer,
+                    gate_disclaimer, render_page_title)
 
 
 def _svg_html(svg: str) -> None:
@@ -13,7 +14,7 @@ def _svg_html(svg: str) -> None:
     components.html(svg, height=h, scrolling=False)
 
 # ================================================================
-# CSA S16 / CIVE 3205 — Chapter 6 Part 1 — Bolted Connections
+# CSA S16 / CIVE 3205 - Chapter 6 Part 1 - Bolted Connections
 # Failure modes: Vr, Br, Tr_bolt, Tr_gross, Tr_net, Vr_bs, Vs
 # Interaction checks + 4 SVG diagrams
 # ================================================================
@@ -38,7 +39,7 @@ EDGE_MAX_LIMIT   = 150.0
 EDGE_MAX_MULT_T  = 12.0
 
 
-# ── Enums ────────────────────────────────────────────────────────────────────
+# -- Enums ------------------------------------------------------------
 class BoltGrade(Enum):
     A307  = ("ASTM A307",  414.0)
     A325M = ("ASTM A325M", 830.0)
@@ -70,7 +71,7 @@ class EdgeType(Enum):
     ROLLED_SAWN       = "Rolled / sawn / thermal cut"
 
 
-# ── Table 3 ──────────────────────────────────────────────────────────────────
+# -- Table 3 ------------------------------------------------------------
 # Separate typed structures to avoid pyright dict-subscript warnings
 
 # cs values: turn-of-nut method, keyed by (surface_class, bolt_grade)
@@ -108,11 +109,11 @@ def get_cs(surface: SlipSurfaceClass, grade: BoltGrade,
     key = (surface, grade)
     if key in _CS_TURN:
         return _CS_TURN[key]
-    # A307 or unrecognised — fall back to "other" column (conservative)
+    # A307 or unrecognised - fall back to "other" column (conservative)
     return _CS_OTHER[surface]
 
 
-# ── Table 6 ──────────────────────────────────────────────────────────────────
+# -- Table 6 ------------------------------------------------------------
 TABLE_6: dict[int, tuple[int, int]] = {16:(28,22), 20:(34,26), 22:(38,28), 24:(42,30),
            27:(48,34), 30:(52,38), 36:(64,46)}
 
@@ -129,7 +130,7 @@ def max_edge_dist(t: float) -> float: return min(EDGE_MAX_MULT_T*t, EDGE_MAX_LIM
 def min_pitch(d: float) -> float: return PITCH_MIN_MULT * d
 
 
-# ── Core resistance functions (all return N) ──────────────────────────────────
+# -- Core resistance functions (all return N) ----------------------------------
 def bolt_area(d: float) -> float: return math.pi * d**2 / 4.0
 
 def vr_N(n, m, d, Fu_bolt, threads, long_splice):
@@ -178,7 +179,7 @@ def block_shear_N(n_rows, n_cols, pitch, end_dist, t, d_h, Fy, Fu, Ut):
         Ane = tension_len * t - (n_rows - 1) * 0.5 * d_h * t
         Ane = max(Ane, 0)
     else:
-        Ane = 0.0  # single bolt line — no tension area
+        Ane = 0.0  # single bolt line - no tension area
 
     case1 = PHI_U * (Ut * Ane * Fu + 0.6 * Agv * Fy)   # gross shear
     case2 = PHI_U * (Ut * Ane * Fu + 0.6 * Anv * Fu)   # net shear
@@ -190,7 +191,7 @@ def prying_k(a: float, b: float, t: float) -> float:
     return (3*b)/(8*a) - t**3/328e3
 
 
-# ── SVG helpers ───────────────────────────────────────────────────────────────
+# -- SVG helpers ------------------------------------------------------------
 def _hatch(x, y, w, h, col="#94a3b8", spacing=8, angle=45):
     lines = []
     if angle == 45:
@@ -262,7 +263,7 @@ def svg_bolt_layout(n_rows, n_cols, pitch, end_dist, edge_dist, d_mm, d_h):
 
     # Title
     svg += f'<text x="{ox+pw/2:.1f}" y="{oy-10}" fill="#e2e8f0" font-size="12" font-weight="bold" text-anchor="middle">'
-    svg += f'Bolt Layout — {n_rows}×{n_cols} ({n_rows*n_cols} bolts)</text>'
+    svg += f'Bolt Layout - {n_rows}x{n_cols} ({n_rows*n_cols} bolts)</text>'
 
     # Legend
     lx = W - 110; ly = oy + 10
@@ -315,7 +316,7 @@ def svg_failure_modes(n_rows, n_cols, pitch, end_dist, edge_dist, d_h,
         col = "#f97316" if governing_mode == "Net fracture" else "#f9731660"
         svg += f'<line x1="{bx:.1f}" y1="{oy}" x2="{bx:.1f}" y2="{oy+ph_plate}" stroke="{col}" stroke-width="2" stroke-dasharray="4,2"/>'
 
-    # Block shear — L-shaped path from end to last bolt then across
+    # Block shear - L-shaped path from end to last bolt then across
     if n_cols > 0:
         bx_last = bolt_xs[-1]
         col = "#ef4444" if governing_mode == "Block shear" else "#ef444460"
@@ -346,7 +347,7 @@ def svg_failure_modes(n_rows, n_cols, pitch, end_dist, edge_dist, d_h,
         is_gov = mode == governing_mode
         svg += f'<rect x="{lx}" y="{ly+i*17}" width="12" height="10" fill="{col}" opacity="{"1" if is_gov else "0.5"}"/>'
         fw = "bold" if is_gov else "normal"
-        svg += f'<text x="{lx+16}" y="{ly+i*17+9}" fill="{col if is_gov else "#94a3b8"}" font-size="9" font-weight="{fw}">{mode}{"  ← GOVERNING" if is_gov else ""}</text>'
+        svg += f'<text x="{lx+16}" y="{ly+i*17+9}" fill="{col if is_gov else "#94a3b8"}" font-size="9" font-weight="{fw}">{mode}{"  <- GOVERNING" if is_gov else ""}</text>'
 
     svg += f'<text x="{ox+pw/2}" y="18" fill="#e2e8f0" font-size="12" font-weight="bold" text-anchor="middle">Failure Mode Visualization</text>'
     svg += '</svg>'
@@ -418,19 +419,19 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
   <!-- Plate -->
   <rect x="{ox:.1f}" y="{oy:.1f}" width="{pw:.1f}" height="{ph:.1f}" fill="#334155" stroke="#475569" stroke-width="2"/>
 '''
-    # Shear area (Agv) — vertical hatch
+    # Shear area (Agv) - vertical hatch
     svg += f'<rect x="{ox:.1f}" y="{oy:.1f}" width="{sb_w:.1f}" height="{sb_h:.1f}" fill="#3b82f620"/>'
     svg += _hatch(ox, oy, sb_w, sb_h, col="#3b82f6", spacing=10, angle=90)
     svg += f'<rect x="{ox:.1f}" y="{oy:.1f}" width="{sb_w:.1f}" height="{sb_h:.1f}" fill="none" stroke="#3b82f6" stroke-width="2"/>'
 
-    # Tension area (Ane) — diagonal hatch
+    # Tension area (Ane) - diagonal hatch
     if n_rows > 1:
         tn_y = oy
         tn_h = (n_rows-1)*pitch*scale
         svg += f'<rect x="{ox+sb_w:.1f}" y="{tn_y:.1f}" width="{end_dist*scale:.1f}" height="{tn_h:.1f}" fill="#f9731620"/>'
         svg += _hatch(ox+sb_w, tn_y, end_dist*scale, tn_h, col="#f97316", spacing=8, angle=45)
         svg += f'<rect x="{ox+sb_w:.1f}" y="{tn_y:.1f}" width="{end_dist*scale:.1f}" height="{tn_h:.1f}" fill="none" stroke="#f97316" stroke-width="2"/>'
-        svg += f'<text x="{ox+sb_w+end_dist*scale/2:.1f}" y="{tn_y+tn_h+14}" fill="#f97316" font-size="9" text-anchor="middle">Ane={Ane:.0f} mm²</text>'
+        svg += f'<text x="{ox+sb_w+end_dist*scale/2:.1f}" y="{tn_y+tn_h+14}" fill="#f97316" font-size="9" text-anchor="middle">Ane={Ane:.0f} mm2</text>'
 
     # Bolts
     br = 7
@@ -441,8 +442,8 @@ def svg_block_shear_detail(n_rows, n_cols, pitch, end_dist, edge_dist,
             svg += f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{br}" fill="#60a5fa" stroke="#1e293b" stroke-width="1.5"/>'
 
     # Labels
-    svg += f'<text x="{ox + sb_w/2:.1f}" y="{oy + sb_h + 14}" fill="#3b82f6" font-size="9" text-anchor="middle">Agv={Agv:.0f} mm²</text>'
-    svg += f'<text x="{ox + sb_w/2:.1f}" y="{oy + sb_h + 24}" fill="#60a5fa" font-size="9" text-anchor="middle">Anv={Anv:.0f} mm²</text>'
+    svg += f'<text x="{ox + sb_w/2:.1f}" y="{oy + sb_h + 14}" fill="#3b82f6" font-size="9" text-anchor="middle">Agv={Agv:.0f} mm2</text>'
+    svg += f'<text x="{ox + sb_w/2:.1f}" y="{oy + sb_h + 24}" fill="#60a5fa" font-size="9" text-anchor="middle">Anv={Anv:.0f} mm2</text>'
 
     # Legend
     svg += f'<rect x="10" y="{H-50}" width="10" height="10" fill="#3b82f660"/>'
@@ -463,12 +464,16 @@ render_footer()
 gate_disclaimer()
 from _theme import beta_lock_page
 beta_lock_page("Bolted Connections")
-st.title("CSA S16 — Bolted Connection Solver")
-st.caption("Chapter 6 Part 1 · Failure modes: Vr, Br, Tr(bolt), Tr(gross), Tr(net), Vr(block shear), Vs · Prying integrated · 4 diagrams")
+render_page_title(
+    "Bolted Connection Design",
+    clauses=("Cl. 13.12.1 (bolt shear and bearing)  |  Cl. 13.12.1.3 "
+             "(tension)  |  Cl. 13.2 (gross and net section)  |  Cl. 13.11 "
+             "(block shear)  |  Cl. 13.12.1.2 (slip resistance)"),
+    intro=("Failure modes Vr, Br, Tr bolt, Tr gross, Tr net, Vr block shear "
+           "and Vs, with prying integrated."),
+)
 
-st.markdown("---")
-
-# ── INPUTS ───────────────────────────────────────────────────────────────────
+# -- INPUTS ------------------------------------------------------------
 col_a, col_b, col_c = st.columns(3)
 
 with col_a:
@@ -476,10 +481,10 @@ with col_a:
     conn_type = st.selectbox("Connection type", ["Bearing-type", "Slip-critical"], key="conn_type")
     grade     = st.selectbox("Bolt grade", list(BoltGrade), format_func=lambda g: g.label, key="grade")
     d_mm      = st.selectbox("Bolt diameter d (mm)", [16,20,22,24,27,30,36], key="d_mm")
-    n_rows    = int(st.number_input("Bolt rows (⊥ to load)", min_value=1, value=1, step=1, key="n_rows"))
-    n_cols    = int(st.number_input("Bolt columns (∥ to load)", min_value=1, value=4, step=1, key="n_cols"))
+    n_rows    = int(st.number_input("Bolt rows (perp to load)", min_value=1, value=1, step=1, key="n_rows"))
+    n_cols    = int(st.number_input("Bolt columns (parallel to load)", min_value=1, value=4, step=1, key="n_cols"))
     n         = n_rows * n_cols
-    st.info(f"Total bolts n = {n_rows} × {n_cols} = **{n}**")
+    st.info(f"Total bolts n = {n_rows} x {n_cols} = **{n}**")
     m         = int(st.number_input("Shear planes m", min_value=1, value=1, step=1, key="m"))
 
     st.markdown("### Plate Material")
@@ -505,17 +510,17 @@ with col_b:
                                            min_value=0.0, value=0.0, step=10.0, key="splice"))
     long_splice   = L_splice >= 760.0
     if long_splice:
-        st.warning("L ≥ 760 mm → Vr uses 0.50 factor (long splice, Cl. 13.12.1.2c)")
+        st.warning("L >= 760 mm -> Vr uses 0.50 factor (long splice, Cl. 13.12.1.2c)")
 
     Ut = float(st.selectbox("Shear lag factor Ut (block shear)",
-                             [("1.0 — all elements connected", 1.0),
-                              ("0.6 — partial connection (e.g. angles)", 0.6)],
+                             [("1.0 - all elements connected", 1.0),
+                              ("0.6 - partial connection (e.g. angles)", 0.6)],
                              format_func=lambda x: x[0], key="Ut")[1])
 
     if conn_type == "Slip-critical":
         st.markdown("### Slip-Critical (Table 3)")
         slip_surface = st.selectbox("Surface class", list(SlipSurfaceClass),
-                                    format_func=lambda s: f"{s.label} — {SLIP_DESC[s]}", key="surf")
+                                    format_func=lambda s: f"{s.label} - {SLIP_DESC[s]}", key="surf")
         slip_method  = st.selectbox("Installation method", list(InstallationMethod),
                                     format_func=lambda x: x.value, key="method")
     else:
@@ -530,8 +535,8 @@ with col_c:
     st.markdown("### Prying Action")
     pry_enabled = st.checkbox("Include prying action?", value=False, key="pry_on")
     if pry_enabled:
-        a_pry = float(st.number_input("Distance a (mm) — bolt to free edge", min_value=1.0, value=77.0, step=1.0, key="a_pry"))
-        b_pry = float(st.number_input("Distance b (mm) — bolt to applied load line", min_value=1.0, value=57.5, step=1.0, key="b_pry"))
+        a_pry = float(st.number_input("Distance a (mm) - bolt to free edge", min_value=1.0, value=77.0, step=1.0, key="a_pry"))
+        b_pry = float(st.number_input("Distance b (mm) - bolt to applied load line", min_value=1.0, value=57.5, step=1.0, key="b_pry"))
         P_per_bolt = Tu_kN / max(n, 1)
         k_pry = prying_k(a_pry, b_pry, t_mm)
         if math.isfinite(k_pry) and k_pry > 0:
@@ -541,7 +546,7 @@ with col_c:
         else:
             Q_per_bolt  = 0.0
             Tu_total_kN = Tu_kN
-            st.warning("k ≤ 0 — prying negligible")
+            st.warning("k <= 0 - prying negligible")
     else:
         a_pry = b_pry = k_pry = 0.0
         Q_per_bolt = 0.0
@@ -549,7 +554,7 @@ with col_c:
 
 st.markdown("---")
 
-# ── CALCULATIONS ─────────────────────────────────────────────────────────────
+# -- CALCULATIONS ------------------------------------------------------------
 Vu_N = Vu_kN * 1e3
 Tu_N = Tu_total_kN * 1e3
 Fu_bolt = grade.Fu_MPa
@@ -598,242 +603,242 @@ gov_val   = caps[gov_label]
 # Applied governs: use max of Vu or Tu for chart
 applied_chart = max(Vu_kN, Tu_total_kN)
 
-# ── RESULTS ──────────────────────────────────────────────────────────────────
+# -- RESULTS ------------------------------------------------------------
 st.subheader("Results")
 res_col, diag_col = st.columns([3, 2], gap="large")
 
 with res_col:
-    # Step 1 — Bolt area
-    st.markdown("#### Step 1 — Bolt Geometry")
+    # Step 1 - Bolt area
+    st.markdown("#### Step 1 - Bolt Geometry")
     st.latex(r"A_b = \frac{\pi d^2}{4}")
-    st.code(f"  d  = {d_mm} mm\n  Ab = π × {d_mm}² / 4 = {Ab:.1f} mm²\n  n  = {n_rows} × {n_cols} = {n} bolts,  m = {m} shear planes",
+    st.code(f"  d  = {d_mm} mm\n  Ab = pi x {d_mm}2 / 4 = {Ab:.1f} mm2\n  n  = {n_rows} x {n_cols} = {n} bolts,  m = {m} shear planes",
             language="text")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Bolt area Ab — gross cross-sectional area of bolt**",
-            "- Formula: Ab = π · d² / 4",
-            f"- Substitute: Ab = π × ({d_mm})² / 4",
-            f"- Result: **Ab = {Ab:.1f} mm²**  (n = {n} bolts, m = {m} shear planes)",
+            "**Bolt area Ab - gross cross-sectional area of bolt**",
+            "- Formula: Ab = pi . d2 / 4",
+            f"- Substitute: Ab = pi x ({d_mm})2 / 4",
+            f"- Result: **Ab = {Ab:.1f} mm2**  (n = {n} bolts, m = {m} shear planes)",
         ]))
 
-    # Step 2 — Bolt shear
+    # Step 2 - Bolt shear
     st.markdown("---")
-    st.markdown("#### Step 2 — Bolt Shear Resistance  *(Cl. 13.12.1.2c)*")
+    st.markdown("#### Step 2 - Bolt Shear Resistance  *(Cl. 13.12.1.2c)*")
     fac_used = BOLT_SHEAR_LONG_FACTOR if long_splice else BOLT_SHEAR_FACTOR
     if long_splice:
         st.latex(r"V_r = 0.50\,\phi_b\,n\,m\,A_b\,F_u \quad (L \geq 760\,\text{mm})")
     else:
         st.latex(r"V_r = 0.60\,\phi_b\,n\,m\,A_b\,F_u")
-    thr_str = f" × {THREADS_INTERCEPT} (threads)" if threads else ""
-    st.code(f"  = {fac_used} × {PHI_B} × {n} × {m} × {Ab:.1f} × {Fu_bolt:.0f}{thr_str}\n  = {kN(Vr):.1f} kN",
+    thr_str = f" x {THREADS_INTERCEPT} (threads)" if threads else ""
+    st.code(f"  = {fac_used} x {PHI_B} x {n} x {m} x {Ab:.1f} x {Fu_bolt:.0f}{thr_str}\n  = {kN(Vr):.1f} kN",
             language="text")
     _icon = "PASS" if Vr >= Vu_N else "FAIL"
-    st.markdown(f"{_icon} — Vr = **{kN(Vr):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
+    st.markdown(f"{_icon} - Vr = **{kN(Vr):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Bolt shear resistance Vr — CSA S16 Cl. 13.12.1.2c**",
-            f"- Formula: Vr = {fac_used}·φb·n·m·Ab·Fu" + (" × 0.70 (threads intercepted)" if threads else ""),
-            f"- Substitute: Vr = {fac_used} × {PHI_B} × {n} × {m} × {Ab:.1f} × {Fu_bolt:.0f}" + (f" × {THREADS_INTERCEPT}" if threads else ""),
+            "**Bolt shear resistance Vr - CSA S16 Cl. 13.12.1.2c**",
+            f"- Formula: Vr = {fac_used}.phib.n.m.Ab.Fu" + (" x 0.70 (threads intercepted)" if threads else ""),
+            f"- Substitute: Vr = {fac_used} x {PHI_B} x {n} x {m} x {Ab:.1f} x {Fu_bolt:.0f}" + (f" x {THREADS_INTERCEPT}" if threads else ""),
             f"- Result: **Vr = {kN(Vr):.1f} kN**  (vs Vf = {Vu_kN:.1f} kN)",
         ]))
 
-    # Step 3 — Bearing
+    # Step 3 - Bearing
     st.markdown("---")
-    st.markdown("#### Step 3 — Bearing Resistance  *(Cl. 13.12.1.2a)*")
+    st.markdown("#### Step 3 - Bearing Resistance  *(Cl. 13.12.1.2a)*")
     coeff_str = "2.4" if long_slot else "3.0"
     st.latex(r"B_r = " + coeff_str + r"\,\phi_{br}\,n\,t\,d\,F_u")
-    st.code(f"  = {coeff_str} × {PHI_BR} × {n} × {t_mm} × {d_mm} × {Fu_plate:.0f}\n  = {kN(Br):.1f} kN",
+    st.code(f"  = {coeff_str} x {PHI_BR} x {n} x {t_mm} x {d_mm} x {Fu_plate:.0f}\n  = {kN(Br):.1f} kN",
             language="text")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Bearing resistance Br — CSA S16 Cl. 13.12.1.2a**",
-            f"- Formula: Br = {coeff_str}·φbr·n·t·d·Fu",
-            f"- Substitute: Br = {coeff_str} × {PHI_BR} × {n} × {t_mm} × {d_mm} × {Fu_plate:.0f}",
+            "**Bearing resistance Br - CSA S16 Cl. 13.12.1.2a**",
+            f"- Formula: Br = {coeff_str}.phibr.n.t.d.Fu",
+            f"- Substitute: Br = {coeff_str} x {PHI_BR} x {n} x {t_mm} x {d_mm} x {Fu_plate:.0f}",
             f"- Result: **Br = {kN(Br):.1f} kN**",
         ]))
 
-    # Step 4 — Bolt tension
+    # Step 4 - Bolt tension
     st.markdown("---")
-    st.markdown("#### Step 4 — Bolt Tension Resistance  *(Cl. 13.12.1.3)*")
+    st.markdown("#### Step 4 - Bolt Tension Resistance  *(Cl. 13.12.1.3)*")
     st.latex(r"T_r = 0.75\,\phi_b\,A_b\,F_u")
-    st.code(f"  Per bolt = 0.75 × {PHI_B} × {Ab:.1f} × {Fu_bolt:.0f} = {kN(Tr_b):.1f} kN\n"
+    st.code(f"  Per bolt = 0.75 x {PHI_B} x {Ab:.1f} x {Fu_bolt:.0f} = {kN(Tr_b):.1f} kN\n"
             f"  Group ({n} bolts) = {kN(Tr_b_group):.1f} kN", language="text")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Bolt tension resistance Tr — CSA S16 Cl. 13.12.1.3**",
-            "- Formula: Tr = 0.75·φb·Ab·Fu  (per bolt)",
-            f"- Substitute: Tr = 0.75 × {PHI_B} × {Ab:.1f} × {Fu_bolt:.0f}",
+            "**Bolt tension resistance Tr - CSA S16 Cl. 13.12.1.3**",
+            "- Formula: Tr = 0.75.phib.Ab.Fu  (per bolt)",
+            f"- Substitute: Tr = 0.75 x {PHI_B} x {Ab:.1f} x {Fu_bolt:.0f}",
             f"- Result (per bolt): **Tr = {kN(Tr_b):.1f} kN**",
-            f"- Group ({n} bolts): Tr = {n} × {kN(Tr_b):.1f} = **{kN(Tr_b_group):.1f} kN**",
+            f"- Group ({n} bolts): Tr = {n} x {kN(Tr_b):.1f} = **{kN(Tr_b_group):.1f} kN**",
         ]))
 
-    # Step 5 — Prying
+    # Step 5 - Prying
     if pry_enabled and math.isfinite(k_pry) and k_pry > 0:
         st.markdown("---")
-        st.markdown("#### Step 5 — Prying Action")
+        st.markdown("#### Step 5 - Prying Action")
         st.latex(r"k = \frac{3b}{8a} - \frac{t^3}{328\times10^3} \qquad Q = kP")
-        st.code(f"  k = (3 × {b_pry}) / (8 × {a_pry}) - {t_mm}³/328000\n"
+        st.code(f"  k = (3 x {b_pry}) / (8 x {a_pry}) - {t_mm}3/328000\n"
                 f"    = {k_pry:.4f}\n"
                 f"  P/bolt = {Tu_kN:.1f}/{n} = {P_per_bolt:.3f} kN\n"
-                f"  Q/bolt = {k_pry:.4f} × {P_per_bolt:.3f} = {Q_per_bolt:.3f} kN\n"
+                f"  Q/bolt = {k_pry:.4f} x {P_per_bolt:.3f} = {Q_per_bolt:.3f} kN\n"
                 f"  Tu (incl. prying) = {Tu_kN:.1f} + {Q_per_bolt*n:.2f} = {Tu_total_kN:.2f} kN",
                 language="text")
 
-        with st.expander("📐 Show calculation steps", expanded=True):
+        with st.expander(" Show calculation steps", expanded=True):
             st.markdown("\n".join([
-                "**Prying action — amplified bolt tension**",
-                "- Formula: k = 3b/(8a) − t³/(328×10³);  Q = k·P",
-                f"- Substitute k: k = (3 × {b_pry}) / (8 × {a_pry}) − {t_mm}³/(328×10³)",
+                "**Prying action - amplified bolt tension**",
+                "- Formula: k = 3b/(8a) - t3/(328x103);  Q = k.P",
+                f"- Substitute k: k = (3 x {b_pry}) / (8 x {a_pry}) - {t_mm}3/(328x103)",
                 f"- Result: **k = {k_pry:.4f}**",
                 f"- Load per bolt: P = Tu/n = {Tu_kN:.1f}/{n} = {P_per_bolt:.3f} kN",
-                f"- Pry per bolt: Q = k·P = {k_pry:.4f} × {P_per_bolt:.3f} = {Q_per_bolt:.3f} kN",
-                f"- Amplified tension: Tf = Tu + Q·n = {Tu_kN:.1f} + {Q_per_bolt*n:.2f} = **{Tu_total_kN:.2f} kN**",
+                f"- Pry per bolt: Q = k.P = {k_pry:.4f} x {P_per_bolt:.3f} = {Q_per_bolt:.3f} kN",
+                f"- Amplified tension: Tf = Tu + Q.n = {Tu_kN:.1f} + {Q_per_bolt*n:.2f} = **{Tu_total_kN:.2f} kN**",
             ]))
 
-    # Step 6 — Gross yielding
+    # Step 6 - Gross yielding
     st.markdown("---")
-    st.markdown("#### Step 6 — Plate Gross Yielding  *(Cl. 13.2a)*")
+    st.markdown("#### Step 6 - Plate Gross Yielding  *(Cl. 13.2a)*")
     st.latex(r"T_{r,gross} = \phi \cdot A_g \cdot F_y")
     Ag = w_mm * t_mm
-    st.code(f"  Ag = w × t = {w_mm:.0f} × {t_mm:.0f} = {Ag:.0f} mm²\n"
-            f"  Tr,gross = {PHI} × {Ag:.0f} × {Fy_plate:.0f} = {kN(Tr_g):.1f} kN",
+    st.code(f"  Ag = w x t = {w_mm:.0f} x {t_mm:.0f} = {Ag:.0f} mm2\n"
+            f"  Tr,gross = {PHI} x {Ag:.0f} x {Fy_plate:.0f} = {kN(Tr_g):.1f} kN",
             language="text")
     _icon = "PASS" if Tr_g >= Tu_N else "FAIL"
-    st.markdown(f"{_icon} — Tr,gross = **{kN(Tr_g):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
+    st.markdown(f"{_icon} - Tr,gross = **{kN(Tr_g):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Plate gross-section yield Tr — CSA S16 Cl. 13.2 a)**",
-            "- Formula: Tr = φ·Ag·Fy,  Ag = w·t",
-            f"- Substitute Ag: Ag = {w_mm:.0f} × {t_mm:.0f} = {Ag:.0f} mm²",
-            f"- Substitute Tr: Tr = {PHI} × {Ag:.0f} × {Fy_plate:.0f}",
+            "**Plate gross-section yield Tr - CSA S16 Cl. 13.2 a)**",
+            "- Formula: Tr = phi.Ag.Fy,  Ag = w.t",
+            f"- Substitute Ag: Ag = {w_mm:.0f} x {t_mm:.0f} = {Ag:.0f} mm2",
+            f"- Substitute Tr: Tr = {PHI} x {Ag:.0f} x {Fy_plate:.0f}",
             f"- Result: **Tr = {kN(Tr_g):.1f} kN**  (vs Tf = {Tu_total_kN:.1f} kN)",
         ]))
 
-    # Step 7 — Net fracture
+    # Step 7 - Net fracture
     st.markdown("---")
-    st.markdown("#### Step 7 — Plate Net Section Fracture  *(Cl. 13.2b)*")
+    st.markdown("#### Step 7 - Plate Net Section Fracture  *(Cl. 13.2b)*")
     st.latex(r"T_{r,net} = \phi_u \cdot A_{ne} \cdot F_u")
     Ane_plate = (w_mm - n_rows * d_h) * t_mm
-    st.code(f"  Ane = (w - n_rows × d_h) × t\n"
-            f"      = ({w_mm:.0f} - {n_rows} × {d_h:.0f}) × {t_mm:.0f} = {Ane_plate:.0f} mm²\n"
-            f"  Tr,net = {PHI_U} × {max(Ane_plate,0):.0f} × {Fu_plate:.0f} = {kN(Tr_n):.1f} kN",
+    st.code(f"  Ane = (w - n_rows x d_h) x t\n"
+            f"      = ({w_mm:.0f} - {n_rows} x {d_h:.0f}) x {t_mm:.0f} = {Ane_plate:.0f} mm2\n"
+            f"  Tr,net = {PHI_U} x {max(Ane_plate,0):.0f} x {Fu_plate:.0f} = {kN(Tr_n):.1f} kN",
             language="text")
     _icon = "PASS" if Tr_n >= Tu_N else "FAIL"
-    st.markdown(f"{_icon} — Tr,net = **{kN(Tr_n):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
+    st.markdown(f"{_icon} - Tr,net = **{kN(Tr_n):.1f} kN**  vs  Tu = {Tu_total_kN:.1f} kN")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Plate net-section fracture Tr — CSA S16 Cl. 13.2 b)**",
-            "- Formula: Tr = φu·Ane·Fu,  Ane = (w − n_rows·d_h)·t",
-            f"- Substitute Ane: Ane = ({w_mm:.0f} − {n_rows} × {d_h:.0f}) × {t_mm:.0f} = {Ane_plate:.0f} mm²",
-            f"- Substitute Tr: Tr = {PHI_U} × {max(Ane_plate,0):.0f} × {Fu_plate:.0f}",
+            "**Plate net-section fracture Tr - CSA S16 Cl. 13.2 b)**",
+            "- Formula: Tr = phiu.Ane.Fu,  Ane = (w - n_rows.d_h).t",
+            f"- Substitute Ane: Ane = ({w_mm:.0f} - {n_rows} x {d_h:.0f}) x {t_mm:.0f} = {Ane_plate:.0f} mm2",
+            f"- Substitute Tr: Tr = {PHI_U} x {max(Ane_plate,0):.0f} x {Fu_plate:.0f}",
             f"- Result: **Tr = {kN(Tr_n):.1f} kN**  (vs Tf = {Tu_total_kN:.1f} kN)",
         ]))
 
-    # Step 8 — Block shear
+    # Step 8 - Block shear
     st.markdown("---")
-    st.markdown("#### Step 8 — Block Shear  *(Cl. 13.11)*")
+    st.markdown("#### Step 8 - Block Shear  *(Cl. 13.11)*")
     st.latex(r"V_{r,bs} = \phi_u\!\left(U_t A_{ne} F_u + 0.6\,A_{gv} F_y\right) \text{ or } \phi_u\!\left(U_t A_{ne} F_u + 0.6\,A_{nv} F_u\right)")
-    st.code(f"  Shear path length = {use_end:.0f} + ({n_cols}-1)×{use_pitch:.0f} = {use_end+(n_cols-1)*use_pitch:.0f} mm\n"
-            f"  Agv  = {n_rows} lines × {use_end+(n_cols-1)*use_pitch:.0f} × {t_mm:.0f} = {Agv:.0f} mm²\n"
-            f"  Anv  = {Agv:.0f} - {n_rows}×({n_cols}-0.5)×{d_h:.0f}×{t_mm:.0f} = {Anv:.0f} mm²\n"
-            f"  Ane  = {Ane:.0f} mm²   (tension path between bolt lines)\n"
+    st.code(f"  Shear path length = {use_end:.0f} + ({n_cols}-1)x{use_pitch:.0f} = {use_end+(n_cols-1)*use_pitch:.0f} mm\n"
+            f"  Agv  = {n_rows} lines x {use_end+(n_cols-1)*use_pitch:.0f} x {t_mm:.0f} = {Agv:.0f} mm2\n"
+            f"  Anv  = {Agv:.0f} - {n_rows}x({n_cols}-0.5)x{d_h:.0f}x{t_mm:.0f} = {Anv:.0f} mm2\n"
+            f"  Ane  = {Ane:.0f} mm2   (tension path between bolt lines)\n"
             f"  Ut   = {Ut}\n"
-            f"  ──────────────────────────────────────────────────\n"
-            f"  Case 1 (gross shear): {PHI_U}×({Ut}×{Ane:.0f}×{Fu_plate:.0f} + 0.6×{Agv:.0f}×{Fy_plate:.0f}) = {kN(bs_case1):.1f} kN\n"
-            f"  Case 2 (net shear):   {PHI_U}×({Ut}×{Ane:.0f}×{Fu_plate:.0f} + 0.6×{Anv:.0f}×{Fu_plate:.0f}) = {kN(bs_case2):.1f} kN\n"
+            f"  ------------------------------------------------------------\n"
+            f"  Case 1 (gross shear): {PHI_U}x({Ut}x{Ane:.0f}x{Fu_plate:.0f} + 0.6x{Agv:.0f}x{Fy_plate:.0f}) = {kN(bs_case1):.1f} kN\n"
+            f"  Case 2 (net shear):   {PHI_U}x({Ut}x{Ane:.0f}x{Fu_plate:.0f} + 0.6x{Anv:.0f}x{Fu_plate:.0f}) = {kN(bs_case2):.1f} kN\n"
             f"  Governing (lesser) = {kN(Vr_bs):.1f} kN",
             language="text")
     _icon = "PASS" if Vr_bs >= Vu_N else "FAIL"
-    st.markdown(f"{_icon} — Vr,bs = **{kN(Vr_bs):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
+    st.markdown(f"{_icon} - Vr,bs = **{kN(Vr_bs):.1f} kN**  vs  Vu = {Vu_kN:.1f} kN")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Block shear Vr — CSA S16 Cl. 13.11**",
-            f"- Shear path length: Lv = a_end + (n_cols−1)·p = {use_end:.0f} + ({n_cols}−1)×{use_pitch:.0f} = {use_end+(n_cols-1)*use_pitch:.0f} mm",
-            f"- Gross shear area: Agv = n_rows·Lv·t = {n_rows} × {use_end+(n_cols-1)*use_pitch:.0f} × {t_mm:.0f} = {Agv:.0f} mm²",
-            f"- Net shear area: Anv = Agv − n_rows·(n_cols−0.5)·d_h·t = {Agv:.0f} − {n_rows}×({n_cols}−0.5)×{d_h:.0f}×{t_mm:.0f} = {Anv:.0f} mm²",
-            f"- Net tension area: Ane = {Ane:.0f} mm²  (Ut = {Ut})",
-            f"- Case 1 (gross shear): φu(Ut·Ane·Fu + 0.6·Agv·Fy) = {PHI_U}×({Ut}×{Ane:.0f}×{Fu_plate:.0f} + 0.6×{Agv:.0f}×{Fy_plate:.0f}) = {kN(bs_case1):.1f} kN",
-            f"- Case 2 (net shear): φu(Ut·Ane·Fu + 0.6·Anv·Fu) = {PHI_U}×({Ut}×{Ane:.0f}×{Fu_plate:.0f} + 0.6×{Anv:.0f}×{Fu_plate:.0f}) = {kN(bs_case2):.1f} kN",
+            "**Block shear Vr - CSA S16 Cl. 13.11**",
+            f"- Shear path length: Lv = a_end + (n_cols-1).p = {use_end:.0f} + ({n_cols}-1)x{use_pitch:.0f} = {use_end+(n_cols-1)*use_pitch:.0f} mm",
+            f"- Gross shear area: Agv = n_rows.Lv.t = {n_rows} x {use_end+(n_cols-1)*use_pitch:.0f} x {t_mm:.0f} = {Agv:.0f} mm2",
+            f"- Net shear area: Anv = Agv - n_rows.(n_cols-0.5).d_h.t = {Agv:.0f} - {n_rows}x({n_cols}-0.5)x{d_h:.0f}x{t_mm:.0f} = {Anv:.0f} mm2",
+            f"- Net tension area: Ane = {Ane:.0f} mm2  (Ut = {Ut})",
+            f"- Case 1 (gross shear): phiu(Ut.Ane.Fu + 0.6.Agv.Fy) = {PHI_U}x({Ut}x{Ane:.0f}x{Fu_plate:.0f} + 0.6x{Agv:.0f}x{Fy_plate:.0f}) = {kN(bs_case1):.1f} kN",
+            f"- Case 2 (net shear): phiu(Ut.Ane.Fu + 0.6.Anv.Fu) = {PHI_U}x({Ut}x{Ane:.0f}x{Fu_plate:.0f} + 0.6x{Anv:.0f}x{Fu_plate:.0f}) = {kN(bs_case2):.1f} kN",
             f"- Result (lesser): **Vr = {kN(Vr_bs):.1f} kN**  (vs Vf = {Vu_kN:.1f} kN)",
         ]))
 
-    # Step 9 — Slip
+    # Step 9 - Slip
     if conn_type == "Slip-critical":
         st.markdown("---")
-        st.markdown("#### Step 9 — Slip Resistance  *(Cl. 13.12.2.2)*")
+        st.markdown("#### Step 9 - Slip Resistance  *(Cl. 13.12.2.2)*")
         if not slip_ok:
             st.warning("Slip-critical resistance not applicable to A307 bolts.")
         else:
             st.latex(r"V_s = 0.53\,c_s\,k_s\,n\,m\,A_b\,F_u")
-            ls_note = " × 0.75 (long slot)" if long_slot else ""
+            ls_note = " x 0.75 (long slot)" if long_slot else ""
             st.code(f"  ks = {ks_val:.2f}  cs = {cs_val:.2f}  ({SLIP_DESC[slip_surface]})\n"
-                    f"  = 0.53 × {cs_val:.2f} × {ks_val:.2f} × {n} × {m} × {Ab:.1f} × {Fu_bolt:.0f}{ls_note}\n"
+                    f"  = 0.53 x {cs_val:.2f} x {ks_val:.2f} x {n} x {m} x {Ab:.1f} x {Fu_bolt:.0f}{ls_note}\n"
                     f"  = {kN(Vs):.1f} kN", language="text")
 
-            with st.expander("📐 Show calculation steps", expanded=True):
+            with st.expander(" Show calculation steps", expanded=True):
                 st.markdown("\n".join([
-                    "**Slip resistance Vs — CSA S16 Cl. 13.12.2.2**",
-                    "- Formula: Vs = 0.53·cs·ks·n·m·Ab·Fu" + (" × 0.75 (long-slotted)" if long_slot else ""),
-                    f"- Substitute: Vs = 0.53 × {cs_val:.2f} × {ks_val:.2f} × {n} × {m} × {Ab:.1f} × {Fu_bolt:.0f}" + (" × 0.75" if long_slot else ""),
+                    "**Slip resistance Vs - CSA S16 Cl. 13.12.2.2**",
+                    "- Formula: Vs = 0.53.cs.ks.n.m.Ab.Fu" + (" x 0.75 (long-slotted)" if long_slot else ""),
+                    f"- Substitute: Vs = 0.53 x {cs_val:.2f} x {ks_val:.2f} x {n} x {m} x {Ab:.1f} x {Fu_bolt:.0f}" + (" x 0.75" if long_slot else ""),
                     f"- Result: **Vs = {kN(Vs):.1f} kN**  (ks = {ks_val:.2f}, cs = {cs_val:.2f}, {SLIP_DESC[slip_surface]})",
                 ]))
 
-    # Step 10 — Interaction
+    # Step 10 - Interaction
     st.markdown("---")
-    st.markdown("#### Step 10 — Interaction Checks")
+    st.markdown("#### Step 10 - Interaction Checks")
 
     u_bt = (Vu_N/Vr)**2 + (Tu_N/Tr_b_group)**2 if (Vr > 0 and Tr_b_group > 0) else float("inf")
     st.latex(r"\left(\frac{V_f}{V_r}\right)^2 + \left(\frac{T_f}{T_r}\right)^2 \leq 1.0")
-    st.code(f"  = ({Vu_kN:.1f}/{kN(Vr):.1f})² + ({Tu_total_kN:.1f}/{kN(Tr_b_group):.1f})²\n"
+    st.code(f"  = ({Vu_kN:.1f}/{kN(Vr):.1f})2 + ({Tu_total_kN:.1f}/{kN(Tr_b_group):.1f})2\n"
             f"  = {(Vu_N/Vr)**2:.4f} + {(Tu_N/Tr_b_group)**2:.4f} = {u_bt:.4f}",
             language="text")
-    if u_bt <= 1.0: st.success(f"PASS — bearing-type interaction = {u_bt:.3f}")
-    else:           st.error(f"FAIL — bearing-type interaction = {u_bt:.3f}")
+    if u_bt <= 1.0: st.success(f"PASS - bearing-type interaction = {u_bt:.3f}")
+    else:           st.error(f"FAIL - bearing-type interaction = {u_bt:.3f}")
 
-    with st.expander("📐 Show calculation steps", expanded=True):
+    with st.expander(" Show calculation steps", expanded=True):
         st.markdown("\n".join([
-            "**Bearing-type shear–tension interaction — CSA S16 Cl. 13.12.1.4**",
-            "- Formula: (Vf/Vr)² + (Tf/Tr)² ≤ 1.0",
-            f"- Substitute: ({Vu_kN:.1f}/{kN(Vr):.1f})² + ({Tu_total_kN:.1f}/{kN(Tr_b_group):.1f})²",
-            f"- Result: {(Vu_N/Vr)**2:.4f} + {(Tu_N/Tr_b_group)**2:.4f} = **{u_bt:.4f}**  ({'≤ 1.0 → OK' if u_bt <= 1.0 else '> 1.0 → NG'})",
+            "**Bearing-type shear-tension interaction - CSA S16 Cl. 13.12.1.4**",
+            "- Formula: (Vf/Vr)2 + (Tf/Tr)2 <= 1.0",
+            f"- Substitute: ({Vu_kN:.1f}/{kN(Vr):.1f})2 + ({Tu_total_kN:.1f}/{kN(Tr_b_group):.1f})2",
+            f"- Result: {(Vu_N/Vr)**2:.4f} + {(Tu_N/Tr_b_group)**2:.4f} = **{u_bt:.4f}**  ({'<= 1.0 -> OK' if u_bt <= 1.0 else '> 1.0 -> NG'})",
         ]))
 
     if conn_type == "Slip-critical" and slip_ok and Vs > 0:
         u_sc = Vu_N/Vs + 1.9*Tu_N/(n*Ab*Fu_bolt)
         st.latex(r"\frac{V}{V_s} + \frac{1.9\,T}{n\,A_b\,F_u} \leq 1.0")
-        st.code(f"  = {Vu_kN:.1f}/{kN(Vs):.1f} + 1.9×{Tu_total_kN:.1f}/({n}×{Ab:.1f}×{kN(Fu_bolt*1000):.0f})\n"
+        st.code(f"  = {Vu_kN:.1f}/{kN(Vs):.1f} + 1.9x{Tu_total_kN:.1f}/({n}x{Ab:.1f}x{kN(Fu_bolt*1000):.0f})\n"
                 f"  = {u_sc:.4f}", language="text")
-        if u_sc <= 1.0: st.success(f"PASS — slip-critical interaction = {u_sc:.3f}")
-        else:           st.error(f"FAIL — slip-critical interaction = {u_sc:.3f}")
+        if u_sc <= 1.0: st.success(f"PASS - slip-critical interaction = {u_sc:.3f}")
+        else:           st.error(f"FAIL - slip-critical interaction = {u_sc:.3f}")
 
-        with st.expander("📐 Show calculation steps", expanded=True):
+        with st.expander(" Show calculation steps", expanded=True):
             st.markdown("\n".join([
-                "**Slip-critical shear–tension interaction — CSA S16 Cl. 13.12.2.3**",
-                "- Formula: V/Vs + 1.9·T/(n·Ab·Fu) ≤ 1.0",
-                f"- Substitute: {Vu_kN:.1f}/{kN(Vs):.1f} + 1.9×{Tu_total_kN:.1f}/({n}×{Ab:.1f}×{kN(Fu_bolt*1000):.0f})",
-                f"- Result: **{u_sc:.4f}**  ({'≤ 1.0 → OK' if u_sc <= 1.0 else '> 1.0 → NG'})",
+                "**Slip-critical shear-tension interaction - CSA S16 Cl. 13.12.2.3**",
+                "- Formula: V/Vs + 1.9.T/(n.Ab.Fu) <= 1.0",
+                f"- Substitute: {Vu_kN:.1f}/{kN(Vs):.1f} + 1.9x{Tu_total_kN:.1f}/({n}x{Ab:.1f}x{kN(Fu_bolt*1000):.0f})",
+                f"- Result: **{u_sc:.4f}**  ({'<= 1.0 -> OK' if u_sc <= 1.0 else '> 1.0 -> NG'})",
             ]))
 
-    # Step 11 — Governing
+    # Step 11 - Governing
     st.markdown("---")
-    st.markdown("#### Step 11 — Governing Summary")
+    st.markdown("#### Step 11 - Governing Summary")
     for label, val in caps.items():
         passes = val >= applied_chart
         icon   = "PASS" if passes else "FAIL"
         bold   = "**" if label == gov_label else ""
-        st.markdown(f"{icon} — {bold}{label} = {val:.1f} kN{bold}")
+        st.markdown(f"{icon} - {bold}{label} = {val:.1f} kN{bold}")
     st.markdown("---")
     if gov_val >= applied_chart:
-        st.success(f"OVERALL PASS — Governing: {gov_label} = {gov_val:.1f} kN >= {applied_chart:.1f} kN")
+        st.success(f"OVERALL PASS - Governing: {gov_label} = {gov_val:.1f} kN >= {applied_chart:.1f} kN")
     else:
-        st.error(f"OVERALL FAIL — Governing: {gov_label} = {gov_val:.1f} kN < {applied_chart:.1f} kN")
+        st.error(f"OVERALL FAIL - Governing: {gov_label} = {gov_val:.1f} kN < {applied_chart:.1f} kN")
 
     # Detailing checks
     st.markdown("---")
@@ -853,18 +858,18 @@ with res_col:
         ok = prov >= req_min and (req_max is None or prov <= req_max)
         req_str = f">= {req_min:.1f}" + (f" and <= {req_max:.1f}" if req_max else "")
         icon = "PASS" if ok else "FAIL"
-        st.markdown(f"{icon} — **{label}**: {prov:.1f} mm  ({req_str})")
+        st.markdown(f"{icon} - **{label}**: {prov:.1f} mm  ({req_str})")
 
 
 with diag_col:
     st.markdown("#### Diagrams")
 
-    # Diagram 1 — bolt layout
+    # Diagram 1 - bolt layout
     st.markdown("**Bolt Layout Plan**")
     use_edge = edge_prov_mm if edge_prov_mm > 0 else min_edge_dist(d_mm, edge_type)
     _svg_html(svg_bolt_layout(n_rows, n_cols, use_pitch, use_end, use_edge, d_mm, d_h))
 
-    # Diagram 2 — failure modes
+    # Diagram 2 - failure modes
     st.markdown("**Failure Mode Visualization**")
     gov_mode_map = {
         "Bolt shear Vr": "Bolt shear", "Bearing Br": "Bearing",
@@ -875,11 +880,11 @@ with diag_col:
     gov_mode = gov_mode_map.get(gov_label, "Bolt shear")
     _svg_html(svg_failure_modes(n_rows, n_cols, use_pitch, use_end, use_edge, d_h, gov_mode))
 
-    # Diagram 3 — capacity bar chart
+    # Diagram 3 - capacity bar chart
     st.markdown("**Capacity Bar Chart**")
     _svg_html(svg_capacity_bars(caps, applied_chart, gov_label))
 
-    # Diagram 4 — block shear geometry
+    # Diagram 4 - block shear geometry
     st.markdown("**Block Shear Geometry**")
     _svg_html(svg_block_shear_detail(n_rows, n_cols, use_pitch, use_end,
                                      use_edge, Agv, Anv, Ane, d_h))

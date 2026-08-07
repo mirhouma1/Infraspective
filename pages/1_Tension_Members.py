@@ -16,7 +16,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 #numpy is the numerical python library 
 #pandas is the data analysis library
 #streamlit is the web app framework
@@ -28,13 +27,14 @@ import re as _re
 # FOOTNOTE: _theme.py acts as the single source of truth for global UI aesthetics, isolating custom HTML/CSS injections, color tokens, and layout configurations from functional application logic.
 
 try:
-    from _theme import apply_theme, render_sidebar_logo, render_footer, gate_disclaimer
+    from _theme import (apply_theme, render_sidebar_logo, render_footer,
+                        gate_disclaimer, render_page_title)
 except ImportError:
     def apply_theme(): pass
     def render_sidebar_logo(): pass
     def render_footer(): pass
     def gate_disclaimer(): pass
-    def render_page_header(title, subtitle=""): pass
+    def render_page_title(title, clauses="", intro="", standard=""): pass
 # 
 
 def _nat_key(s):
@@ -51,37 +51,12 @@ def _nat_key(s):
 #split: Use split() when one string actually contains multiple pieces of information, and you want Python to treat each piece separately.
 
 
-try:
-    from connection_diagram import generate_connection_svg
-    HAS_SVG = True
-except ImportError:
-    HAS_SVG = False
-
-try:
-    from section_diagrams import single_angle_diagram
-    HAS_SECTION_DIAGRAMS = True
-except ImportError:
-    HAS_SECTION_DIAGRAMS = False
-
-try:
-    from section_diagrams import double_angle_diagram
-    HAS_SECTION_DIAGRAMS = True
-except ImportError:
-    HAS_SECTION_DIAGRAMS = False
-
-try:
-    from section_diagrams import wt_diagram
-    HAS_WT_DIAGRAM = True
-except ImportError:
-    HAS_WT_DIAGRAM = False
-
-try:
-    from section_diagrams import channel_diagram
-    HAS_CH_DIAGRAM = True
-except ImportError:
-    HAS_CH_DIAGRAM = False
-
-# The function above tries to load the SVG generation module. If it's unavailable,the app continues without SVG support.
+# The static connection diagram and the three-view section drawings were
+# retired: the 3D member model below every panel is built from the same
+# geometry and carries every overlay those drawings used to show, so a
+# second, less capable picture of the same connection only competed with
+# it. connection_diagram.py and section_diagrams.py are left in the
+# repository untouched in case a printable detail is wanted later.
 
 # The 3D member model. Built in plan with the real bolt holes cut through
 # the connected element, so the net fracture and block shear surfaces can
@@ -1341,8 +1316,6 @@ def _show_results(calcs: List[Calc], Tf: float, section_type: str, show_steps: b
                 # Skip the text-only summary steps when detailed per-path
                 # cards (steps + result + diagram) are rendered below.
                 st.markdown("\n".join(c.steps))
-            if c.table is not None:
-                st.dataframe(c.table, use_container_width=True)
             if c.note:
                 st.info(c.note)
             st.metric(
@@ -1549,20 +1522,6 @@ def panel_plate(render_material) -> None:
         bs_gov = None
         st.warning("No feasible block-shear pattern for this bolt layout.")
 
-    with st.expander("Net fracture paths", expanded=False):
-        st.info(f"Shear lag: {U_note}")
-        df_p = pd.DataFrame([{
-            "Path":                 p["description"],
-            "Holes":                p["n_holes"],
-            "Ag (mm2)":             round(p["Ag_mm2"], 1),
-            "Hole deduction (mm2)": round(p["hole_deduction_mm2"], 1),
-            "s2/4g (mm)":           round(p["stagger_term"], 2),
-            "Stagger add (mm2)":    round(p["stagger_area_mm2"], 1),
-            "An (mm2)":             round(p["An_mm2"], 1),
-            "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
-        } for p in paths])
-
-        st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
@@ -1593,18 +1552,6 @@ def panel_plate(render_material) -> None:
         },
     )
 
-    if HAS_SVG:
-        st.subheader("Connection Diagram")
-        svg = generate_connection_svg(
-            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans, leg_width=width, thickness=thick,
-            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
-            section_label=f"Plate {width:.0f}\u00d7{thick:.0f} mm",
-            governing_path_n_holes=gov_path["n_holes"],
-            zig_zag="zig" in gov_path["description"].lower(),
-        )
-        components.html(svg, height=340)
 
     _render_model(
         "Plate", f"Plate {width:.0f} x {thick:.0f} mm", bp, hole_dia, d_eff,
@@ -1727,20 +1674,6 @@ calc_gross_yield(Ag, mat.Fy),
         },
     )
 
-    with st.expander("Net fracture paths", expanded=False):
-        st.info(f"Shear lag: {U_note}")
-        df_p = pd.DataFrame([{
-            "Path":                 p["description"],
-            "Holes":                p["n_holes"],
-            "Ag (mm2)":             round(p["Ag_mm2"], 1),
-            "Hole deduction (mm2)": round(p["hole_deduction_mm2"], 1),
-            "s2/4g (mm)":           round(p["stagger_term"], 2),
-            "Stagger add (mm2)":    round(p["stagger_area_mm2"], 1),
-            "An (mm2)":             round(p["An_mm2"], 1),
-            "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
-        } for p in paths])
-
-        st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
@@ -1751,28 +1684,6 @@ calc_gross_yield(Ag, mat.Fy),
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
 
-    #Single Angle Diagram
-
-    if HAS_SECTION_DIAGRAMS:
-        st.subheader("Member Detail - Three Views")
-        svg3 = single_angle_diagram(
-            leg_conn=w_conn,
-            leg_out=leg_out,
-            t=t,
-            n_lines=bp.n_lines,
-            bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch,
-            gauge=bp.gauge,
-            edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans,
-            hole_dia=hole_dia,
-            show_net_fracture=True,
-            zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
-            governing_bs=bs_gov,
-            section_label=chosen,
-        )
-        components.html(svg3, height=1250, scrolling=True)
 
     _render_model(
         "Single Angle", str(chosen), bp, hole_dia, d_eff, w_conn, t,
@@ -1936,10 +1847,6 @@ def panel_double_angle(render_material) -> None:
         },
     )
 
-    with st.expander("Net fracture paths (per angle leg)", expanded=False):
-        st.info(f"Shear lag: {U_note}")
-
-        st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
@@ -1950,31 +1857,11 @@ def panel_double_angle(render_material) -> None:
                 st.success(f"L/r = {slend:.0f} <= 300  PASS")
 
 
-    gusset_t = 10.0
-    if HAS_SECTION_DIAGRAMS:
-        st.subheader("Member Detail - Three Views")
-        gusset_t = st.number_input("Gusset plate thickness (mm)",
-                                            min_value=3.0, max_value=50.0,
-                                            value=10.0, step=1.0, key="da_gt")
-        svg3 = double_angle_diagram(
-            leg_conn=w_conn,
-            leg_out=leg_out,
-            t=t,
-            gusset_t=float(gusset_t),
-            n_lines=bp.n_lines,
-            bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch,
-            gauge=bp.gauge,
-            edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans,
-            hole_dia=hole_dia,
-            show_net_fracture=True,
-            zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
-            governing_bs= bs_gov,
-            section_label=chosen,
-        )
-        components.html(svg3, height=1350, scrolling=True)
+    # The gusset thickness feeds the 3D member model, so the input stays
+    # even though the static three-view drawing has been retired.
+    gusset_t = st.number_input("Gusset plate thickness (mm)",
+                               min_value=3.0, max_value=50.0,
+                               value=10.0, step=1.0, key="da_gt")
 
     # area_mult = 2.0: the pair of angles, matching the Calc list above.
     _render_model(
@@ -2075,20 +1962,6 @@ def panel_wt(render_material) -> None:
         st.warning("No feasible block-shear pattern for this bolt layout "
                    "and connected-element topology.")
 
-    with st.expander("Net fracture paths", expanded=False):
-        st.info(f"Shear lag: {U_note}")
-        st.caption(el.note)
-        df_p = pd.DataFrame([{
-            "Path":                 p["description"],
-            "Holes":                p["n_holes"],
-            "Ag (mm2)":             round(p["Ag_mm2"], 1),
-            "Hole deduction (mm2)": round(p["hole_deduction_mm2"], 1),
-            "s2/4g (mm)":           round(p["stagger_term"], 2),
-            "Stagger add (mm2)":    round(p["stagger_area_mm2"], 1),
-            "An (mm2)":             round(p["An_mm2"], 1),
-            "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
-        } for p in paths])
-        st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
@@ -2121,40 +1994,6 @@ def panel_wt(render_material) -> None:
         },
     )
 
-    if HAS_WT_DIAGRAM:
-        st.subheader("Member Detail - Three Views")
-        svg3 = wt_diagram(
-            b_flange=b_fl,
-            d_depth=d_dep,
-            t_flange=t_fl,
-            t_stem=t_st,
-            connected=connected_el,
-            n_lines=bp.n_lines,
-            bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch,
-            gauge=bp.gauge,
-            edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans,
-            hole_dia=hole_dia,
-            show_net_fracture=True,
-            zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
-            governing_bs=bs_gov,
-            section_label=f"{chosen} ({conn_el})",
-        )
-        components.html(svg3, height=1300, scrolling=True)
-    elif HAS_SVG:
-        st.subheader("Connection Diagram")
-        svg = generate_connection_svg(
-            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t_conn,
-            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
-            section_label=f"{chosen} ({conn_el})",
-            governing_path_n_holes=gov_path["n_holes"],
-            zig_zag="zig" in gov_path["description"].lower(),
-        )
-        components.html(svg, height=340)
 
     # el.width is the width the path detector actually used, so the model
     # is built on the same connected element the checks were run on.
@@ -2253,20 +2092,6 @@ def panel_channel(render_material) -> None:
                    "has no free transverse edge, so block shear requires at "
                    "least two bolt lines (tension tear between lines).")
 
-    with st.expander("Net fracture paths", expanded=False):
-        st.info(f"Shear lag: {U_note}")
-        st.caption(el.note)
-        df_p = pd.DataFrame([{
-            "Path":                 p["description"],
-            "Holes":                p["n_holes"],
-            "Ag (mm2)":             round(p["Ag_mm2"], 1),
-            "Hole deduction (mm2)": round(p["hole_deduction_mm2"], 1),
-            "s2/4g (mm)":           round(p["stagger_term"], 2),
-            "Stagger add (mm2)":    round(p["stagger_area_mm2"], 1),
-            "An (mm2)":             round(p["An_mm2"], 1),
-            "Ane = U*An (mm2)":     round(U * p["An_mm2"], 1),
-        } for p in paths])
-        st.dataframe(df_p, use_container_width=True)
 
     if L_m > 0:
         with st.expander("Slenderness check (Cl. 10.4.2)", expanded=True):
@@ -2297,39 +2122,6 @@ def panel_channel(render_material) -> None:
         },
     )
 
-    if HAS_CH_DIAGRAM:
-        st.subheader("Member Detail - Three Views")
-        svg3 = channel_diagram(
-            b_flange=b_fl,
-            d_depth=d_dep,
-            t_flange=t_fl,
-            t_web=t_web,
-            n_lines=bp.n_lines,
-            bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch,
-            gauge=bp.gauge,
-            edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans,
-            hole_dia=hole_dia,
-            show_net_fracture=True,
-            zig_zag="zig" in gov_path["description"].lower(),
-            show_block_shear=True,
-            governing_bs=bs_gov,
-            section_label=chosen,
-        )
-        components.html(svg3, height=1400, scrolling=True)
-    elif HAS_SVG:
-        st.subheader("Connection Diagram")
-        svg = generate_connection_svg(
-            n_lines=bp.n_lines, bolts_per_line=bp.bolts_per_line,
-            pitch=bp.pitch, gauge=bp.gauge, edge_end=bp.edge_end,
-            edge_trans=bp.edge_trans, leg_width=w_conn, thickness=t_conn,
-            hole_dia=hole_dia, show_fracture=True, show_block_shear=True,
-            section_label=chosen,
-            governing_path_n_holes=gov_path["n_holes"],
-            zig_zag="zig" in gov_path["description"].lower(),
-        )
-        components.html(svg, height=340)
 
     _render_model(
         "Channel (C / MC)", str(chosen), bp, hole_dia, d_eff, w_conn, t_conn,
@@ -2351,17 +2143,14 @@ def main() -> None:
     except Exception:
         pass
 
-    st.title("Tension Member Design")
-    st.markdown(
-        '<div style="font-size:0.9rem;font-weight:600;color:#64748B;'
-        'letter-spacing:0.08em;margin:-0.6rem 0 0.8rem;">CSA S16</div>',
-        unsafe_allow_html=True,
+    render_page_title(
+        "Tension Member Design",
+        clauses=("Cl. 13.2 a) i) (gross yielding)  |  Cl. 12.3.3 (shear "
+                 "lag)  |  Cl. 13.2 a) iii) (net fracture)  |  Cl. 13.11 "
+                 "(block shear)  |  Cl. 10.4.2 (slenderness)"),
+        intro=("Factored tensile resistance of a bolted member. All "
+               "dimensions in mm, forces in kN."),
     )
-    st.caption(
-        "Gross yielding (Cl. 13.2a-i)  |  Net fracture with shear lag (Cl. 12.3.3)  |  "
-        "Block shear (Cl. 13.11)  |  Slenderness (Cl. 10.4.2)  |  All dimensions mm, forces kN"
-    )
-    st.divider()
 
     st.subheader("1. Section Type")
     sec_type = st.selectbox("Member cross-section type", SECTION_TYPES)

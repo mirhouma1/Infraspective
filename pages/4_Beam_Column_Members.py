@@ -54,7 +54,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from _theme import (apply_theme, render_sidebar_logo, render_footer,
-                    gate_disclaimer)
+                    gate_disclaimer, render_page_title)
 
 import sys as _sys
 from pathlib import Path
@@ -103,6 +103,86 @@ def verdict(v) -> str:
     if v is None:
         return "INCOMPLETE"
     return "PASS" if v <= 1.0 else "FAIL"
+
+
+# ============================================================
+# STEP RENDERERS
+#
+# Every check is shown the same way: the clause formula, then the same
+# formula with the numbers substituted, then the result. Nothing is
+# reported without the arithmetic that produced it.
+# ============================================================
+def step(n, title: str) -> None:
+    st.markdown(
+        "<div style='margin:0.85rem 0 0.15rem;font-size:0.70rem;"
+        "font-weight:800;letter-spacing:0.12em;text-transform:uppercase;"
+        "color:#2563EB;'>Step " + str(n) + "  &middot;  " + title
+        + "</div>", unsafe_allow_html=True)
+
+
+def eq(formula: str, subst: str = "", result: str = "") -> None:
+    """Formula, then substitution, then result."""
+    st.latex(formula)
+    if subst:
+        st.latex(subst)
+    if result:
+        st.latex(result)
+
+
+def _frac(a: str, b: str) -> str:
+    return r"\frac{" + a + r"}{" + b + r"}"
+
+
+def _term_line(label_tex, coef, U1, Mf, Mr, value, axis_tex):
+    """One moment term of an interaction equation, with its substitution."""
+    if not Mf:
+        st.latex(label_tex + r" = 0 \qquad (\text{no } M_{f" + axis_tex
+                 + r"} \text{ applied})")
+        return
+    if Mr is None or Mr <= 0:
+        st.warning("M_r about the " + axis_tex + " axis could not be "
+                   "formed, so this term stays incomplete.")
+        return
+    st.latex(label_tex + r" = " + _frac(
+        tx(coef, 2) + r" \times " + tx(U1, 4) + r" \times " + tx(Mf, 1),
+        tx(Mr, 1)) + r" = " + uc(value))
+
+
+def interaction_steps(chk, Cf_kN, U1x, Mfx, Mrx, U1y, Mfy, Mry,
+                      mrx_symbol=r"M_{rx}") -> None:
+    """Cf/Cr + cx U1x Mfx/Mrx + cy U1y Mfy/Mry, every term substituted."""
+    terms = chk["terms"]
+    cx, cy = chk["coef_x"], chk["coef_y"]
+
+    st.latex(_frac(r"C_f", r"C_r") + r" + "
+             + _frac(tx(cx, 2) + r"\,U_{1x} M_{fx}", mrx_symbol) + r" + "
+             + _frac(tx(cy, 2) + r"\,U_{1y} M_{fy}", r"M_{ry}")
+             + r" \leq 1.0")
+
+    if terms[0] is None:
+        st.warning("Cr could not be formed.")
+    else:
+        st.latex(_frac(r"C_f", r"C_r") + r" = "
+                 + _frac(tx(Cf_kN, 1), tx(chk["Cr_kN"], 1)) + r" = "
+                 + uc(terms[0]))
+
+    _term_line(_frac(tx(cx, 2) + r"\,U_{1x} M_{fx}", mrx_symbol),
+               cx, U1x, Mfx, Mrx, terms[1], "x")
+    _term_line(_frac(tx(cy, 2) + r"\,U_{1y} M_{fy}", r"M_{ry}"),
+               cy, U1y, Mfy, Mry, terms[2], "y")
+
+    total = chk["total"]
+    if total is None:
+        st.error("Interaction is INCOMPLETE: a term could not be formed.")
+        return
+    parts = [uc(t) for t in terms]
+    ok = total <= 1.0
+    st.latex(r"\text{Total} = " + r" + ".join(parts) + r" = " + uc(total)
+             + (r" \leq 1.0" if ok else r" > 1.0")
+             + (r"\qquad\textbf{PASS}" if ok else r"\qquad\textbf{FAIL}"))
+    (st.success if ok else st.error)(
+        chk.get("clause", "Interaction") + " = " + uc(total) + "  "
+        + verdict(total))
 
 
 def _f(x) -> Optional[float]:
@@ -808,7 +888,16 @@ gate_disclaimer()
 # from _theme import beta_lock_page
 # beta_lock_page("Beam-Column Members")
 
-st.title(APP_TITLE)
+render_page_title(
+    "Beam-Column Member Design",
+    clauses=("Cl. 11 (Tables 1 and 2)  |  Cl. 13.3 (compressive "
+             "resistance)  |  Cl. 13.5 / 13.6 (moment resistance)  |  "
+             "Cl. 13.8.2 and 13.8.3 (axial compression and bending)  |  "
+             "Cl. 13.8.4 and 13.8.5 (U1)  |  Cl. 13.9 (axial tension and "
+             "bending)"),
+    intro=("Combined axial force and bending. Every check states its "
+           "clause, substitutes the numbers, then reports the result."),
+)
 st.caption("CSA S16 Cl. 13.8 and 13.9  |  loads in kN and kN-m, "
            "geometry in mm")
 
@@ -1089,33 +1178,80 @@ with col_calc:
         st.error("Table 2 could not be built for this section.")
         st.stop()
 
-    st.markdown("**Flange**")
-    st.latex(r"\frac{b_{el}}{t} = " + tx(CI["lam_f"], 2)
-             + r"\qquad \frac{145}{\sqrt{F_y}},\ \frac{170}{\sqrt{F_y}},\ "
-               r"\frac{200}{\sqrt{F_y}} = "
+    _sq = math.sqrt(Fy)
+
+    step(1, "Flange slenderness, b_el / t")
+    eq(r"\frac{b_{el}}{t} = \frac{b/2}{t}",
+       r"\frac{b_{el}}{t} = \frac{" + tx(sec["b"], 1) + r"/2}{"
+       + tx(sec["t"], 1) + r"} = " + tx(CI["lam_f"], 2))
+
+    step(2, "Flange limits, Table 2")
+    eq(r"\frac{145}{\sqrt{F_y}},\quad \frac{170}{\sqrt{F_y}},\quad "
+       r"\frac{200}{\sqrt{F_y}}",
+       r"\sqrt{F_y} = \sqrt{" + tx(Fy, 0) + r"} = " + tx(_sq, 3),
+       r"\frac{145}{" + tx(_sq, 3) + r"} = "
+       + tx(CI["flange_limits"][0], 2) + r",\quad \frac{170}{"
+       + tx(_sq, 3) + r"} = " + tx(CI["flange_limits"][1], 2)
+       + r",\quad \frac{200}{" + tx(_sq, 3) + r"} = "
+       + tx(CI["flange_limits"][2], 2))
+    st.latex(tx(CI["lam_f"], 2) + r"\ \text{against }"
              + tx(CI["flange_limits"][0], 2) + r",\ "
              + tx(CI["flange_limits"][1], 2) + r",\ "
-             + tx(CI["flange_limits"][2], 2))
-    st.latex(r"\Rightarrow\ \textbf{Class } " + str(CI["flange_class"]))
+             + tx(CI["flange_limits"][2], 2)
+             + r"\ \Rightarrow\ \textbf{Class } " + str(CI["flange_class"]))
 
     if CI.get("web_class"):
-        st.markdown("**Web, reduced for the axial load**")
-        st.latex(r"C_y = A F_y = " + tx(CI["Cy_kN"], 1)
-                 + r"\ \mathrm{kN} \qquad \frac{C_f}{\phi C_y} = "
-                 + tx(CI["Cf_over_phiCy"], 4))
-        st.latex(r"\frac{h}{w} \leq \frac{1100}{\sqrt{F_y}}"
-                 r"\left(1 - 0.39\frac{C_f}{\phi C_y}\right),\ "
-                 r"\frac{1700}{\sqrt{F_y}}\left(1 - 0.61\frac{C_f}"
-                 r"{\phi C_y}\right),\ \frac{1900}{\sqrt{F_y}}"
-                 r"\left(1 - 0.65\frac{C_f}{\phi C_y}\right)")
-        st.latex(r"\frac{h}{w} = " + tx(CI["lam_w"], 2) + r"\qquad "
+        step(3, "Axial ratio that reduces the web limits")
+        eq(r"C_y = A F_y \qquad \frac{C_f}{\phi C_y}",
+           r"C_y = \frac{" + tx(sec["A"], 0) + r" \times " + tx(Fy, 0)
+           + r"}{1000} = " + tx(CI["Cy_kN"], 1) + r"\ \mathrm{kN}",
+           r"\frac{C_f}{\phi C_y} = \frac{" + tx(Cf, 1) + r"}{"
+           + tx(phi, 2) + r" \times " + tx(CI["Cy_kN"], 1) + r"} = "
+           + tx(CI["Cf_over_phiCy"], 4))
+
+        step(4, "Web slenderness, h / w")
+        eq(r"\frac{h}{w}",
+           r"\frac{h}{w} = \frac{" + tx(CI["h"], 1) + r"}{"
+           + tx(sec["w"], 1) + r"} = " + tx(CI["lam_w"], 2))
+
+        step(5, "Web limits reduced for the axial load, Table 2")
+        st.latex(r"\frac{1100}{\sqrt{F_y}}\left(1 - 0.39\frac{C_f}"
+                 r"{\phi C_y}\right),\ \frac{1700}{\sqrt{F_y}}"
+                 r"\left(1 - 0.61\frac{C_f}{\phi C_y}\right),\ "
+                 r"\frac{1900}{\sqrt{F_y}}\left(1 - 0.65\frac{C_f}"
+                 r"{\phi C_y}\right)")
+        _r = CI["Cf_over_phiCy"]
+        st.latex(r"\frac{1100}{" + tx(_sq, 3) + r"}\left(1 - 0.39 \times "
+                 + tx(_r, 4) + r"\right) = "
+                 + tx(CI["web_limits"][0], 2))
+        st.latex(r"\frac{1700}{" + tx(_sq, 3) + r"}\left(1 - 0.61 \times "
+                 + tx(_r, 4) + r"\right) = "
+                 + tx(CI["web_limits"][1], 2))
+        st.latex(r"\frac{1900}{" + tx(_sq, 3) + r"}\left(1 - 0.65 \times "
+                 + tx(_r, 4) + r"\right) = "
+                 + tx(CI["web_limits"][2], 2))
+        st.latex(tx(CI["lam_w"], 2) + r"\ \text{against }"
                  + tx(CI["web_limits"][0], 2) + r",\ "
                  + tx(CI["web_limits"][1], 2) + r",\ "
                  + tx(CI["web_limits"][2], 2)
                  + r"\ \Rightarrow\ \textbf{Class } "
                  + str(CI["web_class"]))
-    st.latex(r"\text{Section class} = \max = \textbf{Class } "
-             + str(section_class))
+
+    step(6, "Governing class")
+    st.latex(r"\text{Section class} = \max\left(\text{flange } "
+             + str(CI["flange_class"]) + r",\ \text{web } "
+             + str(CI.get("web_class") or CI["flange_class"])
+             + r"\right) = \textbf{Class } " + str(section_class))
+    if section_class in (1, 2):
+        st.success("Class " + str(section_class) + ". The plastic moment "
+                   "is available and Cl. 13.8.2 coefficients apply to an "
+                   "I-shaped member.")
+    elif section_class == 3:
+        st.warning("Class 3. Yield moment only, and Cl. 13.8.3 applies "
+                   "with every coefficient at 1.0.")
+    else:
+        st.error("Class 4. An effective section modulus is needed, "
+                 "Cl. 13.5 c).")
 
     # ================= TENSION =================
     if not is_comp:
@@ -1163,17 +1299,23 @@ with col_calc:
         C = R["coefficients"]
         st.divider()
         st.subheader("8. Moment Resistance  -  Cl. 13.5")
-        st.caption("Governing clause: " + C["clause"] + ".  " + C["note"])
-        for nm, mr in ((r"M_{rx}", R["Mrx"]), (r"M_{ry}", R["Mry"])):
+        st.caption("Laterally supported moment resistance about each axis. "
+                   "The section class picks the modulus: Z for Class 1 and "
+                   "2, S for Class 3.  Governing clause: " + C["clause"]
+                   + ".  " + C["note"])
+        for _i, (nm, mr) in enumerate(((r"M_{rx}", R["Mrx"]),
+                                       (r"M_{ry}", R["Mry"])), start=1):
+            step(_i, "Moment resistance about the "
+                     + ("x-x" if _i == 1 else "y-y") + " axis")
             if mr.get("Mr_kNm") is None:
                 st.warning(str(mr.get("note", "")))
-            else:
-                st.latex(nm + r" = \phi\," + mr["modulus"] + r" F_y = "
-                         + tx(phi, 2) + r" \times "
-                         + tx(mr["modulus_value"], 0) + r" \times "
-                         + tx(Fy, 0) + r" = " + tx(mr["Mr_kNm"], 1)
-                         + r"\ \mathrm{kN\,m}\quad(\text{" + mr["clause"]
-                         + r"})")
+                continue
+            eq(nm + r" = \phi\," + mr["modulus"] + r" F_y",
+               nm + r" = \frac{" + tx(phi, 2) + r" \times "
+               + tx(mr["modulus_value"], 0) + r" \times " + tx(Fy, 0)
+               + r"}{10^6}",
+               nm + r" = " + tx(mr["Mr_kNm"], 1)
+               + r"\ \mathrm{kN\,m} \quad(\text{" + mr["clause"] + r"})")
 
         st.divider()
         st.subheader("9. P-delta  -  Ce and U1, Cl. 13.8.4 and 13.8.5")
@@ -1181,21 +1323,45 @@ with col_calc:
                    "member between its ends generates a secondary moment. "
                    "U1 accounts for it. This is a member-level effect and "
                    "exists in braced frames.")
-        st.latex(r"C_e = \frac{\pi^2 E I}{L^2} \qquad "
-                 r"U_1 = \frac{\omega_1}{1 - C_f/C_e} \geq 1.0")
-        st.latex(r"C_{e,x} = \frac{\pi^2 (" + tx(E, 0) + r")("
-                 + tx(sec["Ix"], 0) + r")}{(" + tx(P["Lx"], 0) + r")^2} = "
-                 + tx(R["Ce_x_kN"], 0) + r"\ \mathrm{kN}")
-        st.latex(r"U_{1x} = \frac{" + tx(om1x, 3) + r"}{1 - " + tx(Cf, 1)
-                 + r"/" + tx(R["Ce_x_kN"], 0) + r"} = " + tx(R["U1x"], 4))
+
+        step(1, "Euler load about the axis of bending, Cl. 13.8.4")
+        eq(r"C_e = \frac{\pi^2 E I}{L^2}",
+           r"C_{e,x} = \frac{\pi^2 \times " + tx(E, 0) + r" \times "
+           + tx(sec["Ix"], 0) + r"}{\left(" + tx(P["Lx"], 0)
+           + r"\right)^2 \times 10^3}",
+           r"C_{e,x} = " + tx(R["Ce_x_kN"], 0) + r"\ \mathrm{kN}")
+
+        step(2, "Amplification factor U1x, Cl. 13.8.4")
+        eq(r"U_1 = \frac{\omega_1}{1 - C_f/C_e} \geq 1.0",
+           r"U_{1x} = \frac{" + tx(om1x, 3) + r"}{1 - "
+           + tx(Cf, 1) + r"/" + tx(R["Ce_x_kN"], 0) + r"} = \frac{"
+           + tx(om1x, 3) + r"}{" + tx(1.0 - (Cf / R["Ce_x_kN"])
+                                      if R["Ce_x_kN"] else 0.0, 4)
+           + r"} = " + tx(R["u1x"].get("U1_raw") or R["U1x"], 4),
+           r"U_{1x} = \max\left(1.0,\ "
+           + tx(R["u1x"].get("U1_raw") or R["U1x"], 4) + r"\right) = "
+           + tx(R["U1x"], 4))
+        st.caption("omega1x = " + num(om1x, 3) + " from the Cl. 13.8.5 "
+                   "case selected in section 5.")
         if R["u1x"]["forced"]:
             st.info(R["u1x"]["why"])
-        st.latex(r"U_{1x} M_{fx} = " + tx(R["U1x"] * Mfx, 1)
-                 + r"\ \mathrm{kN\,m}\quad(\text{primary }"
-                 + tx(Mfx, 1) + r")")
+
+        step(3, "Amplified moment")
+        eq(r"U_{1x} M_{fx}",
+           r"U_{1x} M_{fx} = " + tx(R["U1x"], 4) + r" \times "
+           + tx(Mfx, 1) + r" = " + tx(R["U1x"] * Mfx, 1)
+           + r"\ \mathrm{kN\,m}")
+        st.caption("Primary moment Mfx = " + num(Mfx, 1) + " kN-m.")
+
         if Mfy > 0:
-            st.latex(r"C_{e,y} = " + tx(R["Ce_y_kN"], 0)
-                     + r"\ \mathrm{kN} \qquad U_{1y} = " + tx(R["U1y"], 4))
+            step(4, "Weak axis, same route")
+            eq(r"C_{e,y} = \frac{\pi^2 E I_y}{L_y^2}",
+               r"C_{e,y} = \frac{\pi^2 \times " + tx(E, 0) + r" \times "
+               + tx(sec["Iy"], 0) + r"}{\left(" + tx(P["Ly"], 0)
+               + r"\right)^2 \times 10^3} = " + tx(R["Ce_y_kN"], 0)
+               + r"\ \mathrm{kN}",
+               r"U_{1y} = \frac{" + tx(om1y, 3) + r"}{1 - " + tx(Cf, 1)
+               + r"/" + tx(R["Ce_y_kN"], 0) + r"} = " + tx(R["U1y"], 4))
 
         st.info("**P-Delta**, the system-level sway effect, comes from "
                 "vertical load acting through the sway displacement of the "
@@ -1210,45 +1376,62 @@ with col_calc:
         st.divider()
         st.subheader("10. Check a)  Cross-sectional strength")
         A_ = R["check_a"]
-        st.caption("lambda = 0, beta = 0.6.  " + A_["clause"])
+        st.caption("The cross-section is checked as if it could not "
+                   "buckle: lambda = 0, so Cr is the squash load. "
+                   + A_["clause"])
         if not braced:
             st.warning("Cl. 13.8.2 a) applies to members in braced frames "
                        "only. Shown for reference, not counted.")
-        st.latex(r"C_r = \phi A F_y = " + tx(A_["Cr_kN"], 1)
-                 + r"\ \mathrm{kN}")
-        st.latex(r"\frac{C_f}{C_r} + \frac{" + tx(A_["coef_x"], 2)
-                 + r"\,U_{1x}M_{fx}}{M_{rx}} + \frac{"
-                 + tx(A_["coef_y"], 2)
-                 + r"\,U_{1y}M_{fy}}{M_{ry}} \leq 1.0")
-        st.code("  Cf/Cr             = %s\n  %.2f U1x Mfx/Mrx  = %s\n"
-                "  %.2f U1y Mfy/Mry  = %s\n"
-                "  --------------------------------\n"
-                "  total             = %s  %s"
-                % (uc(A_["terms"][0]), A_["coef_x"], uc(A_["terms"][1]),
-                   A_["coef_y"], uc(A_["terms"][2]), uc(A_["total"]),
-                   verdict(A_["total"])), language="text")
+
+        step(1, "Compressive resistance at lambda = 0")
+        eq(r"C_r = \phi A F_y",
+           r"C_r = \frac{" + tx(phi, 2) + r" \times " + tx(sec["A"], 0)
+           + r" \times " + tx(Fy, 0) + r"}{1000}",
+           r"C_r = " + tx(A_["Cr_kN"], 1) + r"\ \mathrm{kN}")
+
+        step(2, "Interaction, Cl. 13.8.2 a)")
+        interaction_steps(A_, Cf, R["U1x"], Mfx, R["Mrx_kNm"],
+                          R["U1y"], Mfy, R["Mry_kNm"])
 
         st.divider()
         st.subheader("11. Check b)  Overall member strength")
         B_ = R["check_b"]
-        st.caption("K = 1, Cr on " + B_["axis"] + ".  " + B_["clause"])
-        st.latex(r"\frac{KL}{r} = " + tx(B_["KLr"], 2)
-                 + r"\qquad \lambda = \frac{KL}{r}\sqrt{\frac{F_y}"
-                   r"{\pi^2 E}} = " + tx(B_["lam"], 4))
-        st.latex(r"F_{cr} = \frac{F_y}{\left(1+\lambda^{2n}\right)^{1/n}}"
-                 r" = " + tx(B_["Fcr"], 1) + r"\ \mathrm{MPa}")
-        st.latex(r"C_r = \phi A F_{cr} = " + tx(B_["Cr_kN"], 1)
-                 + r"\ \mathrm{kN}")
-        st.latex(r"\beta = 0.6 + 0.4\lambda_y = 0.6 + 0.4("
-                 + tx(B_["lam_y"], 4) + r") = " + tx(B_["beta"], 4)
-                 + r" \leq 0.85")
-        st.code("  Cf/Cr             = %s\n  %.2f U1x Mfx/Mrx  = %s\n"
-                "  %.2f U1y Mfy/Mry  = %s\n"
-                "  --------------------------------\n"
-                "  total             = %s  %s"
-                % (uc(B_["terms"][0]), B_["coef_x"], uc(B_["terms"][1]),
-                   B_["coef_y"], uc(B_["terms"][2]), uc(B_["total"]),
-                   verdict(B_["total"])), language="text")
+        st.caption("The member is checked as a column over its full "
+                   "length, with K = 1 and Cr taken on " + B_["axis"]
+                   + ".  " + B_["clause"])
+
+        step(1, "Slenderness ratio, K = 1")
+        eq(r"\frac{KL}{r}",
+           r"\frac{KL}{r} = " + tx(B_["KLr"], 2))
+
+        step(2, "Non-dimensional slenderness, Cl. 13.3.1")
+        eq(r"\lambda = \frac{KL}{r}\sqrt{\frac{F_y}{\pi^2 E}}",
+           r"\lambda = " + tx(B_["KLr"], 2) + r"\sqrt{\frac{"
+           + tx(Fy, 0) + r"}{\pi^2 \times " + tx(E, 0) + r"}}",
+           r"\lambda = " + tx(B_["lam"], 4))
+
+        step(3, "Critical stress, Cl. 13.3.1")
+        eq(r"F_{cr} = \frac{F_y}{\left(1 + \lambda^{2n}\right)^{1/n}}"
+           r"\qquad n = " + tx(n_col, 2),
+           r"F_{cr} = \frac{" + tx(Fy, 0) + r"}{\left(1 + "
+           + tx(B_["lam"], 4) + r"^{\,2 \times " + tx(n_col, 2)
+           + r"}\right)^{1/" + tx(n_col, 2) + r"}}",
+           r"F_{cr} = " + tx(B_["Fcr"], 1) + r"\ \mathrm{MPa}")
+
+        step(4, "Compressive resistance")
+        eq(r"C_r = \phi A F_{cr}",
+           r"C_r = \frac{" + tx(phi, 2) + r" \times " + tx(sec["A"], 0)
+           + r" \times " + tx(B_["Fcr"], 1) + r"}{1000}",
+           r"C_r = " + tx(B_["Cr_kN"], 1) + r"\ \mathrm{kN}")
+
+        step(5, "Coefficient beta, Cl. 13.8.2 b)")
+        eq(r"\beta = 0.6 + 0.4\lambda_y \leq 0.85",
+           r"\beta = 0.6 + 0.4 \times " + tx(B_["lam_y"], 4),
+           r"\beta = " + tx(B_["beta"], 4))
+
+        step(6, "Interaction, Cl. 13.8.2 b)")
+        interaction_steps(B_, Cf, R["U1x"], Mfx, R["Mrx_kNm"],
+                          R["U1y"], Mfy, R["Mry_kNm"])
 
         st.divider()
         st.subheader("12. Check c)  Lateral torsional buckling")
@@ -1256,42 +1439,116 @@ with col_calc:
         if not C_["applies"]:
             st.info("Does not apply. " + C_["note"])
         else:
-            st.caption("Cr on the weak axis, Mrx from Cl. 13.6.  "
+            st.caption("The member is checked as a column on the weak axis "
+                       "carrying a beam moment limited by Cl. 13.6.  "
                        + C_["clause"])
             ltb = C_["ltb"]
-            st.latex(r"\left(\frac{KL}{r}\right)_y = " + tx(C_["KLr"], 2)
-                     + r"\qquad C_r = \phi A F_{cr} = "
-                     + tx(C_["Cr_kN"], 1) + r"\ \mathrm{kN}")
+
+            step(1, "Compressive resistance on the weak axis")
+            eq(r"\left(\frac{KL}{r}\right)_y \Rightarrow F_{cr} "
+               r"\Rightarrow C_r = \phi A F_{cr}",
+               r"\left(\frac{KL}{r}\right)_y = " + tx(C_["KLr"], 2)
+               + r" \qquad \lambda = " + tx(C_["lam"], 4)
+               + r" \qquad F_{cr} = " + tx(C_["Fcr"], 1)
+               + r"\ \mathrm{MPa}",
+               r"C_r = \frac{" + tx(phi, 2) + r" \times " + tx(sec["A"], 0)
+               + r" \times " + tx(C_["Fcr"], 1) + r"}{1000} = "
+               + tx(C_["Cr_kN"], 1) + r"\ \mathrm{kN}")
+
             if ltb.get("Mr_kNm") is None:
                 st.warning(str(ltb.get("note", "Cl. 13.6 unavailable.")))
             else:
-                st.latex(r"M_u = \frac{\omega_2 \pi}{L}\sqrt{E I_y G J"
-                         r" + \left(\frac{\pi E}{L}\right)^2 I_y C_w} = "
-                         + tx(ltb["Mu_kNm"], 1) + r"\ \mathrm{kN\,m}")
-                st.latex(r"M_p = F_y " + ltb["modulus"] + r" = "
-                         + tx(ltb["Mp_kNm"], 1)
-                         + r"\ \mathrm{kN\,m} \qquad 0.67 M_p = "
-                         + tx(ltb["threshold_kNm"], 1))
+                step(2, "Critical elastic moment Mu, Cl. 13.6")
+                eq(r"M_u = \frac{\omega_2 \pi}{L}\sqrt{E I_y G J"
+                   r" + \left(\frac{\pi E}{L}\right)^2 I_y C_w}",
+                   r"\omega_2 = " + tx(ltb["omega2"], 3)
+                   + r",\quad L = " + tx(ltb["L_mm"], 0)
+                   + r"\ \mathrm{mm},\quad I_y = " + tx(sec["Iy"], 0)
+                   + r",\quad J = " + tx(sec["J"], 0)
+                   + r",\quad C_w = " + tx(sec["Cw"], 0),
+                   r"M_u = " + tx(ltb["Mu_kNm"], 1) + r"\ \mathrm{kN\,m}")
+
+                step(3, "Plastic moment and the 0.67 Mp threshold")
+                eq(r"M_p = F_y " + ltb["modulus"],
+                   r"M_p = \frac{" + tx(Fy, 0) + r" \times "
+                   + tx(ltb["modulus_value"], 0) + r"}{10^6} = "
+                   + tx(ltb["Mp_kNm"], 1) + r"\ \mathrm{kN\,m}",
+                   r"0.67 M_p = " + tx(ltb["threshold_kNm"], 1)
+                   + r"\ \mathrm{kN\,m} \qquad M_u = "
+                   + tx(ltb["Mu_kNm"], 1)
+                   + (r" > " if ltb["Mu_kNm"] > ltb["threshold_kNm"]
+                      else r" \leq ")
+                   + tx(ltb["threshold_kNm"], 1))
                 st.caption("Branch: " + ltb["branch"])
-                st.latex(ltb["formula"])
-                st.latex(r"M_{rx}\ (\text{Cl. 13.6}) = "
-                         + tx(ltb["Mr_kNm"], 1) + r"\ \mathrm{kN\,m}")
-            st.code("  Cf/Cr             = %s\n  %.2f U1x Mfx/Mrx  = %s\n"
-                    "  %.2f U1y Mfy/Mry  = %s\n"
-                    "  --------------------------------\n"
-                    "  total             = %s  %s"
-                    % (uc(C_["terms"][0]), C_["coef_x"], uc(C_["terms"][1]),
-                       C_["coef_y"], uc(C_["terms"][2]), uc(C_["total"]),
-                       verdict(C_["total"])), language="text")
+
+                step(4, "Moment resistance, Cl. 13.6")
+                if ltb["branch"].startswith("Mu >"):
+                    eq(ltb["formula"],
+                       r"M_r = 1.15 \times " + tx(ltb["phiMp_kNm"], 1)
+                       + r"\left(1 - \frac{0.28 \times "
+                       + tx(ltb["Mp_kNm"], 1) + r"}{"
+                       + tx(ltb["Mu_kNm"], 1) + r"}\right) \leq "
+                       + tx(ltb["phiMp_kNm"], 1),
+                       r"M_{rx} = " + tx(ltb["Mr_kNm"], 1)
+                       + r"\ \mathrm{kN\,m}")
+                else:
+                    eq(ltb["formula"],
+                       r"M_r = " + tx(phi, 2) + r" \times "
+                       + tx(ltb["Mu_kNm"], 1),
+                       r"M_{rx} = " + tx(ltb["Mr_kNm"], 1)
+                       + r"\ \mathrm{kN\,m}")
+
+            step(5, "Interaction, Cl. 13.8.2 c)")
+            interaction_steps(C_, Cf, R["U1x"], Mfx, C_["Mrx_kNm"],
+                              R["U1y"], Mfy, R["Mry_kNm"],
+                              mrx_symbol=r"M_{rx}\ (13.6)")
 
         st.divider()
         st.subheader("13. Additional moment-only requirement")
         M_ = R["check_moment"]
-        st.latex(r"\frac{M_{fx}}{M_{rx}} + \frac{M_{fy}}{M_{ry}} \leq 1.0")
-        st.code("  Mfx/Mrx = %s\n  Mfy/Mry = %s\n"
-                "  ---------------------\n  total   = %s  %s"
-                % (uc(M_["terms"][0]), uc(M_["terms"][1]), uc(M_["total"]),
-                   verdict(M_["total"])), language="text")
+        st.caption("Cl. 13.8.2 also requires the member to satisfy the "
+                   "bending terms on their own, with no amplification and "
+                   "no axial term.")
+
+        step(1, "Requirement")
+        st.latex(r"\frac{M_{fx}}{M_{rx}} + \frac{M_{fy}}{M_{ry}} "
+                 r"\leq 1.0")
+
+        step(2, "Substitution")
+        if Mfx:
+            if R["Mrx_kNm"]:
+                st.latex(r"\frac{M_{fx}}{M_{rx}} = \frac{" + tx(Mfx, 1)
+                         + r"}{" + tx(R["Mrx_kNm"], 1) + r"} = "
+                         + uc(M_["terms"][0]))
+            else:
+                st.warning("Mrx could not be formed.")
+        else:
+            st.latex(r"\frac{M_{fx}}{M_{rx}} = 0 \qquad "
+                     r"(\text{no } M_{fx} \text{ applied})")
+        if Mfy:
+            if R["Mry_kNm"]:
+                st.latex(r"\frac{M_{fy}}{M_{ry}} = \frac{" + tx(Mfy, 1)
+                         + r"}{" + tx(R["Mry_kNm"], 1) + r"} = "
+                         + uc(M_["terms"][1]))
+            else:
+                st.warning("Mry could not be formed.")
+        else:
+            st.latex(r"\frac{M_{fy}}{M_{ry}} = 0 \qquad "
+                     r"(\text{no } M_{fy} \text{ applied})")
+
+        step(3, "Result")
+        if M_["total"] is None:
+            st.error("Moment-only check is INCOMPLETE.")
+        else:
+            _ok = M_["total"] <= 1.0
+            st.latex(r"\text{Total} = " + uc(M_["terms"][0]) + r" + "
+                     + uc(M_["terms"][1]) + r" = " + uc(M_["total"])
+                     + (r" \leq 1.0" if _ok else r" > 1.0")
+                     + (r"\qquad\textbf{PASS}" if _ok
+                        else r"\qquad\textbf{FAIL}"))
+            (st.success if _ok else st.error)(
+                "Moment only = " + uc(M_["total"]) + "  "
+                + verdict(M_["total"]))
 
         st.divider()
         st.subheader("14. Governing Check")

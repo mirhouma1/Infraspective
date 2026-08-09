@@ -1078,6 +1078,62 @@ _CSA_STANDARD = [
     },
 ]
 
+_NBCC_STANDARD = [
+    {
+        "key": "nbcc",
+        "name": "National Building Code",
+        "short": "NBCC",
+        "blurb": "Loads and effects on buildings and industrial "
+                 "structures to the National Building Code of Canada.",
+        "icon": ":material/gavel:",
+        "unlocked": True,
+        "disciplines": [
+            {
+                "key": "loads",
+                "name": "Environmental Loads",
+                "code": "NBCC 2020 Part 4",
+                # Optional. Overrides the "<name> Design - <code>" row
+                # label, which does not read well for a load code.
+                "label": "Environmental Loads  -  NBCC 2020, Part 4",
+                "blurb": "Snow, wind and earthquake loads and their "
+                         "effects on buildings.",
+                "icon": ":material/storm:",
+                "unlocked": True,
+                "calcs": [
+                    ("pages/8_Wind_Snow_Seismic.py",
+                     "Wind, Snow and Seismic",
+                     ":material/earthquake:", True,
+                     "Snow to Art. 4.1.6.2, wind to Art. 4.1.7 and the "
+                     "full seismic Subsection 4.1.8, with Table C-2 "
+                     "climatic data and the NRCan hazard spectrum."),
+                ],
+            },
+            {
+                "key": "combinations",
+                "name": "Load Combinations",
+                "code": "NBCC 2020 Part 4",
+                "label": "Load Combinations  -  NBCC 2020, Part 4",
+                "blurb": "ULS and SLS combination cases, including "
+                         "lifting and transportation.",
+                "icon": ":material/functions:",
+                "unlocked": False,
+                "calcs": [],
+            },
+            {
+                "key": "deadlive",
+                "name": "Dead and Live Loads",
+                "code": "NBCC 2020 Part 4",
+                "label": "Dead and Live Loads  -  NBCC 2020, Part 4",
+                "blurb": "Specified dead loads, occupancy live loads "
+                         "and tributary reductions.",
+                "icon": ":material/weight:",
+                "unlocked": False,
+                "calcs": [],
+            },
+        ],
+    },
+]
+
 # The top level is a service, not a standard. The site will carry more
 # services than calculators later, so the tree starts one level higher:
 #
@@ -1086,13 +1142,13 @@ SERVICES = [
     {
         "key": "calc",
         "name": "Structural Design Calculator",
-        "standards": _CSA_STANDARD,
+        "standards": _CSA_STANDARD + _NBCC_STANDARD,
     },
 ]
 
 # Kept as the standards list so anything that walked the old tree still
 # works. CATALOGUE is now one level below SERVICES.
-CATALOGUE = _CSA_STANDARD
+CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD
 
 HOME_PAGE = "app.py"
 
@@ -1185,7 +1241,10 @@ def render_directory(box, key_prefix: str) -> None:
 
             for disc in std.get("disciplines", []):
                 live = [c for c in disc.get("calcs", []) if c[3]]
-                label = disc["name"] + " Design  -  " + disc["code"]
+                # A discipline may supply its own row label. Without one
+                # the CSA form is used, which reads "<name> Design - <code>".
+                label = disc.get("label") or (disc["name"] + " Design  -  "
+                                              + disc["code"])
                 if not live:
                     _locked_row(box, label, 1.6)
                     continue

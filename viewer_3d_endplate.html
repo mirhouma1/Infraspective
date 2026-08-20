@@ -1,0 +1,1123 @@
+<div id="wrap">
+  <div id="bar">
+    <select id="mode">
+      <option value="assembly">Assembly</option>
+      <option value="loadpath">Load path</option>
+      <option value="weld">Weld throat</option>
+      <option value="boltshear">Bolt shear planes</option>
+      <option value="bearing">Bearing and tear-out</option>
+      <option value="shear">Plate shear planes</option>
+      <option value="block">Block shear</option>
+      <option value="prying">Prying action</option>
+      <option value="web">Beam web shear</option>
+    </select>
+    <button class="tb tog" id="explode">Explode</button>
+    <button class="tb tog" id="xray">X-ray</button>
+    <button class="tb tog on" id="labels">Labels</button>
+    <button class="tb tog" id="dims">Dims</button>
+    <button class="tb" id="fit">Fit</button>
+    <button class="tb" id="reset">Reset view</button>
+    <span class="zw"><span class="zl">Zoom</span>
+      <input type="range" id="zoom" min="0" max="1000" value="500">
+      <span class="zv" id="zval">1.00x</span></span>
+    <span id="pulse"></span>
+  </div>
+  <div id="cv"></div>
+  <div id="leg"></div>
+  <div id="util"></div>
+  <div id="boot">Loading model...</div>
+</div>
+<style>
+  #wrap{position:relative;width:100%;height:__H__px;background:#0d1117;
+        border-radius:10px;overflow:hidden;
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+  #cv{position:absolute;inset:0;}
+  #bar{position:absolute;top:0;left:0;right:0;z-index:5;display:flex;
+       gap:6px;padding:8px;align-items:center;flex-wrap:wrap;
+       background:linear-gradient(#0d1117ee,#0d111700);}
+  .tb{background:#1f2733;color:#9fb0c4;border:1px solid #2d3949;
+      border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer;}
+  .tb.on{background:#0f766e;color:#fff;border-color:#14b8a6;}
+  #mode{background:#1d4ed8;color:#fff;border:1px solid #3b82f6;
+        border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer;}
+  #pulse{width:7px;height:7px;border-radius:50%;background:#14b8a6;
+         opacity:0;transition:opacity .18s;}
+  .zw{display:flex;align-items:center;gap:6px;background:#1f2733;
+      border:1px solid #2d3949;border-radius:6px;padding:3px 9px;}
+  .zl{color:#9fb0c4;font-size:11px;}
+  .zv{color:#e6edf3;font-size:11px;width:42px;text-align:right;
+      font-variant-numeric:tabular-nums;}
+  #zoom{width:118px;height:4px;-webkit-appearance:none;appearance:none;
+        background:#2d3949;border-radius:2px;outline:none;cursor:pointer;}
+  #zoom::-webkit-slider-thumb{-webkit-appearance:none;width:13px;
+        height:13px;border-radius:50%;background:#3b82f6;cursor:pointer;}
+  #zoom::-moz-range-thumb{width:13px;height:13px;border-radius:50%;
+        background:#3b82f6;border:none;cursor:pointer;}
+  #pulse.on{opacity:1;}
+  #leg{position:absolute;left:10px;bottom:10px;z-index:5;color:#9fb0c4;
+       font-size:11px;line-height:1.55;background:#0d1117d9;padding:9px 11px;
+       border-radius:6px;border:1px solid #1f2733;max-width:58%;}
+  #leg b{color:#e6edf3;}
+  #util{position:absolute;right:10px;bottom:10px;z-index:5;font-size:10px;
+        background:#0d1117d9;padding:8px 10px;border-radius:6px;
+        border:1px solid #1f2733;color:#9fb0c4;min-width:190px;}
+  .ur{display:flex;align-items:center;gap:6px;margin:2px 0;}
+  .ub{height:7px;border-radius:3px;flex:1;background:#1f2733;overflow:hidden;}
+  .uf{height:100%;border-radius:3px;transition:width .25s ease;}
+  .un{width:74px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .uv{width:32px;text-align:right;color:#e6edf3;}
+  #boot{position:absolute;inset:0;display:flex;align-items:center;
+        justify-content:center;color:#5b7290;font-size:12px;
+        background:#0d1117;z-index:8;}
+  #boot.gone{display:none;}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+// ======================================================================
+// PAYLOAD DELIVERY
+// The payload may be baked in below, or published to sessionStorage by a
+// tiny companion writer component. The writer path lets this iframe stay
+// alive across Streamlit reruns, so changing an input rebuilds the model
+// in place instead of reloading the whole scene.
+// ======================================================================
+const PKEY = "ins_endplate_payload_v1";
+const SKEY = "ins_endplate_view_v1";
+
+function readStore(k){
+  try { const r = sessionStorage.getItem(k); return r ? JSON.parse(r) : null; }
+  catch (e) { return null; }
+}
+function writeStore(k, v){
+  try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {}
+}
+
+let P = __PAYLOAD__;
+if (!P) P = readStore(PKEY);
+
+const host  = document.getElementById("cv");
+const boot  = document.getElementById("boot");
+const leg   = document.getElementById("leg");
+const up    = document.getElementById("util");
+const pulse = document.getElementById("pulse");
+
+// ---- renderer, camera and controls are created ONCE -------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+const camera = new THREE.PerspectiveCamera(42, 1, 1, 20000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+// Default zoomSpeed of 1.0 moves several model widths per wheel notch
+// at this scale, which is what made the view jump between far too
+// close and far too far. Slow it down and damp it.
+controls.dampingFactor = 0.085;
+controls.rotateSpeed = 0.75;
+controls.panSpeed = 0.65;
+// Zoom is handled below, not by OrbitControls. Its wheel handling scales
+// the dolly by a factor derived from the event delta, and with a model
+// measured in millimetres one notch crossed the entire distance range,
+// which is why the readout jumped straight from one clamp to the other.
+controls.enableZoom = false;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.66));
+const k1 = new THREE.DirectionalLight(0xffffff, 0.85);
+k1.position.set(1, 1.3, 1); scene.add(k1);
+const k2 = new THREE.DirectionalLight(0x88aaff, 0.32);
+k2.position.set(-1, 0.4, -1); scene.add(k2);
+
+const ROOT = new THREE.Group(); scene.add(ROOT);
+
+const MAT = {
+  beam:    new THREE.MeshStandardMaterial({color:0x7f8c9b, metalness:0.35, roughness:0.62}),
+  plate:   new THREE.MeshStandardMaterial({color:0x9aa7b4, metalness:0.35, roughness:0.55}),
+  support: new THREE.MeshStandardMaterial({color:0x5f6a76, metalness:0.3,  roughness:0.7}),
+  bolt:    new THREE.MeshStandardMaterial({color:0xd9b25a, metalness:0.75, roughness:0.35}),
+  weld:    new THREE.MeshStandardMaterial({color:0x4ea1d3, metalness:0.4,  roughness:0.5}),
+};
+const SHARED = [MAT.beam, MAT.plate, MAT.support, MAT.bolt, MAT.weld];
+
+let G, R, S, PL, PW, TP, BD, BF, TW, TF, DB, GAGE, PITCH, EV, NR, WD, TS, BL;
+let CFG, FAM = "end_plate", AX = "x", BEAMX = 0, CD, CB, CW, CF;
+let stiffGrp;
+let boltPos = [], supportGrp, plateGrp, beamGrp, weldGrp, boltGrp, dimGrp, OV;
+let DEFAULT_CAM = [1,1,1], DEFAULT_TGT = [0,0,0];
+let exploded = false, xrayOn = false, dimsOn = false;
+let labelsOn = true, curMode = "assembly";
+
+function ratioColour(r){
+  const c = new THREE.Color();
+  if (r <= 1.0) c.setHSL(0.33 - 0.33*Math.min(r,1.0), 0.75, 0.45);
+  else c.setHSL(0.0, 0.85, 0.42);
+  return c;
+}
+function label(text, colour, scale){
+  const cv = document.createElement("canvas");
+  const fs = 44, pad = 12;
+  let ctx = cv.getContext("2d");
+  ctx.font = "600 "+fs+"px -apple-system, Segoe UI, sans-serif";
+  cv.width = Math.ceil(ctx.measureText(text).width) + pad*2;
+  cv.height = fs + pad*2;
+  ctx = cv.getContext("2d");
+  ctx.font = "600 "+fs+"px -apple-system, Segoe UI, sans-serif";
+  ctx.fillStyle = "rgba(13,17,23,0.85)";
+  ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle = colour || "#e6edf3";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, pad, cv.height/2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.minFilter = THREE.LinearFilter;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, depthTest:false, transparent:true}));
+  const h = S * (scale || 0.075);
+  sp.scale.set(h * cv.width/cv.height, h, 1);
+  sp.renderOrder = 999;
+  sp.userData.isLabel = true;
+  sp.visible = labelsOn;
+  return sp;
+}
+function box(w,h,d,mat){ return new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat); }
+function line(pts, colour){
+  const g = new THREE.BufferGeometry().setFromPoints(
+    pts.map(p=>new THREE.Vector3(p[0],p[1],p[2])));
+  return new THREE.Line(g, new THREE.LineBasicMaterial({color:colour}));
+}
+function disposeTree(obj){
+  obj.traverse(o=>{
+    if (o.geometry) o.geometry.dispose();
+    if (o.material){
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      ms.forEach(m=>{
+        if (SHARED.indexOf(m) !== -1) return;
+        if (m.map) m.map.dispose();
+        m.dispose();
+      });
+    }
+  });
+}
+function clearGroup(g){
+  if (!g) return;
+  while (g.children.length){ const c = g.children[0]; disposeTree(c); g.remove(c); }
+}
+
+// ======================================================================
+// BUILD
+// ======================================================================
+function build(){
+  G = P.geom; R = P.results;
+  CFG = P.config || {frame:"flange", family:"end_plate",
+                     beam_attach:"bolted", col_attach:"welded",
+                     slotted:false, coped:false, stiffeners:false};
+  PL=G.plate_L; PW=G.plate_W; TP=G.t_plate; TS=G.t_support;
+  BD=G.beam_d; BF=G.beam_bf; TW=G.tw_beam; TF=G.tf_beam;
+  DB=G.db; GAGE=G.gage; PITCH=G.pitch; EV=G.ev; NR=G.n_rows; WD=G.weld_D;
+  CD=G.col_d||300; CB=G.col_bf||300; CW=G.col_tw||10; CF=G.col_tf||15;
+  S = Math.max(PL, PW, BD, CD);
+  BL = Math.max(BD*2.2, 420);
+  FAM = CFG.family;
+
+  clearGroup(ROOT);
+
+  supportGrp = new THREE.Group(); ROOT.add(supportGrp);
+  plateGrp   = new THREE.Group(); ROOT.add(plateGrp);
+  beamGrp    = new THREE.Group(); ROOT.add(beamGrp);
+  weldGrp    = new THREE.Group(); ROOT.add(weldGrp);
+  boltGrp    = new THREE.Group(); ROOT.add(boltGrp);
+  stiffGrp   = new THREE.Group(); ROOT.add(stiffGrp);
+
+  buildSupport();
+  buildBeam();
+  buildConnection();
+  if (CFG.stiffeners) buildStiffeners();
+
+  OV = new THREE.Group(); ROOT.add(OV);
+  dimGrp = new THREE.Group(); dimGrp.visible = dimsOn; ROOT.add(dimGrp);
+  buildDims();
+
+  const bb = new THREE.Box3().setFromObject(ROOT);
+  if (!bb.isEmpty()){
+    const sp = bb.getBoundingSphere(new THREE.Sphere());
+    const fov = camera.fov * Math.PI / 180;
+    FITDIST = (sp.radius / Math.sin(fov / 2)) * 1.12;
+    controls.minDistance = FITDIST * 0.06;
+    controls.maxDistance = FITDIST * 14;
+    camera.near = Math.max(0.05, FITDIST * 0.002);
+    camera.far  = FITDIST * 120;
+    camera.updateProjectionMatrix();
+    DEFAULT_CAM = [sp.center.x + FITDIST*0.62,
+                   sp.center.y + FITDIST*0.40,
+                   sp.center.z + FITDIST*0.70];
+    DEFAULT_TGT = [sp.center.x, sp.center.y, sp.center.z];
+  }
+
+  setExplode(exploded);
+  setXray(xrayOn);
+  setLabels(labelsOn);
+  buildUtil();
+  setMode(curMode);
+}
+
+// ---------------------------------------------------------------------
+// SUPPORTING MEMBER
+// The beam always arrives along +x. The face it lands on sits at x = 0.
+// ---------------------------------------------------------------------
+function buildSupport(){
+  const H = Math.max(BD*2.6, 900);
+
+  if (CFG.frame === "hss"){
+    const w = Math.max(CD, 200), t = Math.max(TS, 8);
+    const outer = box(w, H, w, MAT.support);
+    outer.position.set(-w/2, 0, 0);
+    supportGrp.add(outer);
+    const inner = new THREE.Mesh(new THREE.BoxGeometry(w-2*t, H+2, w-2*t),
+      new THREE.MeshStandardMaterial({color:0x0d1117}));
+    inner.position.set(-w/2, 0, 0);
+    supportGrp.add(inner);
+    return;
+  }
+
+  if (CFG.frame === "web"){
+    // Beam lands on the column WEB. The web is a plane perpendicular to
+    // x; the two flanges are perpendicular to z and are CENTRED ON THE
+    // WEB, half on each side. Offsetting them to one side is what made
+    // the column read as a channel.
+    const web = box(CW, H, CD - 2*CF, MAT.support);
+    web.position.set(-CW/2, 0, 0);
+    supportGrp.add(web);
+    [1,-1].forEach(s=>{
+      const fl = box(CB, H, CF, MAT.support);
+      fl.position.set(0, 0, s*(CD-CF)/2);      // centred on x = 0
+      supportGrp.add(fl);
+    });
+    return;
+  }
+
+  // Beam lands on the column FLANGE. The near flange face is at x = 0,
+  // the web runs back in x on the centreline, far flange behind it.
+  const near = box(CF, H, CB, MAT.support);
+  near.position.set(-CF/2, 0, 0);
+  supportGrp.add(near);
+  const web = box(CD - 2*CF, H, CW, MAT.support);
+  web.position.set(-CF - (CD-2*CF)/2, 0, 0);
+  supportGrp.add(web);
+  const far = box(CF, H, CB, MAT.support);
+  far.position.set(-CD + CF/2, 0, 0);
+  supportGrp.add(far);
+}
+
+// ---------------------------------------------------------------------
+// SUPPORTED BEAM
+// ---------------------------------------------------------------------
+function buildBeam(){
+  // Where the beam end sits. An end plate is sandwiched at the face; a
+  // shear tab leaves a setback so the beam never touches the support.
+  BEAMX = (FAM === "end_plate") ? TP : (G.setback || 10.0);
+
+  const wh = BD - 2*TF;
+  const web = box(BL, wh, TW, MAT.beam);
+  web.position.set(BEAMX + BL/2, 0, 0);
+  beamGrp.add(web);
+
+  [1,-1].forEach(s=>{
+    // The coped arrangement removes the top flange local to the support.
+    const cope = (CFG.coped && s > 0) ? (G.cope_len || PL*0.55) : 0;
+    const len = BL - cope;
+    const fl = box(len, TF, BF, MAT.beam);
+    fl.position.set(BEAMX + cope + len/2, s*(BD-TF)/2, 0);
+    beamGrp.add(fl);
+  });
+  if (CFG.coped){
+    const c = G.cope_len || PL*0.55;
+    const lb = label("cope " + c.toFixed(0) + " mm", "#fca5a5", 0.05);
+    lb.position.set(BEAMX + c*0.5, BD*0.62, 0);
+    beamGrp.add(lb);
+  }
+}
+
+// ---------------------------------------------------------------------
+// PLATE, BOLTS AND WELDS - this is what actually differs between the
+// arrangements.
+// ---------------------------------------------------------------------
+// The four families that cover every arrangement. What differs is where
+// the steel sits and which way the bolts run; the rest is shared.
+//
+//   end_plate     plate across the beam end, bolts along the beam axis
+//   single_plate  one plate off the support, beam web on one face
+//   double_plate  two plates, beam web sandwiched between them
+//   angles        a pair of angle cleats, one each side of the beam web
+//
+function buildConnection(){
+  boltPos = [];
+  const y0 = -(NR-1)*PITCH/2;
+  FAM = CFG.family;
+
+  if (FAM === "end_plate"){
+    AX = "x";
+    const plate = box(TP, PL, PW, MAT.plate);
+    plate.position.set(TP/2, 0, 0);
+    plateGrp.add(plate);
+    for (let i=0;i<NR;i++)
+      for (const z of [-GAGE/2, GAGE/2])
+        boltPos.push({x: TP/2, y: y0 + i*PITCH, z: z});
+    holes();
+    boltsAlongX();
+    // the plate is always welded to the beam, both sides of the web
+    [1,-1].forEach(s=>weldGrp.add(filletBead(PL, WD, TP, s*TW/2, "x")));
+    return;
+  }
+
+  AX = "z";
+  const e  = G.ecc || PL*0.35;
+  const lp = G.tab_len || Math.max(e + 2*EV, 90);
+
+  // Where the vertical elements sit relative to the beam web.
+  let faces = [];
+  if (FAM === "single_plate") faces = [ TW/2 + TP/2 ];
+  else                        faces = [ TW/2 + TP/2, -TW/2 - TP/2 ];
+
+  faces.forEach(off=>{
+    if (FAM === "angles"){
+      // An angle cleat: one leg on the column, one on the beam web.
+      const legc = G.angle_leg_col || Math.max(TP*6, 65);
+      const legb = G.angle_leg_beam || Math.max(TP*6, 65);
+      const sgn  = off > 0 ? 1 : -1;
+      // leg against the beam web
+      const lb_ = box(legb, PL, TP, MAT.plate);
+      lb_.position.set(legb/2 + (G.setback||10), 0, off);
+      plateGrp.add(lb_);
+      // leg against the column face, turned outboard
+      const lc = box(TP, PL, legc, MAT.plate);
+      lc.position.set((G.setback||10) + TP/2, 0,
+                      off + sgn*(legc/2 - TP/2));
+      plateGrp.add(lc);
+      weldGrp.add(filletBead(PL, WD, 0, off + sgn*(legc - TP), "z-edge"));
+    } else {
+      const pl = box(lp, PL, TP, MAT.plate);
+      pl.position.set(lp/2, 0, off);
+      plateGrp.add(pl);
+      if (CFG.col_attach === "welded"){
+        weldGrp.add(filletBead(PL, WD, 0, off, "z-edge"));
+      } else {
+        // bolted to the column through a short return
+        for (let i=0;i<NR;i++)
+          boltPos.push({x: -TP, y: y0 + i*PITCH, z: off, toCol: true});
+      }
+    }
+  });
+
+  // Attachment to the beam web.
+  const zface = (FAM === "single_plate") ? (TW/2 + TP/2) : 0;
+  if (CFG.beam_attach === "bolted"){
+    for (let i=0;i<NR;i++)
+      boltPos.push({x: (FAM === "angles")
+                       ? (G.setback||10) + (G.angle_leg_beam||65)*0.55
+                       : e,
+                    y: y0 + i*PITCH, z: zface});
+    boltsAlongZ();
+  } else {
+    // welded to the beam web instead: a bead each side
+    faces.forEach(off=>{
+      const sgn = off > 0 ? 1 : -1;
+      weldGrp.add(filletBead(PL*0.9, WD,
+        (FAM === "angles") ? (G.setback||10) : e*0.5,
+        sgn*(TW/2), "x"));
+    });
+    const lb = label("welded to the beam web", "#7dd3fc", 0.05);
+    lb.position.set(e, -PL*0.62, TW/2 + TP*3);
+    plateGrp.add(lb);
+  }
+
+  if (CFG.slotted && CFG.beam_attach === "bolted"){
+    const sl = label("slotted holes - no axial restraint", "#fcd34d", 0.05);
+    sl.position.set(e, PL*0.62, TW/2 + TP*3);
+    plateGrp.add(sl);
+  }
+}
+
+function holes(){
+  boltPos.forEach(b=>{
+    const r = new THREE.Mesh(
+      new THREE.TorusGeometry(G.d_hole/2, Math.max(0.6, TP*0.08), 8, 22),
+      new THREE.MeshStandardMaterial({color:0x39424e}));
+    r.rotation.y = Math.PI/2;
+    r.position.set(TP+0.4, b.y, b.z);
+    plateGrp.add(r);
+  });
+}
+
+function boltsAlongX(){
+  boltPos.forEach(b=>{
+    const L = TP + TS + DB*1.2;
+    const sh = new THREE.Mesh(
+      new THREE.CylinderGeometry(DB/2, DB/2, L, 18), MAT.bolt);
+    sh.rotation.z = Math.PI/2;
+    sh.position.set((TP-TS)/2, b.y, b.z);
+    boltGrp.add(sh);
+    [[TP, DB*0.6],[-TS, DB*0.55]].forEach(hd=>{
+      const hh = new THREE.Mesh(
+        new THREE.CylinderGeometry(DB*0.85, DB*0.85, hd[1], 6), MAT.bolt);
+      hh.rotation.z = Math.PI/2;
+      hh.position.set(hd[0] + (hd[0]>0?hd[1]/2:-hd[1]/2), b.y, b.z);
+      boltGrp.add(hh);
+    });
+  });
+}
+
+function boltsAlongZ(){
+  const grip = (FAM === "double_plate" || FAM === "angles")
+               ? (TW + 2*TP) : (TW + TP);
+  boltPos.filter(b=>!b.toCol).forEach(b=>{
+    const L = grip + DB*1.2;
+    const sh = new THREE.Mesh(
+      new THREE.CylinderGeometry(DB/2, DB/2, L, 18), MAT.bolt);
+    sh.rotation.x = Math.PI/2;
+    sh.position.set(b.x, b.y, 0);
+    boltGrp.add(sh);
+    [1,-1].forEach(s=>{
+      const hh = new THREE.Mesh(
+        new THREE.CylinderGeometry(DB*0.85, DB*0.85, DB*0.55, 6), MAT.bolt);
+      hh.rotation.x = Math.PI/2;
+      hh.position.set(b.x, b.y, s*(L/2 + DB*0.27));
+      boltGrp.add(hh);
+    });
+    // slot indication
+    if (CFG.slotted){
+      const sl = new THREE.Mesh(
+        new THREE.BoxGeometry(G.slot_len || DB*2.2, DB*1.15, 1.6),
+        new THREE.MeshBasicMaterial({color:0xfbbf24}));
+      sl.position.set(b.x, b.y, TW/2 + TP + 1.4);
+      boltGrp.add(sl);
+    }
+  });
+}
+
+// A fillet bead. axis "x" runs the bead up the plate face at a given z;
+// "z-edge" runs it up the joint between the plate face and the support.
+function filletBead(len, leg, atX, atZ, axis){
+  const shape = new THREE.Shape();
+  shape.moveTo(0,0); shape.lineTo(leg,0); shape.lineTo(0,leg); shape.lineTo(0,0);
+  const geo = new THREE.ExtrudeGeometry(shape, {depth: len, bevelEnabled:false});
+  const m = new THREE.Mesh(geo, MAT.weld);
+  if (axis === "x"){
+    m.rotation.y = -Math.PI/2;
+    m.position.set(atX, -len/2, atZ);
+    if (atZ < 0) m.scale.set(1,1,-1);
+  } else {
+    m.rotation.y = -Math.PI/2;
+    m.rotation.z = Math.PI/2;
+    m.position.set(0, -len/2, atZ);
+    if (atZ < 0) m.scale.set(1,1,-1);
+  }
+  return m;
+}
+
+// Stiffener plates. A stiffener spans the clear web depth of the
+// column, h = d - 2t, so its size follows the column section rather
+// than being a free input. Count, spacing and thickness are chosen.
+function buildStiffeners(){
+  const t1 = G.stiff_t || 10;
+  const n  = Math.max(0, Math.round(G.stiff_n === undefined ? 2 : G.stiff_n));
+  if (n === 0) return;
+  const h  = CD - 2*CF;                    // clear depth between flanges
+  const sp = G.stiff_sp || 0;              // 0 means align to the flanges
+
+  // Levels. Two stiffeners with no spacing given sit opposite the beam
+  // flanges, which is what a moment connection needs. Anything else is
+  // laid out symmetrically about the beam centreline at the given pitch.
+  const ys = [];
+  if (n === 2 && !sp){
+    ys.push((BD-TF)/2, -(BD-TF)/2);
+  } else {
+    const pitch = sp || (BD - TF) / Math.max(1, n - 1);
+    const y0 = -pitch * (n - 1) / 2;
+    for (let i = 0; i < n; i++) ys.push(y0 + i*pitch);
+  }
+
+  ys.forEach(y=>{
+    if (CFG.frame === "web"){
+      // spans between the column flanges, sits behind the shear plate
+      const st = box(CB*0.85, t1, h, MAT.support);
+      st.position.set(-CB*0.42 + CW/2, y, 0);
+      stiffGrp.add(st);
+    } else if (CFG.frame === "flange"){
+      // one each side of the column web
+      [1,-1].forEach(z=>{
+        const st = box(h, t1, (CB - CW)/2 * 0.9, MAT.support);
+        st.position.set(-CF - h/2, y, z*(CW/2 + (CB-CW)/4));
+        stiffGrp.add(st);
+      });
+    }
+  });
+
+  const lb = label(n + " stiffeners, t = " + t1.toFixed(0)
+    + " mm, h = d - 2t = " + h.toFixed(0) + " mm", "#94a3b8", 0.046);
+  lb.position.set(-CD*0.5, BD*0.74, 0);
+  stiffGrp.add(lb);
+}
+
+function buildDims(){
+  const o = S*0.18;
+  if (FAM === "end_plate"){
+    dimLine([TP,-PL/2,PW/2],[TP,PL/2,PW/2],"L = "+PL.toFixed(0),[0,0,o]);
+    dimLine([TP,-PL/2,-PW/2],[TP,-PL/2,PW/2],"W = "+PW.toFixed(0),[0,-o*0.5,0]);
+    if (NR>1) dimLine([TP,boltPos[0].y,GAGE/2],[TP,boltPos[0].y+PITCH,GAGE/2],
+      "p = "+PITCH.toFixed(0),[o*0.3,0,0]);
+    dimLine([TP,boltPos[0].y,-GAGE/2],[TP,boltPos[0].y,GAGE/2],
+      "g = "+GAGE.toFixed(0),[o*0.3,-o*0.3,0]);
+  } else if (boltPos.length){
+    const zf = TW/2 + TP + 2;
+    dimLine([0,-PL/2,zf],[0,PL/2,zf],"L = "+PL.toFixed(0),[-o*0.4,0,0]);
+    dimLine([0,boltPos[0].y,zf],[boltPos[0].x,boltPos[0].y,zf],
+      "e = "+boltPos[0].x.toFixed(0),[0,-o*0.45,0]);
+    if (NR>1) dimLine([boltPos[0].x,boltPos[0].y,zf],
+      [boltPos[0].x,boltPos[0].y+PITCH,zf],"p = "+PITCH.toFixed(0),[o*0.3,0,0]);
+  }
+}
+
+function dimLine(a,b,txt,off){
+  const A=new THREE.Vector3(a[0]+off[0],a[1]+off[1],a[2]+off[2]);
+  const B=new THREE.Vector3(b[0]+off[0],b[1]+off[1],b[2]+off[2]);
+  const mat=new THREE.LineBasicMaterial({color:0x64748b});
+  dimGrp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A,B]),mat));
+  dimGrp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(a[0],a[1],a[2]),A]),mat));
+  dimGrp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(b[0],b[1],b[2]),B]),mat));
+  const lb=label(txt,"#cbd5e1",0.05);
+  lb.position.copy(A.clone().add(B).multiplyScalar(0.5)); dimGrp.add(lb);
+}
+
+function buildUtil(){
+  let uh = "<b style='color:#e6edf3'>Utilisation</b>";
+  P.order.forEach(k=>{
+    const c = R[k]; if(!c) return;
+    const pct = Math.min(100, c.ratio*100);
+    const col = "#"+ratioColour(c.ratio).getHexString();
+    uh += "<div class='ur'><span class='un' title='"+c.name+"'>"+c.name
+       +"</span><span class='ub'><span class='uf' style='width:"+pct
+       +"%;background:"+col+"'></span></span><span class='uv'>"
+       +c.ratio.toFixed(2)+"</span></div>";
+  });
+  up.innerHTML = uh;
+}
+
+// ======================================================================
+// OVERLAYS
+// ======================================================================
+function clearOV(){ clearGroup(OV); }
+function planeMesh(w,h,d,colour,op){
+  return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+    new THREE.MeshBasicMaterial({color:colour, transparent:true,
+      opacity:op===undefined?0.45:op, side:THREE.DoubleSide, depthWrite:false}));
+}
+function arrow(dir, org, len, colour){
+  return new THREE.ArrowHelper(dir.clone().normalize(), org, len, colour,
+    len*0.26, len*0.15);
+}
+
+function ovLoadPath(){
+  const steps = (FAM === "end_plate")
+    ? [["1  Beam web", TP+BL*0.55, 0, 0],
+       ["2  Fillet welds", TP+WD*2, -PL*0.16, TW/2+WD*2],
+       ["3  End plate", TP+2, PL*0.20, PW*0.22],
+       ["4  Bolts", TP*0.5, -PL*0.30, GAGE/2],
+       ["5  Support", -TS-4, PL*0.34, PW*0.30]]
+    : (FAM === "moment")
+    ? [["1  Beam web", BEAMX+BL*0.55, 0, 0],
+       ["2  Shear plate", PL*0.35, -PL*0.20, TW/2+TP*3],
+       ["3  Flange welds", WD*2, (BD-TF)/2, BF*0.30],
+       ["4  Support", -CF-6, PL*0.34, 0]]
+    : [["1  Beam web", BEAMX+BL*0.55, 0, 0],
+       ["2  Bolts in single shear",
+        boltPos.length?boltPos[0].x:0, -PL*0.34, TW/2+TP*4],
+       ["3  Shear plate", PL*0.22, PL*0.22, TW/2+TP*3],
+       ["4  Weld to the support", WD*2, -PL*0.10, TW/2+TP*4],
+       ["5  Support", -CF-6, PL*0.40, 0]];
+  const path = (FAM === "end_plate")
+    ? [[TP+BL*0.62,0,0],[TP+PL*0.32,0,0],[TP+2,0,TW/2+WD],
+       [TP*0.5,0,PW*0.30],[-TS*0.5,0,PW*0.30]]
+    : [[BEAMX+BL*0.62,0,0],
+       [boltPos.length?boltPos[0].x:PL*0.3,0,0],
+       [boltPos.length?boltPos[0].x:PL*0.3,0,TW/2+TP],
+       [2,0,TW/2+TP],[-CF*0.5,0,0]];
+  OV.add(line(path, 0x38bdf8));
+  steps.forEach(function(a){
+    const lb = label(a[0], "#7dd3fc", 0.055);
+    lb.position.set(a[1],a[2],a[3]); OV.add(lb);
+  });
+  OV.add(arrow(new THREE.Vector3(0,-1,0),
+    new THREE.Vector3(BEAMX+BL*0.80, BD*0.85, 0), BD*0.45, 0xf87171));
+  const vl = label("Vf = "+P.forces.Vf.toFixed(0)+" kN", "#fca5a5", 0.058);
+  vl.position.set(BEAMX+BL*0.80, BD*1.00, 0); OV.add(vl);
+}
+function ovWeld(){
+  const r = R.weld ? R.weld.ratio : 0, t = 0.707*WD;
+  const col = ratioColour(r).getHex();
+  if (FAM === "end_plate"){
+    [1,-1].forEach(s=>{
+      const m = planeMesh(t*1.02, PL, 1.2, col, 0.9);
+      m.position.set(TP + t*0.5, 0, s*(TW/2 + t*0.5)); OV.add(m);
+    });
+  } else {
+    const zs = (FAM === "double_plate" || FAM === "angles") ? [TW/2+TP/2, -TW/2-TP/2] : [TW/2+TP/2];
+    zs.forEach(z=>{
+      const m = planeMesh(1.2, PL, t*1.02, col, 0.9);
+      m.position.set(t*0.5, 0, z); OV.add(m);
+    });
+  }
+  const lb = label("throat = 0.707 D = "+(0.707*WD).toFixed(2)+" mm",
+                   "#7dd3fc", 0.052);
+  lb.position.set(WD*2, PL*0.46, TW/2+WD*2); OV.add(lb);
+}
+function ovBoltShear(){
+  const r = R.bolt_shear ? R.bolt_shear.ratio : 0;
+  const col = ratioColour(r).getHex();
+  if (AX === "x"){
+    OV.add(planeMesh(1.6, PL*1.1, PW*1.05, col, 0.5));
+    boltPos.forEach(b=>{
+      const d = new THREE.Mesh(
+        new THREE.CylinderGeometry(DB/2*1.06, DB/2*1.06, 2.4, 18),
+        new THREE.MeshBasicMaterial({color:col}));
+      d.rotation.z = Math.PI/2; d.position.set(0, b.y, b.z); OV.add(d);
+    });
+    const lb = label("shear plane at the faying surface", "#e6edf3", 0.055);
+    lb.position.set(0, PL*0.62, 0); OV.add(lb);
+  } else {
+    // Shear tab: the plane is between the web and the plate face.
+    const zs = (FAM === "double_plate" || FAM === "angles") ? [TW/2, -TW/2] : [TW/2];
+    zs.forEach(z=>{
+      const m = planeMesh(PL*1.2, PL*1.1, 1.6, col, 0.5);
+      m.position.set(boltPos.length ? boltPos[0].x : 0, 0, z); OV.add(m);
+      boltPos.forEach(b=>{
+        const d = new THREE.Mesh(
+          new THREE.CylinderGeometry(DB/2*1.06, DB/2*1.06, 2.4, 18),
+          new THREE.MeshBasicMaterial({color:col}));
+        d.rotation.x = Math.PI/2; d.position.set(b.x, b.y, z); OV.add(d);
+      });
+    });
+    const lb = label((FAM === "double_plate" || FAM === "angles")
+      ? "double shear: two planes through each bolt"
+      : "single shear: web against the plate face", "#e6edf3", 0.052);
+    lb.position.set(boltPos.length ? boltPos[0].x : 0, PL*0.62,
+                    TW/2 + TP*3); OV.add(lb);
+  }
+}
+function ovBearing(){
+  const r = R.bearing_end_plate ? R.bearing_end_plate.ratio : 0;
+  boltPos.forEach(b=>{
+    const ov = new THREE.Mesh(new THREE.TorusGeometry(G.d_hole/2*1.25, 1.4, 8, 24),
+      new THREE.MeshBasicMaterial({color:ratioColour(r).getHex()}));
+    ov.rotation.y = Math.PI/2; ov.scale.y = 1.35;
+    ov.position.set(TP+1.2, b.y, b.z); OV.add(ov);
+    OV.add(arrow(new THREE.Vector3(0,-1,0),
+      new THREE.Vector3(TP+3, b.y+G.d_hole*0.9, b.z), G.d_hole*0.8, 0xfbbf24));
+  });
+  const bot = boltPos.reduce((a,b)=>Math.min(a,b.y), 1e9);
+  OV.add(line([[TP+2,bot,-GAGE/2],[TP+2,-PL/2,-GAGE/2]], 0xfbbf24));
+  OV.add(line([[TP+2,bot,GAGE/2],[TP+2,-PL/2,GAGE/2]], 0xfbbf24));
+  const lb = label("ed = "+EV.toFixed(0)+" mm tear-out path", "#fcd34d", 0.055);
+  lb.position.set(TP+6, -PL*0.62, 0); OV.add(lb);
+}
+function ovShear(){
+  const ry = R.plate_shear_yield ? R.plate_shear_yield.ratio : 0;
+  const rr = R.plate_shear_rupture ? R.plate_shear_rupture.ratio : 0;
+  [-1,1].forEach(s=>{
+    const g = planeMesh(TP*1.05, PL, 1.4, ratioColour(ry).getHex(), 0.55);
+    g.position.set(TP/2, 0, s*PW*0.34); OV.add(g);
+    const n = planeMesh(TP*1.05, PL, 1.4, ratioColour(rr).getHex(), 0.85);
+    n.position.set(TP/2, 0, s*GAGE/2); OV.add(n);
+  });
+  const l1 = label("gross section, shear yield", "#e6edf3", 0.05);
+  l1.position.set(TP, PL*0.60, PW*0.34); OV.add(l1);
+  const l2 = label("net section through the holes, rupture", "#e6edf3", 0.05);
+  l2.position.set(TP, -PL*0.60, GAGE/2); OV.add(l2);
+}
+function ovBlock(){
+  const r = R.block_shear ? R.block_shear.ratio : 0;
+  const col = ratioColour(r).getHex();
+  const top = boltPos.reduce((a,b)=>Math.max(a,b.y), -1e9);
+  [-1,1].forEach(s=>{
+    const zb = s*GAGE/2, ze = s*PW/2;
+    const sh = planeMesh(TP*1.06, (top + PL/2), 1.4, col, 0.85);
+    sh.position.set(TP/2, (top - PL/2)/2, zb); OV.add(sh);
+    const te = planeMesh(TP*1.06, 1.4, Math.abs(ze-zb), col, 0.85);
+    te.position.set(TP/2, top, (zb+ze)/2); OV.add(te);
+    const bk = planeMesh(TP*1.02, (top + PL/2), Math.abs(ze-zb), col, 0.25);
+    bk.position.set(TP/2, (top - PL/2)/2, (zb+ze)/2); OV.add(bk);
+  });
+  const lb = label("tension face across, shear face down", "#e6edf3", 0.05);
+  lb.position.set(TP+4, top + PL*0.20, 0); OV.add(lb);
+}
+function ovPrying(){
+  const p = P.prying;
+  [-1,1].forEach(s=>{
+    OV.add(arrow(new THREE.Vector3(-1,0,0),
+      new THREE.Vector3(TP+18, 0, s*(PW/2 - 4)), 16, 0xf472b6));
+    const lb = label("Q", "#f9a8d4", 0.05);
+    lb.position.set(TP+26, PL*0.10, s*(PW/2-4)); OV.add(lb);
+  });
+  boltPos.forEach(b=>{
+    OV.add(arrow(new THREE.Vector3(1,0,0),
+      new THREE.Vector3(-TS-16, b.y, b.z), 16, 0x34d399));
+  });
+  OV.add(arrow(new THREE.Vector3(1,0,0),
+    new THREE.Vector3(TP+BL*0.30, 0, 0), BL*0.20, 0x34d399));
+  const l1 = label("Nf pulls the plate off the support", "#6ee7b7", 0.052);
+  l1.position.set(TP+BL*0.42, PL*0.34, 0); OV.add(l1);
+  const l2 = label("b' = "+p.b_prime.toFixed(1)+"   a' = "+p.a_prime.toFixed(1)
+    +"   delta = "+p.delta.toFixed(3)+"   alpha = "+p.alpha_c.toFixed(2), "#e6edf3", 0.05);
+  l2.position.set(TP+4, -PL*0.62, 0); OV.add(l2);
+  const l3 = label("Tf(1+q) = "+p.Tf_pry.toFixed(1)+" kN per bolt", "#6ee7b7", 0.052);
+  l3.position.set(-TS-30, PL*0.30, 0); OV.add(l3);
+}
+function ovWeb(){
+  const r = R.beam_web ? R.beam_web.ratio : 0;
+  const m = planeMesh(1.6, PL, TW*1.15, ratioColour(r).getHex(), 0.9);
+  m.position.set(BEAMX + 3, 0, 0); OV.add(m);
+  OV.add(line([[BEAMX+3, PL/2, TW],[BEAMX+3, -PL/2, TW]], 0xffffff));
+  const lb = label("only the plate depth of web is effective: "
+    + PL.toFixed(0) + " x " + TW.toFixed(1) + " mm", "#e6edf3", 0.05);
+  lb.position.set(BEAMX+20, PL*0.62, 0); OV.add(lb);
+}
+
+const MODES = {
+  assembly: [null, "Bolted end plate shear connection. The plate is shop "
+    + "welded to the beam web, then field bolted to the support."],
+  loadpath: [ovLoadPath, "Follow the reaction from the beam web through the "
+    + "welds, into the plate, across the bolts and into the support. Every "
+    + "step is a limit state."],
+  weld: [ovWeld, "A fillet weld fails on its throat, the narrowest plane "
+    + "through the weld, at 0.707 times the leg size."],
+  boltshear: [ovBoltShear, "The bolts are in shear across the faying "
+    + "surface between the plate and the support."],
+  bearing: [ovBearing, "The shank presses on the hole. Short end distance "
+    + "means the material ahead of the bolt tears out instead."],
+  shear: [ovShear, "Shear yield is checked on the gross section, shear "
+    + "rupture on the net section through the bolt holes."],
+  block: [ovBlock, "A block of plate tears out: pulling apart on the "
+    + "tension face, shearing along the vertical face."],
+  prying: [ovPrying, "Axial force bends the plate. The plate edge levers "
+    + "on the support and adds prying force Q to the bolt tension."],
+  web: [ovWeb, "Only the depth of beam web covered by the plate carries "
+    + "the reaction out of the beam."],
+};
+
+function setMode(m){
+  if (!MODES[m]) m = "assembly";
+  curMode = m;
+  document.getElementById("mode").value = m;
+  clearOV();
+  const spec = MODES[m];
+  if (spec[0]) spec[0]();
+  setLabels(labelsOn);
+  const c = R[P.modeKey[m]];
+  leg.innerHTML = "<b>"+document.querySelector("#mode option[value='"+m
+    +"']").textContent+"</b><br>"+spec[1]
+    + (c ? ("<br><b>"+c.name+"</b> &nbsp; "+c.clause+" &nbsp; ratio "
+            +c.ratio.toFixed(3)+" &nbsp; "+(c.ok?"OK":"NOT OK")) : "");
+}
+
+// ======================================================================
+// TOGGLES AND VIEW STATE
+// ======================================================================
+const btnEx = document.getElementById("explode");
+const btnXr = document.getElementById("xray");
+const btnDm = document.getElementById("dims");
+
+function setExplode(on){
+  exploded = on; btnEx.classList.toggle("on", on);
+  if (!beamGrp) return;
+  const d = on ? S*0.55 : 0;
+  if (AX === "x"){
+    beamGrp.position.set(d*1.5, 0, 0);
+    weldGrp.position.set(d*1.1, 0, 0);
+    plateGrp.position.set(d*0.6, 0, 0);
+    boltGrp.position.set(d*0.25, 0, 0);
+  } else {
+    // A shear tab comes apart across the joint, not along the beam.
+    beamGrp.position.set(d*0.7, 0, 0);
+    weldGrp.position.set(0, 0, 0);
+    plateGrp.position.set(0, 0, d*0.55);
+    boltGrp.position.set(0, 0, d*1.05);
+  }
+  supportGrp.position.x = -d*0.4;
+  if (stiffGrp) stiffGrp.position.x = -d*0.4;
+}
+function setXray(on){
+  xrayOn = on; btnXr.classList.toggle("on", on);
+  MAT.beam.transparent = MAT.support.transparent = MAT.plate.transparent = true;
+  MAT.beam.opacity = on ? 0.16 : 1.0;
+  MAT.support.opacity = on ? 0.12 : 1.0;
+  MAT.plate.opacity = on ? 0.34 : 1.0;
+}
+function setDims(on){
+  dimsOn = on; btnDm.classList.toggle("on", on);
+  if (dimGrp) dimGrp.visible = on;
+}
+// Every text sprite is tagged on creation, so hiding them is one sweep
+// of the scene. Dimension text lives inside dimGrp and is gated by both
+// this and the Dims toggle.
+function setLabels(on){
+  labelsOn = on;
+  document.getElementById("labels").classList.toggle("on", on);
+  ROOT.traverse(function(o){
+    if (o.userData && o.userData.isLabel) o.visible = on;
+  });
+}
+
+function saveView(){
+  writeStore(SKEY, {cp: camera.position.toArray(),
+                    ct: controls.target.toArray(),
+                    mode: curMode, ex: exploded, xr: xrayOn, dm: dimsOn,
+                    lb: labelsOn});
+}
+let saveTimer = null;
+function saveViewSoon(){
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveView, 220);
+}
+function resetView(){
+  camera.position.set(DEFAULT_CAM[0], DEFAULT_CAM[1], DEFAULT_CAM[2]);
+  controls.target.set(DEFAULT_TGT[0], DEFAULT_TGT[1], DEFAULT_TGT[2]);
+  controls.update();
+  setTargetDist(distNow(), true);
+  saveView();
+}
+
+// ---- zoom gauge -----------------------------------------------------
+// Distance is stepped geometrically: every notch multiplies it by the
+// same factor, so the feel is even at any scale. ZOOM_STEPS is how many
+// notches it takes to cross the whole range, so raising it makes the
+// wheel finer.
+const ZOOM_STEPS = 40;
+const zEl = document.getElementById("zoom");
+const zVal = document.getElementById("zval");
+let FITDIST = 1;
+let targetDist = 1;   // where the camera is heading
+let curDist = 1;      // where it is now, eased toward the target
+
+function zoomFactor(){
+  const r = controls.maxDistance / controls.minDistance;
+  return Math.pow(r, 1 / ZOOM_STEPS);
+}
+function clampDist(d){
+  return Math.max(controls.minDistance,
+                  Math.min(controls.maxDistance, d));
+}
+function distNow(){ return camera.position.distanceTo(controls.target); }
+
+// Move the camera along its current sight line to a given distance.
+function applyDistance(d){
+  const dir = camera.position.clone().sub(controls.target);
+  const cur = dir.length() || 1;
+  dir.multiplyScalar(d / cur);
+  camera.position.copy(controls.target).add(dir);
+}
+function setTargetDist(d, snap){
+  targetDist = clampDist(d);
+  if (snap){ curDist = targetDist; applyDistance(curDist); controls.update(); }
+  syncZoom();
+}
+function stepZoom(notches){
+  setTargetDist(targetDist * Math.pow(zoomFactor(), notches));
+  saveViewSoon();
+}
+
+function sliderToDist(v){
+  const lo = Math.log(controls.minDistance);
+  const hi = Math.log(controls.maxDistance);
+  return Math.exp(lo + (hi - lo) * (1 - v / 1000));
+}
+function distToSlider(d){
+  const lo = Math.log(controls.minDistance);
+  const hi = Math.log(controls.maxDistance);
+  const t = (Math.log(clampDist(d)) - lo) / (hi - lo);
+  return Math.round((1 - Math.max(0, Math.min(1, t))) * 1000);
+}
+let syncing = false;
+function syncZoom(){
+  if (syncing) return;
+  syncing = true;
+  zEl.value = distToSlider(targetDist);
+  zVal.textContent = (FITDIST / Math.max(curDist, 1e-6)).toFixed(2) + "x";
+  syncing = false;
+}
+zEl.addEventListener("input", function(){
+  if (syncing) return;
+  setTargetDist(sliderToDist(parseFloat(zEl.value)));
+  saveViewSoon();
+});
+
+// Wheel: one notch per event, regardless of how large deltaY is. A
+// trackpad fires many small events, so those are accumulated and only
+// spend a notch once they add up.
+let wheelAccum = 0;
+renderer.domElement.addEventListener("wheel", function(ev){
+  ev.preventDefault();
+  wheelAccum += ev.deltaY;
+  const TH = 24;
+  while (Math.abs(wheelAccum) >= TH){
+    stepZoom(wheelAccum > 0 ? 1 : -1);
+    wheelAccum += (wheelAccum > 0 ? -TH : TH);
+  }
+}, {passive: false});
+
+// Pinch to zoom, since OrbitControls no longer does it.
+const pointers = new Map();
+let pinchStart = 0, pinchStartDist = 0;
+renderer.domElement.addEventListener("pointerdown", function(ev){
+  pointers.set(ev.pointerId, {x: ev.clientX, y: ev.clientY});
+  if (pointers.size === 2){
+    const p = Array.from(pointers.values());
+    pinchStart = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+    pinchStartDist = targetDist;
+  }
+});
+renderer.domElement.addEventListener("pointermove", function(ev){
+  if (!pointers.has(ev.pointerId)) return;
+  pointers.set(ev.pointerId, {x: ev.clientX, y: ev.clientY});
+  if (pointers.size === 2 && pinchStart > 0){
+    const p = Array.from(pointers.values());
+    const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+    if (d > 0) setTargetDist(pinchStartDist * (pinchStart / d));
+  }
+});
+function endPointer(ev){
+  pointers.delete(ev.pointerId);
+  if (pointers.size < 2){ pinchStart = 0; saveViewSoon(); }
+}
+renderer.domElement.addEventListener("pointerup", endPointer);
+renderer.domElement.addEventListener("pointercancel", endPointer);
+renderer.domElement.addEventListener("pointerleave", endPointer);
+
+// Frame the whole assembly, whatever its size.
+function fitView(){
+  const bboxT = new THREE.Box3().setFromObject(ROOT);
+  if (bboxT.isEmpty()) return;
+  const sph = bboxT.getBoundingSphere(new THREE.Sphere());
+  const fov = camera.fov * Math.PI / 180;
+  const d = (sph.radius / Math.sin(Math.min(fov, camera.aspect * fov) / 2))
+            * 1.12;
+  controls.target.copy(sph.center);
+  const dir = camera.position.clone().sub(sph.center).normalize();
+  if (!isFinite(dir.x) || dir.lengthSq() < 1e-9) dir.set(0.6, 0.4, 0.7).normalize();
+  camera.position.copy(sph.center).add(dir.multiplyScalar(clampDist(d)));
+  controls.update();
+  setTargetDist(clampDist(d), true);
+}
+function restoreView(){
+  const s = readStore(SKEY);
+  if (!s) { resetView(); return; }
+  try {
+    if (Array.isArray(s.cp) && s.cp.length===3 && isFinite(s.cp[0]))
+      camera.position.fromArray(s.cp);
+    if (Array.isArray(s.ct) && s.ct.length===3 && isFinite(s.ct[0]))
+      controls.target.fromArray(s.ct);
+    const d = camera.position.distanceTo(controls.target);
+    if (!isFinite(d) || d < controls.minDistance || d > controls.maxDistance){
+      camera.position.set(DEFAULT_CAM[0], DEFAULT_CAM[1], DEFAULT_CAM[2]);
+      controls.target.set(DEFAULT_TGT[0], DEFAULT_TGT[1], DEFAULT_TGT[2]);
+    }
+    controls.update();
+    setTargetDist(distNow(), true);
+    setExplode(!!s.ex); setXray(!!s.xr); setDims(!!s.dm);
+    if (s.lb !== undefined) setLabels(!!s.lb); else setLabels(true);
+    if (s.mode) setMode(s.mode);
+  } catch (e) { resetView(); }
+}
+
+btnEx.onclick = function(){ setExplode(!exploded); saveView(); };
+btnXr.onclick = function(){ setXray(!xrayOn); saveView(); };
+btnDm.onclick = function(){ setDims(!dimsOn); saveView(); };
+document.getElementById("labels").onclick = function(){
+  setLabels(!labelsOn); saveView(); };
+document.getElementById("reset").onclick = resetView;
+document.getElementById("fit").onclick = function(){ fitView(); saveView(); };
+document.getElementById("mode").onchange = function(e){
+  setMode(e.target.value); saveView();
+};
+controls.addEventListener("change", syncZoom);
+controls.addEventListener("end", saveViewSoon);
+
+// ======================================================================
+// SIZING, LIVE UPDATE, LOOP
+// ======================================================================
+function resize(){
+  const w = host.clientWidth, h = host.clientHeight;
+  if (!w || !h) return;
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+addEventListener("resize", resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(host);
+
+function flash(){
+  pulse.classList.add("on");
+  setTimeout(function(){ pulse.classList.remove("on"); }, 420);
+}
+
+let started = false;
+function start(){
+  if (started) return;
+  started = true;
+  boot.classList.add("gone");
+  resize();
+  build();
+  const had = readStore(SKEY);
+  restoreView();
+  if (!had) fitView();
+  syncZoom();
+  saveView();
+}
+
+// Poll for a fresh payload. When the writer publishes new results the
+// model is rebuilt in place and the camera is put straight back, so the
+// change appears without the view jumping.
+let lastSig = P ? JSON.stringify(P) : null;
+setInterval(function(){
+  if (!started) return;
+  const q = readStore(PKEY);
+  if (!q) return;
+  const sig = JSON.stringify(q);
+  if (sig === lastSig) return;
+  lastSig = sig;
+  P = q;
+  const camSave = camera.position.toArray();
+  const tgtSave = controls.target.toArray();
+  build();
+  camera.position.fromArray(camSave);
+  controls.target.fromArray(tgtSave);
+  controls.update();
+  syncZoom();
+  flash();
+}, 200);
+
+let waited = 0;
+(function bootLoop(){
+  if (P){ lastSig = JSON.stringify(P); start(); return; }
+  P = readStore(PKEY);
+  if (P){ lastSig = JSON.stringify(P); start(); return; }
+  waited += 120;
+  if (waited > 5000){ boot.textContent = "No model data received."; return; }
+  setTimeout(bootLoop, 120);
+})();
+
+(function loop(){
+  requestAnimationFrame(loop);
+  controls.update();
+  if (Math.abs(targetDist - curDist) > Math.max(targetDist, 1) * 0.0004){
+    curDist += (targetDist - curDist) * 0.20;
+    applyDistance(curDist);
+    syncZoom();
+  }
+  renderer.render(scene, camera);
+})();
+</script>

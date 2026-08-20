@@ -147,6 +147,60 @@ def cheek_profile(Dcheekp, Dhole, H2, segments=48):
     }
 
 
+def failure_paths(L2, H1, H2, Dhole, Dpin, tp2, tp3, segments=40):
+    """Geometry of the planes the clause checks are taken on.
+
+    tear-out   from the free edge of the head, tangent to the hole. The
+               tangent is the shortest path out of the plate, so it is
+               the one that governs, and its length is
+               k = sqrt(H1^2 - (Dhole/2)^2).
+    net        the section through the hole centre, the two ligaments
+               of width H1 - Dhole/2 that carry Anet.
+    bearing    the loaded half of the bore, where the pin pushes.
+
+    All in the lug plane, x across the lug, y up from the cap plate.
+    Returns None if the geometry has degenerated."""
+    r = Dhole / 2.0
+    if H1 <= r or r <= 0.0:
+        return None
+
+    cy = float(H2)
+    k = math.sqrt(H1 * H1 - r * r)
+
+    # Tangent from the top of the head down onto the hole. The tangent
+    # point sits where the radius meets the tangent at a right angle.
+    top = (0.0, cy + H1)
+    d = H1
+    alpha = math.acos(r / d)          # angle at the hole centre
+    out = {}
+
+    def tangent_leg(sign):
+        a_t = math.pi / 2.0 + sign * alpha
+        T = (r * math.cos(a_t), cy + r * math.sin(a_t))
+        return [[top[0], top[1]], [T[0], T[1]]]
+
+    out["tearout"] = tangent_leg(1.0)
+    out["tearout_mirror"] = tangent_leg(-1.0)
+
+    # Net tension section, the two ligaments either side of the hole
+    out["net_left"] = [[-H1, cy], [-r, cy]]
+    out["net_right"] = [[r, cy], [H1, cy]]
+
+    # Bearing arc, the upper half of the bore
+    arc = []
+    for i in range(segments + 1):
+        a = math.pi * float(i) / float(segments)
+        arc.append([r * math.cos(a), cy + r * math.sin(a)])
+    out["bearing"] = arc
+
+    out["k"] = k
+    out["t_eff"] = tp2 + 2.0 * tp3
+    out["label_tearout"] = [H1 * 0.62, cy + H1 * 0.62]
+    out["label_net"] = [-H1 * 0.80, cy - r * 0.55]
+    out["label_bearing"] = [0.0, cy + r * 1.35]
+    return out
+
+
 def build_payload(geom, checks=None, results=None, props=None, load=None,
                   metalness=0.85, roughness=0.30, segments=48):
     def gv(k, default=0.0):
@@ -164,7 +218,15 @@ def build_payload(geom, checks=None, results=None, props=None, load=None,
     def rnd(loop):
         return [[round(p[0], 3), round(p[1], 3)] for p in loop]
 
+    paths = failure_paths(gv("L2"), gv("H1"), gv("H2"), gv("Dhole"),
+                          gv("Dpin"), gv("tp2"), gv("tp3"))
+    if paths is not None:
+        for key in ("tearout", "tearout_mirror", "net_left", "net_right",
+                    "bearing"):
+            paths[key] = rnd(paths[key])
+
     payload = {
+        "paths": paths,
         "geom": {k: gv(k) for k in
                  ("Dpin", "Dhole", "Dcheekp", "tp1", "L1", "W1", "tp2",
                   "H1", "H2", "L2", "tp3", "Db", "Nrow", "s", "g", "w1")},

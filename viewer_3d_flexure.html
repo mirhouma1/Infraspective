@@ -99,6 +99,40 @@ var DATA = __GEOMETRY_JSON__;
 
 function fail(m) { document.getElementById("err").textContent = m; }
 
+// =====================================================================
+// view-state persistence
+//
+// Streamlit tears this iframe down and rebuilds it on every rerun, so
+// without help the camera, the toggles and the behaviour mode all reset
+// whenever any input on the page changes. The cure: every interaction
+// writes a small state blob to sessionStorage, and a fresh mount reads
+// it back before first paint. Camera distance and target are stored as
+// ratios of the model size, so the restore still frames sensibly after
+// the span or the section changes.
+// =====================================================================
+var SKEY = "ifs_flexure_viewer_v1";
+var SAVED = null;
+try { SAVED = JSON.parse(sessionStorage.getItem(SKEY) || "null"); }
+catch (e0) { SAVED = null; }
+
+var TSTATE = {};          // live toggle states by button id
+var _saveTimer = null;
+function persist() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(function () {
+    try {
+      sessionStorage.setItem(SKEY, JSON.stringify({
+        cam: { theta: sph.theta, phi: sph.phi,
+               distR: sph.dist / radius,
+               tx: target.x / L, ty: target.y / L, tz: target.z / L,
+               pan: panMode },
+        mode: currentMode,
+        togg: TSTATE
+      }));
+    } catch (e1) {}
+  }, 150);
+}
+
 try {
 
 // =====================================================================
@@ -493,6 +527,10 @@ function paint(mode) {
         + "<span class='sw' style='background:#"
         + CLSC[Math.min(3, e3.cls - 1)].getHexString() + "'></span><br>";
     }
+    html += "free edge<span class='sw' style='background:#f85149'></span>"
+      + "  supported edge"
+      + "<span class='sw' style='background:#3fb950'></span><br>"
+      + "flange: one edge free | web: both supported";
   } else if (mode === "stress") {
     html = "tension<span class='sw' style='background:#"
       + TENS.getHexString() + "'></span>"
@@ -582,39 +620,81 @@ function addLabel(grp, text, pos, color) {
 }
 
 // ---- dimensions -----------------------------------------------------
+// Drafting-style dimensioning at the near end face: extension lines out
+// from the section corners, a dimension line with end ticks, and the
+// value beside it. Thicknesses t and w get leaders that point at the
+// actual plate they measure, so a first-time user can see exactly which
+// part of the section each symbol belongs to.
 var gDim = new THREE.Group(); overlays.add(gDim);
 (function () {
+  var z0 = -L / 2;               // near end face
+  var EXT = 0x6e7681;            // extension lines
+  var tick = span * 0.10;        // half-length of an end tick
+
+  // ---- span L, off to the side as before ----
   var off = span * 1.9;
   addLine(gDim, [off, 0, -L / 2], [off, 0, L / 2], 0x58a6ff);
   addLine(gDim, [off * 0.9, 0, -L / 2], [off * 1.1, 0, -L / 2], 0x58a6ff);
   addLine(gDim, [off * 0.9, 0, L / 2], [off * 1.1, 0, L / 2], 0x58a6ff);
-  addLabel(gDim, "L = " + (L / 1000).toFixed(2) + " m", [off * 1.25, 0, 0],
-           "#58a6ff");
+  addLabel(gDim, "L = " + (L / 1000).toFixed(2) + " m (span)",
+           [off * 1.25, 0, 0], "#58a6ff");
+
+  // ---- overall depth d, left of the section ----
   if (D.d) {
-    addLine(gDim, [-halfB - span * 0.5, -halfD, -L / 2],
-                  [-halfB - span * 0.5, halfD, -L / 2], 0x8b949e);
-    addLabel(gDim, "d = " + D.d.toFixed(0),
-             [-halfB - span * 1.0, 0, -L / 2], "#c9d1d9");
+    var xd = -halfB - span * 0.55;
+    addLine(gDim, [-halfB, halfD, z0], [xd - tick, halfD, z0], EXT);
+    addLine(gDim, [-halfB, -halfD, z0], [xd - tick, -halfD, z0], EXT);
+    addLine(gDim, [xd, -halfD, z0], [xd, halfD, z0], 0xff7b72);
+    addLine(gDim, [xd - tick, halfD, z0], [xd + tick, halfD, z0], 0xff7b72);
+    addLine(gDim, [xd - tick, -halfD, z0], [xd + tick, -halfD, z0],
+            0xff7b72);
+    addLabel(gDim, "d = " + D.d.toFixed(0) + " mm (overall depth)",
+             [xd - span * 0.7, 0, z0], "#ff7b72");
   }
+
+  // ---- flange width b, above the top flange ----
   if (D.b) {
-    addLine(gDim, [-halfB, -halfD - span * 0.5, -L / 2],
-                  [halfB, -halfD - span * 0.5, -L / 2], 0x8b949e);
-    addLabel(gDim, "b = " + D.b.toFixed(0),
-             [0, -halfD - span * 0.95, -L / 2], "#c9d1d9");
+    var yb = halfD + span * 0.55;
+    addLine(gDim, [-halfB, halfD, z0], [-halfB, yb + tick, z0], EXT);
+    addLine(gDim, [halfB, halfD, z0], [halfB, yb + tick, z0], EXT);
+    addLine(gDim, [-halfB, yb, z0], [halfB, yb, z0], 0x58a6ff);
+    addLine(gDim, [-halfB, yb - tick, z0], [-halfB, yb + tick, z0],
+            0x58a6ff);
+    addLine(gDim, [halfB, yb - tick, z0], [halfB, yb + tick, z0], 0x58a6ff);
+    addLabel(gDim, "b = " + D.b.toFixed(0) + " mm (flange width)",
+             [0, yb + span * 0.40, z0], "#58a6ff");
   }
+
+  // ---- clear web height h, right of the section, between the flanges --
   if (D.h) {
-    addLine(gDim, [halfB + span * 0.45, -D.h / 2, -L / 2],
-                  [halfB + span * 0.45, D.h / 2, -L / 2], 0x7ee787);
-    addLabel(gDim, "h = " + D.h.toFixed(1),
-             [halfB + span * 0.95, 0, -L / 2], "#7ee787");
+    var xh = halfB + span * 0.55;
+    var yh = D.h / 2;
+    var wx = (D.w || 0) / 2;
+    addLine(gDim, [wx, yh, z0], [xh + tick, yh, z0], EXT);
+    addLine(gDim, [wx, -yh, z0], [xh + tick, -yh, z0], EXT);
+    addLine(gDim, [xh, -yh, z0], [xh, yh, z0], 0x7ee787);
+    addLine(gDim, [xh - tick, yh, z0], [xh + tick, yh, z0], 0x7ee787);
+    addLine(gDim, [xh - tick, -yh, z0], [xh + tick, -yh, z0], 0x7ee787);
+    addLabel(gDim, "h = d - 2t = " + D.h.toFixed(1) + " mm (clear web)",
+             [xh + span * 0.85, 0, z0], "#7ee787");
   }
+
+  // ---- flange thickness t, leader pointing into the top flange ----
   if (D.t) {
-    addLabel(gDim, "t = " + D.t.toFixed(1),
-             [halfB * 1.25, halfD * 0.92, -L / 2], "#8b949e");
+    var pT = [halfB * 0.65, halfD - D.t / 2, z0];
+    var eT = [halfB + span * 0.55, halfD + span * 1.0, z0];
+    addLine(gDim, pT, eT, 0xd29922);
+    addLabel(gDim, "t = " + D.t.toFixed(1) + " mm (flange thk)",
+             [eT[0] + span * 0.55, eT[1], z0], "#d29922");
   }
+
+  // ---- web thickness w, leader pointing at the web plate ----
   if (D.w) {
-    addLabel(gDim, "w = " + D.w.toFixed(1), [span * 0.35, 0, -L / 2],
-             "#8b949e");
+    var pW = [D.w / 2, -halfD * 0.35, z0];
+    var eW = [halfB + span * 0.55, -halfD - span * 0.85, z0];
+    addLine(gDim, pW, eW, 0xbc8cff);
+    addLabel(gDim, "w = " + D.w.toFixed(1) + " mm (web thk)",
+             [eW[0] + span * 0.55, eW[1], z0], "#bc8cff");
   }
 })();
 
@@ -942,26 +1022,157 @@ var gMom = new THREE.Group(); overlays.add(gMom);
 })();
 
 // ---- lateral bracing ------------------------------------------------
+// Each brace point gets a small portal frame that grips the compression
+// flange: two outboard posts, a cross beam, kicker diagonals down to the
+// flange tips, and arrow cones squeezing the flange to show that what a
+// brace does is stop LATERAL movement. A translucent green plane marks
+// the braced cross-section, and an Lb dimension chain runs above the
+// beam with a tick at every brace point.
 var gBrace = new THREE.Group(); overlays.add(gBrace);
+
+// solid cylinder between two points, for annotation members that need
+// more presence than a one pixel line
+function bar(grp, a, b, r, color, opacity) {
+  var va = new THREE.Vector3(a[0], a[1], a[2]);
+  var vb = new THREE.Vector3(b[0], b[1], b[2]);
+  var dir = new THREE.Vector3().subVectors(vb, va);
+  var len = dir.length();
+  if (len < 1e-6) return;
+  var mat = new THREE.MeshStandardMaterial({
+    color: color, metalness: 0.3, roughness: 0.5,
+    transparent: (opacity !== undefined && opacity < 1),
+    opacity: opacity === undefined ? 1 : opacity });
+  var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
+  m.position.copy(va).lerp(vb, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0),
+                                  dir.normalize());
+  grp.add(m);
+}
+
 (function () {
-  if (!(LB > 0) || LB >= L - 1e-6) {
-    addLabel(gBrace, "Lb = L, no intermediate brace",
-             [0, halfD + span * 1.2, 0], "#7ee787");
-    return;
+  var GRN = 0x3fb950;
+  var rad = Math.max(span * 0.045, 2.5);
+  var xOut = halfB * 2.0;              // outboard anchor
+  var yTop = halfD + span * 0.85;      // cross beam height
+  var yDim = halfD + span * 1.55;      // Lb dimension chain height
+  var tick = span * 0.12;
+
+  function braceFrame(zz) {
+    // posts, cross beam, kickers down to the flange tips
+    bar(gBrace, [-xOut, halfD * 0.2, zz], [-xOut, yTop, zz], rad, GRN);
+    bar(gBrace, [xOut, halfD * 0.2, zz], [xOut, yTop, zz], rad, GRN);
+    bar(gBrace, [-xOut, yTop, zz], [xOut, yTop, zz], rad, GRN);
+    bar(gBrace, [-xOut, yTop, zz], [-halfB, halfD, zz], rad, GRN);
+    bar(gBrace, [xOut, yTop, zz], [halfB, halfD, zz], rad, GRN);
+
+    // arrow cones pressing on the flange tips: lateral restraint
+    var aLen = halfB * 0.55;
+    for (var sgn = -1; sgn <= 1; sgn += 2) {
+      var cone = new THREE.Mesh(
+        new THREE.ConeGeometry(rad * 2.4, aLen, 12),
+        new THREE.MeshStandardMaterial({ color: GRN, metalness: 0.2,
+          roughness: 0.5 }));
+      cone.rotation.z = sgn * Math.PI / 2;
+      cone.position.set(sgn * (halfB + aLen * 0.7), halfD, zz);
+      gBrace.add(cone);
+    }
+
+    // translucent plane marking the braced cross-section
+    var pl = new THREE.Mesh(
+      new THREE.BoxGeometry(xOut * 2, D.d * 1.25, Math.max(L * 0.002, 2)),
+      new THREE.MeshBasicMaterial({ color: GRN, transparent: true,
+        opacity: 0.10, depthWrite: false }));
+    pl.position.set(0, 0, zz);
+    gBrace.add(pl);
   }
-  var n = Math.round(L / LB);
-  for (var i = 1; i < n; i++) {
-    var zz = -L / 2 + i * LB;
-    addLine(gBrace, [-halfB * 1.9, halfD, zz], [halfB * 1.9, halfD, zz],
-            0x7ee787);
-    addLine(gBrace, [-halfB * 1.9, halfD * 1.5, zz],
-                    [halfB * 1.9, halfD * 0.6, zz], 0x7ee787);
-    addLine(gBrace, [halfB * 1.9, halfD * 1.5, zz],
-                    [-halfB * 1.9, halfD * 0.6, zz], 0x7ee787);
+
+  // brace points: member ends always count as braced, intermediate
+  // braces every Lb along the span
+  var pts = [-L / 2];
+  if (LB > 0 && LB < L - 1e-6) {
+    var n = Math.round(L / LB);
+    for (var i = 1; i < n; i++) pts.push(-L / 2 + i * LB);
   }
-  addLabel(gBrace, "Lb = " + (LB / 1000).toFixed(2) + " m",
-           [halfB * 2.2, halfD * 1.6, -L / 2 + LB], "#7ee787");
+  pts.push(L / 2);
+
+  for (var k = 1; k < pts.length - 1; k++) braceFrame(pts[k]);
+
+  // ---- Lb dimension chain above the beam ----
+  addLine(gBrace, [0, yDim, -L / 2], [0, yDim, L / 2], GRN);
+  for (var k2 = 0; k2 < pts.length; k2++) {
+    addLine(gBrace, [0, yDim - tick, pts[k2]], [0, yDim + tick, pts[k2]],
+            GRN);
+  }
+  var segLen = pts.length > 2 ? LB : L;
+  var zMid = (pts[0] + pts[1]) / 2;
+  addLabel(gBrace,
+           "Lb = " + (segLen / 1000).toFixed(2) + " m (unbraced length)",
+           [0, yDim + span * 0.55, zMid], "#7ee787");
+
+  if (pts.length > 2) {
+    addLabel(gBrace, "brace point: holds the compression flange sideways",
+             [0, yTop + span * 0.45, pts[1]], "#3fb950");
+  } else {
+    addLabel(gBrace, "no intermediate brace: ends only, Lb = L",
+             [0, yTop + span * 0.45, 0], "#7ee787");
+  }
 })();
+
+// ---- Table 2 element conditions (shown in class mode) ---------------
+// Depicts the classification conditions in place on the member: the
+// flange outstand is supported along ONE edge (the web junction, solid
+// green) and FREE at the tip (dashed red), which is Table 2's "flanges
+// of I-sections bent about the major axis". The web is supported along
+// BOTH edges. The outstand width b_el = b/2 is dimensioned on the end
+// face.
+var gClassCond = new THREE.Group(); overlays.add(gClassCond);
+(function () {
+  var tF = D.t || 0;
+  var z0 = -L / 2;
+
+  function dashed(a, b, color) {
+    var g = lineGeom(a, b);
+    var m = new THREE.LineDashedMaterial({ color: color,
+      dashSize: span * 0.45, gapSize: span * 0.3, depthTest: false });
+    var ln = new THREE.Line(g, m);
+    ln.computeLineDistances();
+    gClassCond.add(ln);
+  }
+
+  // free tips of both flanges, dashed red
+  var yT = halfD - tF / 2, yB = -halfD + tF / 2;
+  dashed([-halfB, yT, -L / 2], [-halfB, yT, L / 2], 0xf85149);
+  dashed([halfB, yT, -L / 2], [halfB, yT, L / 2], 0xf85149);
+  dashed([-halfB, yB, -L / 2], [-halfB, yB, L / 2], 0xf85149);
+  dashed([halfB, yB, -L / 2], [halfB, yB, L / 2], 0xf85149);
+
+  // web-to-flange junctions, solid green: the supported edges
+  addLine(gClassCond, [0, halfD - tF, -L / 2], [0, halfD - tF, L / 2],
+          0x3fb950);
+  addLine(gClassCond, [0, -halfD + tF, -L / 2], [0, -halfD + tF, L / 2],
+          0x3fb950);
+
+  addLabel(gClassCond, "free edge (tip of the outstand)",
+           [-halfB - span * 0.9, halfD + span * 0.75, -L * 0.22],
+           "#f85149");
+  addLabel(gClassCond, "supported edge (web junction)",
+           [halfB + span * 1.1, halfD - tF - span * 0.35, -L * 0.22],
+           "#3fb950");
+  addLabel(gClassCond, "web: supported along both edges",
+           [halfB + span * 1.1, 0, L * 0.22], "#3fb950");
+
+  // b_el = b/2 outstand dimension on the end face
+  var yb2 = halfD + span * 0.30;
+  var tick = span * 0.10;
+  addLine(gClassCond, [0, yb2, z0], [halfB, yb2, z0], 0xf0883e);
+  addLine(gClassCond, [0, yb2 - tick, z0], [0, yb2 + tick, z0], 0xf0883e);
+  addLine(gClassCond, [halfB, yb2 - tick, z0], [halfB, yb2 + tick, z0],
+          0xf0883e);
+  addLabel(gClassCond,
+           "b_el = b/2 = " + halfB.toFixed(0) + " mm (one outstand)",
+           [halfB * 0.5, yb2 + span * 0.45, z0], "#f0883e");
+})();
+gClassCond.visible = false;
 
 // =====================================================================
 // camera and orbit
@@ -997,6 +1208,7 @@ function applyCamera() {
     target.y + sph.dist * Math.cos(sph.phi),
     target.z + sph.dist * sp * Math.cos(sph.theta));
   camera.lookAt(target);
+  persist();
 }
 
 function pan(dxPx, dyPx) {
@@ -1094,6 +1306,7 @@ document.getElementById("vSpin").onclick = function () { spin = !spin; };
   pb.onclick = function () {
     panMode = !panMode;
     pb.classList.toggle("on", panMode);
+    persist();
   };
 })();
 
@@ -1102,11 +1315,14 @@ document.getElementById("vSpin").onclick = function () { spin = !spin; };
 // =====================================================================
 function bindToggle(id, group, initial, after) {
   var b = document.getElementById(id);
-  var on = !!initial;
+  var on = (SAVED && SAVED.togg && typeof SAVED.togg[id] === "boolean")
+    ? SAVED.togg[id] : !!initial;
   function apply() {
+    TSTATE[id] = on;
     b.classList.toggle("on", on);
     if (group) group.visible = on;
     if (after) after(on);
+    persist();
   }
   b.onclick = function () { on = !on; apply(); };
   apply();
@@ -1157,7 +1373,12 @@ var MODES = [
   ["class", "Table 2 section class",
    "Each plate element is coloured by the class its width-to-thickness "
    + "ratio earns in flexure. Class 1 green through Class 4 red. The "
-   + "section class is the least compact of the two."],
+   + "section class is the least compact of the two. The overlay shows "
+   + "the Table 2 support conditions: each flange outstand is supported "
+   + "along ONE edge, the web junction (green), and free at the tip "
+   + "(dashed red), so its width is b_el = b/2. The web is supported "
+   + "along BOTH edges by the flanges, which is why its limits are far "
+   + "higher."],
   ["stress", "Bending stress through the depth",
    "Red is compression, blue is tension, grey is the neutral axis. A "
    + "Class 1 or 2 section reaches Fy over the full depth, so the block "
@@ -1189,17 +1410,26 @@ for (var i = 0; i < MODES.length; i++) {
 }
 var currentMode = "plain";
 function setMode(m) {
-  currentMode = m;
-  paint(m);
+  var known = false;
   for (var i = 0; i < MODES.length; i++) {
-    if (MODES[i][0] === m) {
-      document.getElementById("expl").textContent = MODES[i][2];
+    if (MODES[i][0] === m) known = true;
+  }
+  if (!known) m = "plain";
+  currentMode = m;
+  sel.value = m;
+  paint(m);
+  // the Table 2 condition overlay only makes sense in class mode
+  gClassCond.visible = (m === "class");
+  for (var i2 = 0; i2 < MODES.length; i2++) {
+    if (MODES[i2][0] === m) {
+      document.getElementById("expl").textContent = MODES[i2][2];
     }
   }
   if (m === "ltb") { setLTB(true); }
+  persist();
 }
 sel.onchange = function () { setMode(sel.value); };
-setMode("plain");
+setMode(SAVED && SAVED.mode ? SAVED.mode : "plain");
 
 // =====================================================================
 // hud
@@ -1243,6 +1473,19 @@ window.addEventListener("resize", resize);
 resize();
 sph.dist = fitWhole(1.22);
 applyCamera();
+
+// restore the camera the user last had, scaled to the current model size
+if (SAVED && SAVED.cam && isFinite(SAVED.cam.distR)) {
+  sph.theta = SAVED.cam.theta;
+  sph.phi = SAVED.cam.phi;
+  sph.dist = Math.max(radius * 0.05,
+                      Math.min(radius * 40, SAVED.cam.distR * radius));
+  target.set((SAVED.cam.tx || 0) * L, (SAVED.cam.ty || 0) * L,
+             (SAVED.cam.tz || 0) * L);
+  panMode = !!SAVED.cam.pan;
+  document.getElementById("vPan").classList.toggle("on", panMode);
+  applyCamera();
+}
 sizeLabels(overlays, UNIT * (sph.dist / (radius * 2.6)));
 
 var lastDist = sph.dist;

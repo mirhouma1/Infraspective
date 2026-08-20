@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0d1117;
+    font-family:-apple-system, "Segoe UI", Roboto, sans-serif; color:#e6edf3; }
+  #root { display:flex; flex-direction:column; height:100vh; }
+  #stage { position:relative; flex:1 1 auto; min-height:0; touch-action:none; }
+  #cv { display:block; width:100%; height:100%; }
+  #hud { position:absolute; left:10px; top:8px; font-size:11px; line-height:1.5;
+    color:#8b949e; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  #hud b { color:#e6edf3; font-size:12px; }
+  #hud .v { color:#e6edf3; }
+  #legend { position:absolute; right:10px; top:8px; font-size:10.5px;
+    line-height:1.6; color:#c9d1d9; pointer-events:none; text-align:right;
+    text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  #legend .k { color:#8b949e; }
+  #err { position:absolute; left:10px; bottom:8px; color:#f85149; font-size:11px; }
+  #props { position:absolute; right:8px; bottom:8px; max-height:56%;
+    overflow:auto; background:rgba(13,17,23,.82); border:1px solid #30363d;
+    border-radius:8px; padding:8px 10px; font-size:10.5px; line-height:1.5;
+    color:#c9d1d9; display:none; max-width:52%; }
+  #props .g { color:#6e7681; text-transform:uppercase; letter-spacing:.05em;
+    font-size:9px; margin-top:6px; }
+  #props .g:first-child { margin-top:0; }
+  #props .k { color:#8b949e; display:inline-block; min-width:66px; }
+  #plots { flex:0 0 auto; display:flex; gap:6px; background:#0d1117;
+    padding:6px 8px 0 8px; }
+  .pw { flex:1 1 0; min-width:0; }
+  .pt { font-size:9.5px; color:#6e7681; text-transform:uppercase;
+    letter-spacing:.05em; margin-bottom:2px; }
+  canvas.plot { display:block; width:100%; height:132px;
+    background:#161b22; border:1px solid #30363d; border-radius:6px; }
+  #bar { flex:0 0 auto; background:#161b22; border-top:1px solid #30363d;
+    padding:6px 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+  .row + .row { margin-top:5px; }
+  button.t { background:#21262d; color:#8b949e; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer;
+    white-space:nowrap; }
+  button.t.on { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  button.v { background:#21262d; color:#c9d1d9; border:1px solid #30363d;
+    border-radius:6px; padding:5px 9px; font-size:11px; cursor:pointer; }
+  button.v:active { background:#1f6feb; color:#fff; }
+  button.t:focus-visible, button.v:focus-visible, select:focus-visible,
+  input:focus-visible { outline:2px solid #58a6ff; outline-offset:1px; }
+  select { background:#21262d; color:#e6edf3; border:1px solid #30363d;
+    border-radius:6px; padding:5px 7px; font-size:11px; }
+  input[type=range] { flex:1 1 200px; min-width:120px; accent-color:#1f6feb; }
+  .lbl { font-size:10px; color:#6e7681; text-transform:uppercase;
+    letter-spacing:.05em; margin-right:2px; }
+  #tread { font-size:11px; color:#e6edf3; font-variant-numeric:tabular-nums;
+    min-width:150px; }
+  #expl { font-size:11px; color:#8b949e; line-height:1.45; margin-top:6px;
+    padding-top:6px; border-top:1px solid #21262d; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud"></div>
+    <div id="legend"></div>
+    <div id="props"></div>
+    <div id="err"></div>
+  </div>
+  <div id="plots">
+    <div class="pw"><div class="pt">Load and resistance vs time</div>
+      <canvas class="plot" id="pFR"></canvas></div>
+    <div class="pw"><div class="pt">Displacement vs time</div>
+      <canvas class="plot" id="pY"></canvas></div>
+    <div class="pw"><div class="pt">Resistance function, R vs y</div>
+      <canvas class="plot" id="pRY"></canvas></div>
+  </div>
+  <div id="bar">
+    <div class="row">
+      <button class="v" id="bPlay">Play</button>
+      <button class="v" id="bBack">&#8249;</button>
+      <button class="v" id="bFwd">&#8250;</button>
+      <button class="v" id="bRewind">Reset</button>
+      <input type="range" id="scrub" min="0" max="100" value="0" step="1">
+      <span id="tread"></span>
+      <select id="speed">
+        <option value="0.05">1/20 speed</option>
+        <option value="0.15" selected>1/7 speed</option>
+        <option value="0.4">1/2.5 speed</option>
+        <option value="1">real time</option>
+      </select>
+    </div>
+    <div class="row">
+      <span class="lbl">View</span>
+      <button class="v" id="vIso">Iso</button>
+      <button class="v" id="vFront">Elevation</button>
+      <button class="v" id="vEnd">End</button>
+      <button class="v" id="vTop">Top</button>
+      <button class="v" id="vFit">Fit</button>
+      <button class="t" id="vPan">Pan mode</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Show</span>
+      <button class="t" id="pBeam">Member</button>
+      <button class="t" id="pSdof">SDOF model</button>
+      <button class="t" id="pPress">Blast pressure</button>
+      <button class="t" id="pReact">Reactions</button>
+      <button class="t" id="pHinge">Plastic hinges</button>
+      <button class="t" id="pGhost">Undeflected ghost</button>
+      <button class="t" id="tProps">Design data</button>
+      <button class="t" id="tLab">Labels</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Deflection</span>
+      <select id="dscale"></select>
+      <span class="lbl" style="margin-left:8px">Explain</span>
+      <select id="mode"></select>
+    </div>
+    <div id="expl"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+<script>
+var DATA = __GEOMETRY_JSON__;
+
+function fail(m) { document.getElementById("err").textContent = m; }
+
+try {
+
+var G = DATA.geom || {};
+var K = DATA.keys || {};
+var FR = DATA.frames || [];
+var SH = DATA.shapes || {x: [], elastic: [], plastic: []};
+var RES = DATA.resistance || {};
+
+var L = G.L || 6.0;
+var dSec = G.d || 0.3, bf = G.bf || 0.15, tf = G.tf || 0.01, tw = G.tw || 0.007;
+var SCALE = G.defl_scale || 1.0;
+
+var stage = document.getElementById("stage");
+var canvas = document.getElementById("cv");
+
+var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(DATA.bg || "#0d1117");
+
+function makeEnv() {
+  var c = document.createElement("canvas");
+  c.width = 16; c.height = 256;
+  var g = c.getContext("2d");
+  var grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.00, "#ffffff");
+  grad.addColorStop(0.35, "#c8d2dc");
+  grad.addColorStop(0.55, "#7d8894");
+  grad.addColorStop(0.75, "#3a424b");
+  grad.addColorStop(1.00, "#14181d");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  var tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  var p = new THREE.PMREMGenerator(renderer);
+  p.compileEquirectangularShader();
+  var env = p.fromEquirectangular(tex).texture;
+  p.dispose(); tex.dispose();
+  return env;
+}
+scene.environment = makeEnv();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.32));
+var kl = new THREE.DirectionalLight(0xffffff, 1.30);
+kl.position.set(1, 1.4, 1); scene.add(kl);
+var fl = new THREE.DirectionalLight(0xffffff, 0.42);
+fl.position.set(-1, 0.3, -0.8); scene.add(fl);
+
+// =====================================================================
+// text sprites
+// =====================================================================
+function label(text, color, sc) {
+  color = color || "#e6edf3"; sc = sc || 1.0;
+  var pad = 8, fs = 44;
+  var c = document.createElement("canvas");
+  var g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  var wpx = Math.ceil(g.measureText(text).width) + pad * 2;
+  c.width = wpx; c.height = fs + pad * 2;
+  g = c.getContext("2d");
+  g.font = "600 " + fs + "px -apple-system, Segoe UI, Roboto, sans-serif";
+  g.fillStyle = "rgba(13,17,23,0.72)";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = color; g.textBaseline = "middle";
+  g.fillText(text, pad, c.height / 2);
+  var tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthTest: false }));
+  sp.userData.aspect = c.width / c.height;
+  sp.userData.baseScale = sc;
+  return sp;
+}
+var LABELS = [], labelsOn = true;
+function regLabel(sp) { LABELS.push(sp); sp.visible = labelsOn; return sp; }
+function setLabels(on) {
+  labelsOn = on;
+  for (var i = 0; i < LABELS.length; i++) LABELS[i].visible = on;
+}
+function sizeLabels(root, unit) {
+  root.traverse(function (o) {
+    if (o.isSprite && o.userData.aspect) {
+      var h = unit * o.userData.baseScale;
+      o.scale.set(h * o.userData.aspect, h, 1);
+    }
+  });
+}
+function addLabel(grp, text, pos, color, sc) {
+  var sp = regLabel(label(text, color, sc));
+  sp.position.set(pos[0], pos[1], pos[2]);
+  grp.add(sp);
+  return sp;
+}
+function addLine(grp, a, b, color) {
+  grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2])]),
+    new THREE.LineBasicMaterial({ color: color, depthTest: false })));
+}
+function addArrow(grp, origin, dir, len, color, headFrac) {
+  var d = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
+  var o = new THREE.Vector3(origin[0], origin[1], origin[2]);
+  var hl = Math.max(1e-6, len * (headFrac || 0.22));
+  var a = new THREE.ArrowHelper(d, o, Math.max(1e-6, len), color, hl, hl * 0.6);
+  a.line.material.depthTest = false;
+  a.cone.material.depthTest = false;
+  a.line.renderOrder = 5; a.cone.renderOrder = 5;
+  grp.add(a);
+  return a;
+}
+
+// =====================================================================
+// the member
+//
+// The section is drawn as a real I, extruded along the span, and then
+// its vertices are moved every frame. Bending a solid rather than
+// swinging a stick matters here: the whole SDOF idea is that a member
+// with distributed mass and stiffness is being replaced by a lump, and
+// that trade is only visible if the thing being replaced looks like a
+// member.
+// =====================================================================
+function iProfile(d, b, tf, tw) {
+  var hb = b / 2, hd = d / 2, hw = tw / 2;
+  var s = new THREE.Shape();
+  s.moveTo(-hb, -hd);
+  s.lineTo(hb, -hd); s.lineTo(hb, -hd + tf);
+  s.lineTo(hw, -hd + tf); s.lineTo(hw, hd - tf);
+  s.lineTo(hb, hd - tf); s.lineTo(hb, hd);
+  s.lineTo(-hb, hd); s.lineTo(-hb, hd - tf);
+  s.lineTo(-hw, hd - tf); s.lineTo(-hw, -hd + tf);
+  s.lineTo(-hb, -hd + tf);
+  s.closePath();
+  return s;
+}
+
+var STEEL = new THREE.Color("#9fb0c0");
+var beamMat = new THREE.MeshStandardMaterial({
+  color: STEEL.clone(),
+  metalness: DATA.metalness !== undefined ? DATA.metalness : 0.85,
+  roughness: DATA.roughness !== undefined ? DATA.roughness : 0.30,
+  side: THREE.DoubleSide });
+
+var gBeam = new THREE.Group(); scene.add(gBeam);
+var beamGeo = new THREE.ExtrudeGeometry(iProfile(dSec, bf, tf, tw),
+  { depth: L, bevelEnabled: false, steps: 96, curveSegments: 1 });
+var beamMesh = new THREE.Mesh(beamGeo, beamMat);
+beamMesh.rotation.y = Math.PI / 2;      // local z (the span) onto world x
+gBeam.add(beamMesh);
+
+var pos = beamGeo.attributes.position;
+var BASE_Y = new Float32Array(pos.count);
+var SPAN_T = new Float32Array(pos.count);
+(function () {
+  for (var i = 0; i < pos.count; i++) {
+    BASE_Y[i] = pos.getY(i);
+    SPAN_T[i] = Math.min(1, Math.max(0, pos.getZ(i) / L));
+  }
+})();
+
+// undeflected ghost, so the deflection has something to be measured
+// against once it is exaggerated
+var gGhost = new THREE.Group(); scene.add(gGhost);
+(function () {
+  var g = new THREE.ExtrudeGeometry(iProfile(dSec, bf, tf, tw),
+    { depth: L, bevelEnabled: false, steps: 1, curveSegments: 1 });
+  var m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    color: 0x30363d, wireframe: true, transparent: true, opacity: 0.5 }));
+  m.rotation.y = Math.PI / 2;
+  gGhost.add(m);
+})();
+
+function phiAt(t, plasticFrac) {
+  // linear interpolation into the sampled shape functions, blended
+  // between the elastic curve and the mechanism shape
+  var n = SH.x.length;
+  if (n < 2) return 0;
+  var f = t * (n - 1);
+  var i = Math.min(n - 2, Math.max(0, Math.floor(f)));
+  var w = f - i;
+  var e = SH.elastic[i] * (1 - w) + SH.elastic[i + 1] * w;
+  var p = SH.plastic[i] * (1 - w) + SH.plastic[i + 1] * w;
+  return e * (1 - plasticFrac) + p * plasticFrac;
+}
+
+// How far the mechanism shape has taken over. This is a drawing choice,
+// not a calculation: the analysis keeps one shape per strain range, but
+// snapping between them mid-animation reads as a glitch rather than as
+// a hinge forming. The changeover is spread over the first unit of
+// ductility past yield.
+function plasticFrac(y) {
+  var yE = K.yE_m || 1e-9;
+  var mu = Math.abs(y) / yE;
+  if (mu <= 1) return 0;
+  return Math.min(1, mu - 1);
+}
+
+function deform(y) {
+  var pf = plasticFrac(y);
+  var off = -y * SCALE;                 // load pushes down, so does the beam
+  for (var i = 0; i < pos.count; i++) {
+    pos.setY(i, BASE_Y[i] + phiAt(SPAN_T[i], pf) * off);
+  }
+  pos.needsUpdate = true;
+  beamGeo.computeVertexNormals();
+}
+
+// =====================================================================
+// supports
+// =====================================================================
+var gSup = new THREE.Group(); scene.add(gSup);
+(function () {
+  var mat = new THREE.MeshStandardMaterial({ color: 0x6e7681,
+    metalness: 0.4, roughness: 0.7 });
+  var fixed = G.support === "fixed";
+  [0, L].forEach(function (x) {
+    if (fixed) {
+      var g = new THREE.BoxGeometry(dSec * 0.5, dSec * 2.2, bf * 1.9);
+      var m = new THREE.Mesh(g, mat);
+      m.position.set(x + (x === 0 ? -dSec * 0.25 : dSec * 0.25), 0, 0);
+      gSup.add(m);
+    } else {
+      var g2 = new THREE.ConeGeometry(dSec * 0.45, dSec * 0.8, 4);
+      var m2 = new THREE.Mesh(g2, mat);
+      m2.rotation.x = Math.PI;
+      m2.position.set(x, -dSec / 2 - dSec * 0.4, 0);
+      gSup.add(m2);
+    }
+  });
+})();
+
+// =====================================================================
+// plastic hinges
+// =====================================================================
+var gHinge = new THREE.Group(); scene.add(gHinge);
+var HINGES = [];
+(function () {
+  var xs = G.hinge_x || [], st = G.hinge_stage || [];
+  for (var i = 0; i < xs.length; i++) {
+    var m = new THREE.Mesh(
+      new THREE.SphereGeometry(dSec * 0.34, 18, 14),
+      new THREE.MeshStandardMaterial({ color: 0x39424e, metalness: 0.2,
+        roughness: 0.6, emissive: 0x000000 }));
+    m.position.set(xs[i], 0, 0);
+    gHinge.add(m);
+    HINGES.push({ mesh: m, x: xs[i], stage: st[i] || 1, t: xs[i] / L });
+  }
+})();
+
+// =====================================================================
+// blast pressure and the arriving wave
+// =====================================================================
+var gPress = new THREE.Group(); scene.add(gPress);
+var PARROWS = [], WAVE = null;
+(function () {
+  var n = 11;
+  var lenMax = L * 0.16;
+  for (var i = 0; i < n; i++) {
+    var t = (i + 0.5) / n;
+    var a = addArrow(gPress, [t * L, dSec * 0.5 + lenMax, 0], [0, -1, 0],
+                     lenMax, 0xf85149, 0.30);
+    PARROWS.push({ arrow: a, t: t, lenMax: lenMax });
+  }
+  var pg = new THREE.PlaneGeometry(L * 1.15, bf * 4.0);
+  var pm = new THREE.MeshBasicMaterial({ color: 0xf85149, transparent: true,
+    opacity: 0.10, side: THREE.DoubleSide, depthTest: false });
+  WAVE = new THREE.Mesh(pg, pm);
+  WAVE.rotation.x = -Math.PI / 2;
+  WAVE.position.set(L / 2, dSec * 0.5 + lenMax, 0);
+  gPress.add(WAVE);
+  addLabel(gPress, "P(t)", [L * 0.5, dSec * 0.5 + lenMax * 1.5, 0],
+           "#f85149", 1.0);
+})();
+
+// =====================================================================
+// dynamic reactions
+//
+// Section 6.4.6, the part the chapter says is most often overlooked:
+// the spring force in the SDOF system is NOT the support reaction. The
+// arrows here are V(t) from the table coefficients, which is why they
+// do not simply follow R.
+// =====================================================================
+var gReact = new THREE.Group(); scene.add(gReact);
+var RARROWS = [];
+(function () {
+  [0, L].forEach(function (x) {
+    var a = addArrow(gReact, [x, -dSec * 1.6, 0], [0, 1, 0],
+                     L * 0.10, 0x7ee787, 0.28);
+    RARROWS.push({ arrow: a, x: x });
+  });
+  addLabel(gReact, "V(t)", [0, -dSec * 2.4, 0], "#7ee787", 0.9);
+})();
+
+// =====================================================================
+// the equivalent SDOF system, standing beside the member it replaces
+// =====================================================================
+var gSdof = new THREE.Group(); scene.add(gSdof);
+var SBOX = null, SPRING = null, SPRING_BASE = -L * 0.20;
+(function () {
+  var xs = -L * 0.28;
+  var side = L * 0.075;
+  SBOX = new THREE.Mesh(new THREE.BoxGeometry(side, side * 0.65, side),
+    new THREE.MeshStandardMaterial({ color: 0x58a6ff, metalness: 0.5,
+      roughness: 0.35 }));
+  SBOX.position.set(xs, 0, 0);
+  gSdof.add(SBOX);
+
+  var gm = new THREE.Mesh(new THREE.BoxGeometry(side * 1.7, side * 0.16, side * 1.7),
+    new THREE.MeshStandardMaterial({ color: 0x6e7681, metalness: 0.3,
+      roughness: 0.8 }));
+  gm.position.set(xs, SPRING_BASE, 0);
+  gSdof.add(gm);
+
+  var pts = [];
+  for (var i = 0; i <= 120; i++) { pts.push(new THREE.Vector3(0, 0, 0)); }
+  SPRING = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0x58a6ff }));
+  gSdof.add(SPRING);
+  SPRING.userData.x = xs;
+  SPRING.userData.r = side * 0.30;
+
+  addLabel(gSdof, "M_e = " + (DATA.sdof.Me_kg).toFixed(0) + " kg",
+           [xs, side * 1.1, 0], "#58a6ff", 0.95);
+  addLabel(gSdof, "K_e = " + (DATA.sdof.KE_Npm / 1e6).toFixed(2) + " MN/m",
+           [xs, SPRING_BASE * 0.55, 0], "#58a6ff", 0.85);
+  addLabel(gSdof, "K_LM = " + (DATA.sdof.KLM).toFixed(2),
+           [xs, SPRING_BASE * 1.22, 0], "#8b949e", 0.85);
+})();
+
+function setSpring(y) {
+  var xs = SPRING.userData.x, r = SPRING.userData.r;
+  var top = -y * SCALE;
+  var bot = SPRING_BASE;
+  var n = 120, turns = 7;
+  var arr = SPRING.geometry.attributes.position;
+  for (var i = 0; i <= n; i++) {
+    var f = i / n;
+    var yy = bot + (top - bot) * f;
+    var a = f * turns * Math.PI * 2;
+    arr.setXYZ(i, xs + r * Math.cos(a), yy, r * Math.sin(a));
+  }
+  arr.needsUpdate = true;
+  SBOX.position.y = top;
+}
+
+// =====================================================================
+// plots
+// =====================================================================
+function plotCtx(id) {
+  var c = document.getElementById(id);
+  var w = c.clientWidth || 300, h = c.clientHeight || 132;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (c.width !== Math.floor(w * dpr)) { c.width = Math.floor(w * dpr); }
+  if (c.height !== Math.floor(h * dpr)) { c.height = Math.floor(h * dpr); }
+  var g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  return { g: g, w: w, h: h };
+}
+var PAD = { l: 34, r: 8, t: 10, b: 18 };
+
+function axes(p, x0, x1, y0, y1, xlab, ylab) {
+  var g = p.g;
+  g.strokeStyle = "#30363d"; g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(PAD.l, PAD.t); g.lineTo(PAD.l, p.h - PAD.b);
+  g.lineTo(p.w - PAD.r, p.h - PAD.b);
+  g.stroke();
+  g.fillStyle = "#6e7681"; g.font = "9px -apple-system, Segoe UI, sans-serif";
+  g.fillText(xlab, p.w - PAD.r - g.measureText(xlab).width, p.h - 5);
+  g.fillText(ylab, 2, PAD.t - 2);
+  // zero line if the range straddles it
+  if (y0 < 0 && y1 > 0) {
+    var yz = PAD.t + (y1 - 0) / (y1 - y0) * (p.h - PAD.t - PAD.b);
+    g.strokeStyle = "#21262d";
+    g.beginPath(); g.moveTo(PAD.l, yz); g.lineTo(p.w - PAD.r, yz); g.stroke();
+  }
+}
+function mapx(p, v, x0, x1) {
+  return PAD.l + (v - x0) / ((x1 - x0) || 1) * (p.w - PAD.l - PAD.r);
+}
+function mapy(p, v, y0, y1) {
+  return PAD.t + (y1 - v) / ((y1 - y0) || 1) * (p.h - PAD.t - PAD.b);
+}
+function series(p, xs, ys, x0, x1, y0, y1, color, upto) {
+  var g = p.g;
+  g.strokeStyle = color; g.lineWidth = 1.5; g.beginPath();
+  var n = (upto === undefined) ? xs.length : Math.min(xs.length, upto + 1);
+  for (var i = 0; i < n; i++) {
+    var X = mapx(p, xs[i], x0, x1), Y = mapy(p, ys[i], y0, y1);
+    if (i === 0) g.moveTo(X, Y); else g.lineTo(X, Y);
+  }
+  g.stroke();
+}
+function dot(p, x, y, x0, x1, y0, y1, color) {
+  var g = p.g;
+  g.fillStyle = color;
+  g.beginPath();
+  g.arc(mapx(p, x, x0, x1), mapy(p, y, y0, y1), 3.2, 0, Math.PI * 2);
+  g.fill();
+}
+function hline(p, y, x0, x1, y0, y1, color, text) {
+  var g = p.g;
+  g.strokeStyle = color; g.setLineDash([3, 3]); g.lineWidth = 1;
+  var Y = mapy(p, y, y0, y1);
+  g.beginPath(); g.moveTo(PAD.l, Y); g.lineTo(p.w - PAD.r, Y); g.stroke();
+  g.setLineDash([]);
+  if (text) {
+    g.fillStyle = color; g.font = "9px -apple-system, Segoe UI, sans-serif";
+    g.fillText(text, PAD.l + 3, Y - 2);
+  }
+}
+
+var T = FR.map(function (f) { return f.t * 1000.0; });          // ms
+var YY = FR.map(function (f) { return f.y * 1000.0; });         // mm
+var FF = FR.map(function (f) { return f.F / 1000.0; });         // kN
+var RR = FR.map(function (f) { return f.R / 1000.0; });         // kN
+var VV = FR.map(function (f) { return f.V / 1000.0; });         // kN
+
+var Tmax = T.length ? T[T.length - 1] : 1;
+var FRmax = Math.max(1e-9, Math.max.apply(null, FF.concat(RR).map(Math.abs)));
+var Ymin = Math.min.apply(null, YY), Ymax = Math.max.apply(null, YY);
+var Ypad = 0.12 * Math.max(1e-9, Ymax - Ymin);
+
+function drawPlots(k) {
+  // load and resistance
+  var p = plotCtx("pFR");
+  axes(p, 0, Tmax, -FRmax * 1.1, FRmax * 1.1, "t, ms", "kN");
+  series(p, T, FF, 0, Tmax, -FRmax * 1.1, FRmax * 1.1, "#f85149");
+  series(p, T, RR, 0, Tmax, -FRmax * 1.1, FRmax * 1.1, "#7ee787");
+  series(p, T, VV, 0, Tmax, -FRmax * 1.1, FRmax * 1.1, "#58a6ff");
+  hline(p, (K.Ru_N || 0) / 1000.0, 0, Tmax, -FRmax * 1.1, FRmax * 1.1,
+        "#6e7681", "Ru");
+  dot(p, T[k], FF[k], 0, Tmax, -FRmax * 1.1, FRmax * 1.1, "#f85149");
+  dot(p, T[k], RR[k], 0, Tmax, -FRmax * 1.1, FRmax * 1.1, "#7ee787");
+  p.g.fillStyle = "#8b949e"; p.g.font = "9px sans-serif";
+  p.g.fillText("F red   R green   V blue", PAD.l + 2, p.h - PAD.b - 3);
+
+  // displacement
+  p = plotCtx("pY");
+  var y0 = Ymin - Ypad, y1 = Ymax + Ypad;
+  axes(p, 0, Tmax, y0, y1, "t, ms", "y, mm");
+  series(p, T, YY, 0, Tmax, y0, y1, "#e6edf3");
+  hline(p, (K.yE_m || 0) * 1000, 0, Tmax, y0, y1, "#ffa657", "y elastic limit");
+  hline(p, (K.ymax_m || 0) * 1000, 0, Tmax, y0, y1, "#f85149", "y max");
+  dot(p, T[k], YY[k], 0, Tmax, y0, y1, "#e6edf3");
+
+  // resistance function with the path actually travelled
+  p = plotCtx("pRY");
+  var ypts = (RES.y_pts || []).map(function (v) { return v * 1000; });
+  var rpts = (RES.R_pts || []).map(function (v) { return v / 1000; });
+  var yr = Math.max(Math.abs(Ymin), Math.abs(Ymax),
+                    (RES.yE_m || 0) * 1000) * 1.15 + 1e-9;
+  var rr = Math.max(1e-9, (RES.Ru_N || 0) / 1000) * 1.3;
+  axes(p, -yr, yr, -rr, rr, "y, mm", "R, kN");
+  // the backbone, both ways
+  p.g.strokeStyle = "#30363d"; p.g.lineWidth = 2; p.g.beginPath();
+  for (var i = ypts.length - 1; i >= 0; i--) {
+    var X = mapx(p, -ypts[i], -yr, yr), Y = mapy(p, -rpts[i], -rr, rr);
+    if (i === ypts.length - 1) p.g.moveTo(X, Y); else p.g.lineTo(X, Y);
+  }
+  for (var j = 1; j < ypts.length; j++) {
+    p.g.lineTo(mapx(p, ypts[j], -yr, yr), mapy(p, rpts[j], -rr, rr));
+  }
+  p.g.lineTo(mapx(p, yr, -yr, yr), mapy(p, rpts[rpts.length - 1], -rr, rr));
+  p.g.stroke();
+  // the path this response actually took, up to now
+  series(p, YY, RR, -yr, yr, -rr, rr, "#ffa657", k);
+  dot(p, YY[k], RR[k], -yr, yr, -rr, rr, "#ffa657");
+}
+
+// =====================================================================
+// frame application
+// =====================================================================
+var idx = 0;
+function applyFrame(k) {
+  idx = Math.max(0, Math.min(FR.length - 1, k));
+  var f = FR[idx];
+  if (!f) return;
+
+  deform(f.y);
+  setSpring(f.y);
+
+  // pressure arrows follow F(t), and vanish when the pulse is over
+  var frac = (K.Fo_N > 0) ? Math.max(0, f.F / K.Fo_N) : 0;
+  for (var i = 0; i < PARROWS.length; i++) {
+    var pa = PARROWS[i];
+    var len = pa.lenMax * Math.max(0.001, frac);
+    pa.arrow.setLength(len, len * 0.30, len * 0.18);
+    pa.arrow.position.y = dSec * 0.5 + len;
+    pa.arrow.visible = frac > 0.002;
+  }
+  if (WAVE) {
+    WAVE.material.opacity = 0.10 * frac;
+    WAVE.position.y = dSec * 0.5 + PARROWS[0].lenMax * Math.max(0.001, frac);
+  }
+
+  // reactions follow V(t) and turn over on rebound
+  var vmax = Math.max(1e-9, K.Vmax_N || 1);
+  for (var r = 0; r < RARROWS.length; r++) {
+    var ra = RARROWS[r];
+    var mag = Math.abs(f.V) / vmax;
+    var ln = Math.max(1e-4, L * 0.13 * mag);
+    ra.arrow.setDirection(new THREE.Vector3(0, f.V >= 0 ? 1 : -1, 0));
+    ra.arrow.setLength(ln, ln * 0.28, ln * 0.16);
+  }
+
+  // hinges light up as their stage is reached, and go out on unloading
+  for (var h = 0; h < HINGES.length; h++) {
+    var hh = HINGES[h];
+    var on = f.stage >= hh.stage;
+    hh.mesh.material.color.set(on ? 0xf0883e : 0x39424e);
+    hh.mesh.material.emissive.set(on ? 0x7a3d00 : 0x000000);
+    var pf = plasticFrac(f.y);
+    hh.mesh.position.y = -f.y * SCALE * phiAt(hh.t, pf);
+  }
+
+  drawPlots(idx);
+  updateHud(f);
+  updateScrub();
+}
+
+function fmt(v, n) { return (v === null || v === undefined || isNaN(v))
+  ? "-" : Number(v).toFixed(n === undefined ? 2 : n); }
+
+function updateHud(f) {
+  var h = "<b>" + (DATA.label || "SDOF blast response") + "</b><br>";
+  h += (DATA.table || "") + "<br>";
+  h += "t_n = " + fmt(K.tn_s * 1000, 1) + " ms &nbsp; t_d = "
+     + fmt(K.td_s * 1000, 1) + " ms &nbsp; t_d/t_n = " + fmt(K.tau, 2)
+     + " (" + (K.regime || "") + ")<br>";
+  h += "R_u = " + fmt(K.Ru_N / 1000, 0) + " kN &nbsp; F_o = "
+     + fmt(K.Fo_N / 1000, 0) + " kN &nbsp; F_o/R_u = "
+     + fmt(K.Fo_N / (K.Ru_N || 1), 2) + "<br>";
+  h += "<br><span class='v'>t = " + fmt(f.t * 1000, 2) + " ms</span><br>";
+  h += "y = " + fmt(f.y * 1000, 2) + " mm &nbsp; mu = " + fmt(f.mu, 2) + "<br>";
+  h += "F = " + fmt(f.F / 1000, 1) + " kN &nbsp; R = " + fmt(f.R / 1000, 1)
+     + " kN &nbsp; V = " + fmt(f.V / 1000, 1) + " kN<br>";
+  h += "range: " + (DATA.stage_names[f.stage] || "-");
+  document.getElementById("hud").innerHTML = h;
+
+  var g = "<span class='k'>peak y</span> " + fmt(K.ymax_m * 1000, 1) + " mm<br>";
+  g += "<span class='k'>at</span> " + fmt(K.tmax_s * 1000, 1) + " ms<br>";
+  g += "<span class='k'>ductility</span> " + fmt(K.mu, 2) + "<br>";
+  g += "<span class='k'>rotation</span> " + fmt(K.theta_deg, 2) + " deg<br>";
+  g += "<span class='k'>rebound</span> " + fmt(K.ymin_m * 1000, 1) + " mm<br>";
+  g += "<span class='k'>peak V</span> " + fmt(K.Vmax_N / 1000, 0) + " kN<br>";
+  g += "<span class='k'>scale</span> x" + fmt(SCALE, 0);
+  document.getElementById("legend").innerHTML = g;
+}
+
+function updateScrub() {
+  var s = document.getElementById("scrub");
+  s.value = String(Math.round(idx / Math.max(1, FR.length - 1) * 1000));
+  var f = FR[idx];
+  document.getElementById("tread").textContent =
+    "t = " + fmt(f.t * 1000, 2) + " ms   y = " + fmt(f.y * 1000, 1) + " mm";
+}
+
+// =====================================================================
+// playback
+// =====================================================================
+var playing = false, speed = 0.15, lastMs = null;
+document.getElementById("scrub").max = "1000";
+document.getElementById("scrub").oninput = function () {
+  playing = false;
+  document.getElementById("bPlay").textContent = "Play";
+  applyFrame(Math.round(Number(this.value) / 1000 * (FR.length - 1)));
+};
+document.getElementById("bPlay").onclick = function () {
+  playing = !playing;
+  if (playing && idx >= FR.length - 1) { idx = 0; }
+  this.textContent = playing ? "Pause" : "Play";
+  lastMs = null;
+};
+document.getElementById("bFwd").onclick = function () {
+  playing = false; document.getElementById("bPlay").textContent = "Play";
+  applyFrame(idx + 1); };
+document.getElementById("bBack").onclick = function () {
+  playing = false; document.getElementById("bPlay").textContent = "Play";
+  applyFrame(idx - 1); };
+document.getElementById("bRewind").onclick = function () {
+  playing = false; document.getElementById("bPlay").textContent = "Play";
+  applyFrame(0); };
+document.getElementById("speed").onchange = function () {
+  speed = Number(this.value); };
+
+// =====================================================================
+// deflection scale
+// =====================================================================
+(function () {
+  var sel = document.getElementById("dscale");
+  var auto = G.auto_scale || 1;
+  var opts = [["auto", "Auto, x" + auto.toFixed(0)], ["1", "True scale, x1"],
+              ["5", "x5"], ["20", "x20"], ["50", "x50"], ["200", "x200"]];
+  opts.forEach(function (o) {
+    var e = document.createElement("option");
+    e.value = o[0]; e.textContent = o[1]; sel.appendChild(e);
+  });
+  sel.onchange = function () {
+    SCALE = (this.value === "auto") ? auto : Number(this.value);
+    applyFrame(idx);
+  };
+})();
+
+// =====================================================================
+// camera and orbit
+// =====================================================================
+var SPAN = L;
+var UNIT = SPAN * 0.030;
+var FOV = 32;
+var radius = SPAN * 0.8;
+var camera = new THREE.PerspectiveCamera(FOV, 1, radius * 0.004, radius * 400);
+var target = new THREE.Vector3(L * 0.42, -L * 0.02, 0);
+var sph = { theta: 0.62, phi: 1.25, dist: radius * 2.6 };
+var panMode = false;
+
+function fitDist(objH, objW, margin) {
+  var vt = Math.tan(FOV * Math.PI / 360);
+  var asp = camera.aspect || 1;
+  return Math.max((objH / 2) / vt, (objW / 2) / (asp * vt)) * (margin || 1.15);
+}
+function fitWhole(margin) { return fitDist(L * 0.62, L * 1.55, margin || 1.15); }
+function applyCamera() {
+  sph.phi = Math.max(0.02, Math.min(Math.PI - 0.02, sph.phi));
+  sph.dist = Math.max(radius * 0.05, Math.min(radius * 40, sph.dist));
+  var sp = Math.sin(sph.phi);
+  camera.position.set(
+    target.x + sph.dist * sp * Math.sin(sph.theta),
+    target.y + sph.dist * Math.cos(sph.phi),
+    target.z + sph.dist * sp * Math.cos(sph.theta));
+  camera.lookAt(target);
+}
+function pan(dxPx, dyPx) {
+  var hpx = stage.clientHeight || 1;
+  var wpp = 2 * sph.dist * Math.tan(FOV * Math.PI / 360) / hpx;
+  var st = Math.sin(sph.theta), ct = Math.cos(sph.theta);
+  var sp = Math.sin(sph.phi), cp = Math.cos(sph.phi);
+  target.x += (-dxPx * ct + dyPx * (-st * cp)) * wpp;
+  target.y += (dyPx * sp) * wpp;
+  target.z += (-dxPx * (-st) + dyPx * (-ct * cp)) * wpp;
+  applyCamera();
+}
+applyCamera();
+
+var ptrs = {}, last = null, pinch0 = null, mid0 = null;
+canvas.addEventListener("pointerdown", function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  if (Object.keys(ptrs).length === 1) last = { x: e.clientX, y: e.clientY };
+});
+canvas.addEventListener("pointermove", function (e) {
+  if (!ptrs[e.pointerId]) return;
+  ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var ids = Object.keys(ptrs);
+  if (ids.length === 1 && last) {
+    var dx = e.clientX - last.x, dy = e.clientY - last.y;
+    if (panMode) { pan(dx, dy); }
+    else { sph.theta -= dx * 0.009; sph.phi -= dy * 0.009; applyCamera(); }
+    last = { x: e.clientX, y: e.clientY };
+  } else if (ids.length === 2) {
+    var a = ptrs[ids[0]], b = ptrs[ids[1]];
+    var d2 = Math.hypot(a.x - b.x, a.y - b.y);
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (pinch0 === null) { pinch0 = d2; mid0 = { x: mx, y: my }; }
+    if (d2 > 0) { sph.dist *= pinch0 / d2; pinch0 = d2; }
+    if (mid0) { pan(mx - mid0.x, my - mid0.y); mid0 = { x: mx, y: my }; }
+    applyCamera();
+  }
+});
+function up(e) {
+  delete ptrs[e.pointerId];
+  if (Object.keys(ptrs).length < 2) { pinch0 = null; mid0 = null; }
+  if (Object.keys(ptrs).length === 0) last = null;
+}
+canvas.addEventListener("pointerup", up);
+canvas.addEventListener("pointercancel", up);
+canvas.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  sph.dist *= (1 + (e.deltaY > 0 ? 0.12 : -0.12));
+  applyCamera();
+}, { passive: false });
+
+function setView(th, ph, dist) {
+  target.set(L * 0.42, -L * 0.02, 0);
+  sph.theta = th; sph.phi = ph; sph.dist = dist;
+  applyCamera();
+  sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+}
+document.getElementById("vIso").onclick = function () {
+  setView(0.62, 1.25, fitWhole(1.15)); };
+document.getElementById("vFront").onclick = function () {
+  setView(0, 1.5708, fitWhole(1.05)); };
+document.getElementById("vEnd").onclick = function () {
+  setView(1.5708, 1.5708, fitDist(L * 0.5, L * 0.5, 1.2)); };
+document.getElementById("vTop").onclick = function () {
+  setView(0, 0.05, fitWhole(1.10)); };
+document.getElementById("vFit").onclick = function () {
+  setView(sph.theta, sph.phi, fitWhole(1.12)); };
+(function () {
+  var pb = document.getElementById("vPan");
+  pb.onclick = function () {
+    panMode = !panMode; pb.classList.toggle("on", panMode); };
+})();
+
+// =====================================================================
+// toggles
+// =====================================================================
+function bindToggle(id, grp, initial, after) {
+  var b = document.getElementById(id);
+  if (!b) { return function () {}; }
+  var on = !!initial;
+  function apply() {
+    b.classList.toggle("on", on);
+    if (grp) grp.visible = on;
+    if (after) after(on);
+  }
+  b.onclick = function () { on = !on; apply(); };
+  apply();
+  return function (want) { if (want !== on) { on = want; apply(); } };
+}
+bindToggle("pBeam", gBeam, true);
+bindToggle("pSdof", gSdof, true);
+bindToggle("pPress", gPress, true);
+bindToggle("pReact", gReact, true);
+bindToggle("pHinge", gHinge, true);
+bindToggle("pGhost", gGhost, false);
+bindToggle("tLab", null, true, function (on) { setLabels(on); });
+bindToggle("tProps", null, false, function (on) {
+  document.getElementById("props").style.display = on ? "block" : "none"; });
+
+(function () {
+  var el = document.getElementById("props");
+  var rows = DATA.props || [];
+  if (!rows.length) { el.innerHTML = "<div class='g'>No data</div>"; return; }
+  var cur = null, html = "";
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (r.group !== cur) { cur = r.group; html += "<div class='g'>" + cur + "</div>"; }
+    var u = r.unit ? (" " + r.unit) : "";
+    html += "<div><span class='k'>" + r.symbol + "</span><span class='v'>"
+         + r.value + u + "</span></div>";
+  }
+  el.innerHTML = html;
+})();
+
+// =====================================================================
+// explain dropdown
+// =====================================================================
+var MODES = [
+  ["what", "What am I looking at",
+   "A real member with mass spread along it, and beside it the single "
+   + "mass on a single spring that the analysis replaces it with. Both "
+   + "move with the same y(t), because they are the same solution. The "
+   + "trade is exact in energy, not in shape: that is what K_L and K_M "
+   + "buy."],
+  ["load", "The load and why the pulse shape matters",
+   "The pressure is a straight line from its peak to zero at t_d. What "
+   + "decides the response is t_d against the natural period t_n. Short "
+   + "pulse and the member only feels the impulse; long pulse and it "
+   + "may as well be a static load left in place."],
+  ["resist", "The resistance function",
+   "R rises on the elastic stiffness until the first hinge forms, then "
+   + "on a softer stiffness if there is an elastic-plastic range, then "
+   + "flat at R_u once the member is a mechanism. Watch the third plot: "
+   + "the trace runs out along the plateau, and the area under it is "
+   + "the energy the member has absorbed."],
+  ["ductility", "Ductility",
+   "mu is y_max divided by the deflection at which the member became a "
+   + "mechanism. It is not a safety factor, it is how far past yield "
+   + "the member was pushed, and it is the number the acceptance "
+   + "criteria of Chapter 5 are written against."],
+  ["react", "Dynamic reactions",
+   "The green arrows are V(t) from the table coefficients, not the "
+   + "spring force. The chapter calls this the most commonly overlooked "
+   + "part of the method: the inertia of the member is carried by the "
+   + "member, so the support never sees the whole of R. Watch the "
+   + "arrows turn over on rebound."],
+  ["rebound", "Rebound",
+   "After the pulse has gone the member springs back and can end up "
+   + "loaded the other way. The rebound peak and the reversed reaction "
+   + "are two of the four things the chapter says the analysis has to "
+   + "deliver, and they are the two most often left out."]
+];
+(function () {
+  var sel = document.getElementById("mode");
+  MODES.forEach(function (m) {
+    var o = document.createElement("option");
+    o.value = m[0]; o.textContent = m[1]; sel.appendChild(o);
+  });
+  sel.onchange = function () {
+    for (var i = 0; i < MODES.length; i++) {
+      if (MODES[i][0] === this.value) {
+        document.getElementById("expl").textContent = MODES[i][2];
+      }
+    }
+  };
+  document.getElementById("expl").textContent = MODES[0][2];
+})();
+
+// =====================================================================
+// resize and loop
+// =====================================================================
+function resize() {
+  var w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+  drawPlots(idx);
+}
+window.addEventListener("resize", resize);
+resize();
+sph.dist = fitWhole(1.15);
+applyCamera();
+sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
+applyFrame(0);
+
+function loop(ms) {
+  requestAnimationFrame(loop);
+  if (playing && FR.length > 1) {
+    if (lastMs === null) lastMs = ms;
+    var dtReal = (ms - lastMs) / 1000.0;
+    lastMs = ms;
+    var span = K.t_end_s || (FR[FR.length - 1].t) || 1;
+    var adv = dtReal * speed / span * (FR.length - 1);
+    var next = idx + adv;
+    if (next >= FR.length - 1) {
+      applyFrame(FR.length - 1);
+      playing = false;
+      document.getElementById("bPlay").textContent = "Play";
+    } else {
+      applyFrame(Math.floor(next));
+      idx = next;
+    }
+  }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(loop);
+
+} catch (err) {
+  fail("Viewer error: " + err.message);
+}
+</script>
+</body>
+</html>

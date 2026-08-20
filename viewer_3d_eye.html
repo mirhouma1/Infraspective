@@ -62,8 +62,8 @@
     <div class="row">
       <span class="lbl">View</span>
       <button class="v" id="vIso">Iso</button>
-      <button class="v" id="vFront">Lug face</button>
-      <button class="v" id="vSide">Side</button>
+      <button class="v" id="vFront">Web face</button>
+      <button class="v" id="vSide">Section</button>
       <button class="v" id="vTop">Top</button>
       <button class="v" id="vFit">Fit</button>
       <button class="t" id="vPan">Pan mode</button>
@@ -71,10 +71,9 @@
     </div>
     <div class="row">
       <span class="lbl">Parts</span>
-      <button class="t" id="pLug">Lug plate</button>
-      <button class="t" id="pCheek">Cheek plates</button>
-      <button class="t" id="pCap">Cap plate</button>
-      <button class="t" id="pBolt">Bolts</button>
+      <button class="t" id="pWeb">Web</button>
+      <button class="t" id="pFlange">Flanges</button>
+      <button class="t" id="pDoub">Doublers</button>
       <button class="t" id="pPin">Pin</button>
       <button class="t" id="pWeld">Welds</button>
       <button class="t" id="pSling">Sling</button>
@@ -107,6 +106,7 @@ try {
 
 var G = DATA.geom || {};
 var RES = DATA.results || {};
+var LOAD = DATA.load || {};
 var CHECKS = DATA.checks || [];
 
 var stage = document.getElementById("stage");
@@ -196,12 +196,11 @@ function sizeLabels(root, unit) {
 var STEEL = new THREE.Color("#9fb0c0");
 var DIM = new THREE.Color("#39424e");
 var PARTC = {
-  lug:   new THREE.Color("#9fb0c0"),
-  cheek: new THREE.Color("#8b9bab"),
-  cap:   new THREE.Color("#94a5b5"),
-  bolt:  new THREE.Color("#c9a227"),
-  pin:   new THREE.Color("#c9a227"),
-  weld:  new THREE.Color("#d97706")
+  member:  new THREE.Color("#9fb0c0"),
+  flange:  new THREE.Color("#8b9bab"),
+  doubler: new THREE.Color("#7d9ec0"),
+  pin:     new THREE.Color("#c9a227"),
+  weld:    new THREE.Color("#d97706")
 };
 
 function newMat(comp) {
@@ -259,87 +258,116 @@ function extrude(outer, holes, depth) {
   return g;
 }
 
-var tp2 = G.tp2 || 25, tp3 = G.tp3 || 12, tp1 = G.tp1 || 25;
-var H1 = G.H1 || 100, H2 = G.H2 || 100, L2 = G.L2 || 300;
-var L1 = G.L1 || 300, W1 = G.W1 || 225;
-var Dpin = G.Dpin || 38, Dcheek = G.Dcheekp || 130, Db = G.Db || 24;
-var w1 = G.w1 || 8;
+var tw = G.tw || 12, td = G.td || 12;
+var Dhole = G.Dhole || 45, Dpin = G.Dpin || 42;
+var e_top = G.e_top || 90, e_dtop = G.e_dtop || 70;
+var W_web = G.W_web || 280, W_d = G.W_d || 280, L_d = G.L_d || 140;
+var wWeld = G.w_weld || 0;
+var dSec = G.d_sec || 0, bfSec = G.bf_sec || 0, tfSec = G.tf_sec || 0;
+var hasSec = (G.has_section || 0) > 0.5;
+var webW = G.web_w || W_web;
+var yBot = (G.y_bot !== undefined) ? G.y_bot : -(L_d + e_top) * 1.6;
+var yTop = (G.y_top !== undefined) ? G.y_top : e_top;
+var tEff = G.t_eff || (tw + 2 * td);
 
-// lug plate, in the x-y plane, extruded across z
-addMesh("lug", extrude(DATA.profile.outer, DATA.profile.holes, tp2));
+// web of the member, bored
+addMesh("member", extrude(DATA.web.outer, DATA.web.holes, tw));
 
-// cheek plates, one each side
-var zCheek = tp2 / 2 + tp3 / 2;
-[-1, 1].forEach(function (sgn) {
-  var m = addMesh("cheek", extrude(DATA.cheek.outer, DATA.cheek.holes, tp3));
-  m.position.z = sgn * zCheek;
-  m.userData.explode = new THREE.Vector3(0, 0, sgn * Dcheek * 0.55);
-});
-
-// cap plate: built in its own plane then laid flat, top face at y = 0
-(function () {
-  var m = addMesh("cap", extrude(DATA.cap.outer, DATA.cap.holes, tp1));
-  m.rotation.x = -Math.PI / 2;
-  m.position.y = -tp1 / 2;
-  m.userData.explode = new THREE.Vector3(0, -tp1 * 3.5, 0);
-})();
-
-// bolts through the cap plate
-(function () {
-  var len = tp1 * 2.2;
-  (DATA.cap.bolt_xy || []).forEach(function (xy) {
-    var g = new THREE.CylinderGeometry(Db / 2, Db / 2, len, 20);
-    var m = addMesh("bolt", g);
-    m.position.set(xy[0], -tp1 / 2, xy[1]);
-    var hd = new THREE.CylinderGeometry(Db * 0.82, Db * 0.82, Db * 0.62, 6);
-    var mh = addMesh("bolt", hd);
-    mh.position.set(xy[0], -tp1 - Db * 0.31, xy[1]);
-    m.userData.explode = new THREE.Vector3(0, -tp1 * 6.0, 0);
-    mh.userData.explode = new THREE.Vector3(0, -tp1 * 6.0, 0);
+// flanges, only when a real section has been picked
+if (hasSec) {
+  var xF = (dSec - tfSec) / 2.0;
+  [-1, 1].forEach(function (sgn) {
+    var g = new THREE.BoxGeometry(tfSec, yTop - yBot, bfSec);
+    var m = addMesh("flange", g);
+    m.position.set(sgn * xF, (yTop + yBot) / 2.0, 0);
+    m.userData.explode = new THREE.Vector3(sgn * dSec * 0.55, 0, 0);
   });
-})();
+}
 
-// pin through the hole
+// doubler plates, one each face of the web. A zero thickness doubler is
+// not a plate, so nothing is drawn rather than a zero depth extrusion
+// that would render as a stray sheet.
+var hasDoubler = td > 0.0;
+var zDoub = tw / 2.0 + td / 2.0;
+if (hasDoubler) {
+  [-1, 1].forEach(function (sgn) {
+    var m = addMesh("doubler",
+      extrude(DATA.doubler.outer, DATA.doubler.holes, td));
+    m.position.z = sgn * zDoub;
+    m.userData.explode = new THREE.Vector3(
+      0, 0, sgn * Math.max(W_d, L_d) * 0.45);
+  });
+}
+
+// pin through the bore
 (function () {
-  var len = tp2 + 2 * tp3 + Dpin * 1.1;
+  var len = tEff + Dpin * 1.1;
   var g = new THREE.CylinderGeometry(Dpin / 2, Dpin / 2, len, 28);
   var m = addMesh("pin", g);
   m.rotation.x = Math.PI / 2;
-  m.position.set(0, H2, 0);
-  m.userData.explode = new THREE.Vector3(0, 0, Dcheek * 1.4);
+  m.position.set(0, 0, 0);
+  m.userData.explode = new THREE.Vector3(0, 0, Math.max(W_d, L_d) * 1.1);
 })();
 
-// fillet welds down both sides of the lug base
+// fillet welds round the doubler footprint. The two vertical runs and
+// the bottom run are always there. The run along the top edge is drawn
+// only when it has been included in the check, because the tear-out
+// path crosses it and it is normally discounted.
 (function () {
-  if (!(w1 > 0)) return;
-  [-1, 1].forEach(function (sgn) {
+  if (!(wWeld > 0) || !hasDoubler) return;
+  var yD0 = e_dtop - L_d, yD1 = e_dtop;
+  var weldTop = (G.weld_top || 0) > 0.5;
+  var off = Math.max(W_d, L_d) * 0.45;
+
+  // A right angle triangle of leg w, extruded len along its own z. The
+  // triangle is placed by rotating that local z onto the run direction
+  // and then mirroring with a unit scale, which is the only way to get
+  // all four corners of a footprint right from one geometry.
+  function fillet(len) {
     var tri = new THREE.Shape();
     tri.moveTo(0, 0);
-    tri.lineTo(sgn * w1, 0);
-    tri.lineTo(0, w1);
+    tri.lineTo(wWeld, 0);
+    tri.lineTo(0, wWeld);
     tri.closePath();
     var g = new THREE.ExtrudeGeometry(tri,
-      { depth: L2, bevelEnabled: false, steps: 1 });
-    g.translate(0, 0, -L2 / 2);
+      { depth: len, bevelEnabled: false, steps: 1 });
+    g.translate(0, 0, -len / 2);
     g.computeVertexNormals();
-    var m = addMesh("weld", g);
-    // the triangle is drawn in x-y then swung round so it runs along x
-    m.rotation.y = Math.PI / 2;
-    m.position.set(0, 0, sgn * tp2 / 2);
-    m.userData.explode = new THREE.Vector3(0, 0, sgn * Dcheek * 0.9);
+    return g;
+  }
+
+  [-1, 1].forEach(function (sgnZ) {
+    // The two vertical runs, up the side edges of the doubler. Rotating
+    // -90 about x sends local z to world y, local x to world x and
+    // local y to world -z, so the mirrors are sx = sgnX, sy = -sgnZ.
+    [-1, 1].forEach(function (sgnX) {
+      var m = addMesh("weld", fillet(L_d));
+      m.rotation.x = -Math.PI / 2;
+      m.scale.set(sgnX, -sgnZ, 1);
+      m.position.set(sgnX * W_d / 2, (yD0 + yD1) / 2, sgnZ * (tw / 2));
+      m.userData.explode = new THREE.Vector3(0, 0, sgnZ * off);
+    });
+    // The bottom run, and the top run only when it has been counted in
+    // the check. Rotating +90 about y sends local z to world x, local x
+    // to world -z and local y to world y, so sx = -sgnZ and sy is the
+    // side of the doubler the weld sits on.
+    var runs = [[yD0, -1]];
+    if (weldTop) runs.push([yD1, 1]);
+    runs.forEach(function (rw) {
+      var m = addMesh("weld", fillet(W_d));
+      m.rotation.y = Math.PI / 2;
+      m.scale.set(-sgnZ, rw[1], 1);
+      m.position.set(0, rw[0], sgnZ * (tw / 2));
+      m.userData.explode = new THREE.Vector3(0, 0, sgnZ * off);
+    });
   });
 })();
 
-// The sling and the load path are built further down, once the overlay
-// helpers they use exist. The group is declared here so the part
-// toggles can be wired in the same order as everything else.
-var gSling = new THREE.Group(); scene.add(gSling);
-
 // =====================================================================
-// overlays
+// span and overlay helpers
 // =====================================================================
 var overlays = new THREE.Group(); scene.add(overlays);
-var SPAN = Math.max(L2, L1, H1 + H2, W1);
+var SPAN = Math.max(webW, W_d, e_top + L_d, hasSec ? dSec : 0);
 var UNIT = SPAN * 0.055;
 
 function addLine(grp, a, b, color) {
@@ -354,15 +382,17 @@ function addLabel(grp, text, pos, color, sc) {
   return sp;
 }
 
-// A force is a shaft with a head on it. Everything on screen that
-// represents a force is drawn through here, so nothing is a bare line
-// the reader has to guess the direction of.
+// A force is a shaft with a head on it, drawn to a length that means
+// something. Everything on screen that represents a force is drawn
+// through here, so nothing is ever a bare line the reader has to guess
+// the direction of.
 function addArrow(grp, origin, dir, len, color, headFrac) {
   var d = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize();
   var o = new THREE.Vector3(origin[0], origin[1], origin[2]);
   var hl = len * (headFrac || 0.18);
   var a = new THREE.ArrowHelper(d, o, len, color, hl, hl * 0.55);
   a.line.material.depthTest = false;
+  a.line.material.linewidth = 2;
   a.cone.material.depthTest = false;
   a.line.renderOrder = 5;
   a.cone.renderOrder = 5;
@@ -372,164 +402,184 @@ function addArrow(grp, origin, dir, len, color, headFrac) {
 
 function fmtkN(v) {
   if (v === null || v === undefined || isNaN(v)) return "";
-  return Number(v).toFixed(Math.abs(v) >= 100 ? 0 : 1) + " kN";
+  return Number(v).toFixed(v >= 100 ? 0 : 1) + " kN";
 }
 
 // =====================================================================
 // sling and applied force
 //
-// Tf is the factored load the lug is checked for and it acts along the
-// axis of the lug. The two sling legs at theta from horizontal are what
-// puts it there, so each leg carries
+// Tf is the factored load the member sees at the bore, and it acts
+// along the axis of the member. The two sling legs at theta from
+// horizontal are what puts it there, so each leg carries
 //
 //     P = Tf / (2 sin theta)
 //
 // and the horizontal components of the two legs cancel at the pin.
-// That is the whole reason the sling angle matters: drop theta from 60
-// to 30 degrees and the leg tension goes up by 73 percent while Tf does
-// not move at all. Both numbers are drawn, so it is never ambiguous
-// which one the checks are using. Vf is the nominal side load the
-// engine carries, 10 percent of Tf on each axis, and it is drawn too
-// because it is what produces Mfx at the base.
+// That is the whole reason the sling angle matters: drop theta from
+// 60 to 30 degrees and the leg tension goes up by 73 percent while Tf
+// does not move at all. Both numbers are drawn, so the reader can see
+// which one the checks are using.
 // =====================================================================
+var gSling = new THREE.Group(); scene.add(gSling);
 (function () {
-  var L = DATA.load || {};
-  var ang = (L.sling_angle_deg !== undefined && L.sling_angle_deg !== null)
-    ? Number(L.sling_angle_deg) : 60.0;
+  var ang = (LOAD.sling_angle_deg !== undefined && LOAD.sling_angle_deg !== null)
+    ? Number(LOAD.sling_angle_deg) : 60.0;
   var th = ang * Math.PI / 180.0;
   var Tf = (RES.Tf_kN !== undefined && RES.Tf_kN !== null)
     ? Number(RES.Tf_kN) : null;
   var s = Math.sin(th);
   var Pleg = (Tf !== null && s > 1e-6) ? Tf / (2.0 * s) : null;
-  var pin = [0, H2, 0];
-  var len = SPAN * 0.72;
 
+  var len = SPAN * 0.70;
+  var colLeg = 0xff7b72;
+  var colRes = 0x7ee787;
+
+  // the two legs, drawn from the pin outwards along the sling
   [-1, 1].forEach(function (sgn) {
-    addArrow(gSling, pin, [sgn * Math.cos(th), Math.sin(th), 0],
-             len, 0xff7b72, 0.16);
+    var dir = [sgn * Math.cos(th), Math.sin(th), 0];
+    addArrow(gSling, [0, 0, 0], dir, len, colLeg, 0.16);
   });
   if (Pleg !== null) {
-    var lx = Math.cos(th) * len * 0.78, ly = H2 + Math.sin(th) * len * 0.78;
+    var lx = Math.cos(th) * len * 0.78, ly = Math.sin(th) * len * 0.78;
     addLabel(gSling, "P = " + fmtkN(Pleg), [lx, ly, 0], "#ff7b72", 0.92);
     addLabel(gSling, "P = " + fmtkN(Pleg), [-lx, ly, 0], "#ff7b72", 0.92);
   }
 
-  addArrow(gSling, pin, [0, 1, 0], len * 0.92, 0x7ee787, 0.16);
+  // the resultant the checks actually use, straight up the member
+  addArrow(gSling, [0, 0, 0], [0, 1, 0], len * 0.92, colRes, 0.16);
   addLabel(gSling, "Tf = " + (Tf === null ? "-" : fmtkN(Tf)),
-           [SPAN * 0.10, H2 + len * 0.86, 0], "#7ee787", 1.0);
+           [SPAN * 0.10, len * 0.86, 0], "#7ee787", 1.0);
 
+  // the included angle, drawn as an arc off the horizontal so it is
+  // obvious which angle theta is
   (function () {
     var r = len * 0.34, pts = [];
     for (var i = 0; i <= 24; i++) {
       var a = th * i / 24.0;
-      pts.push(new THREE.Vector3(r * Math.cos(a), H2 + r * Math.sin(a), 0));
+      pts.push(new THREE.Vector3(r * Math.cos(a), r * Math.sin(a), 0));
     }
     gSling.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color: 0xffa657, depthTest: false })));
-    addLine(gSling, pin, [r * 1.15, H2, 0], 0xffa657);
+      new THREE.LineDashedMaterial({ color: 0xffa657, depthTest: false })));
+    addLine(gSling, [0, 0, 0], [r * 1.15, 0, 0], 0xffa657);
     addLabel(gSling, ang.toFixed(0) + " deg",
-             [r * Math.cos(th / 2) * 1.18, H2 + r * Math.sin(th / 2) * 1.18, 0],
+             [r * Math.cos(th / 2) * 1.18, r * Math.sin(th / 2) * 1.18, 0],
              "#ffa657", 0.85);
   })();
-
-  if (L.Vf_kN !== undefined && L.Vf_kN !== null) {
-    addArrow(gSling, pin, [1, 0, 0], len * 0.34, 0x79c0ff, 0.22);
-    addLabel(gSling, "Vf = " + fmtkN(L.Vf_kN),
-             [len * 0.38, H2 - UNIT * 1.1, 0], "#79c0ff", 0.85);
-  }
 })();
 
 // =====================================================================
 // load path
 //
-// Where the force goes once it is in the lug: bearing on the bore, down
-// the plate, out through the two fillet welds at the base, into the cap
-// plate, and finally into the bolts, which is where prying shows up.
+// Where the force goes after it reaches the bore. This is the part a
+// bored eye gets wrong most often, so it is drawn rather than
+// described: the doublers only carry what the weld can deliver into
+// them, and below the doublers the section is back to the bare member.
 // =====================================================================
 var gFlow = new THREE.Group(); overlays.add(gFlow);
 (function () {
-  var L = DATA.load || {};
-  var r = (G.Dhole || 0) / 2.0;
+  var Pw = LOAD.P_web_kN, Pd = LOAD.P_doubler_kN;
+  var yD0 = e_dtop - L_d;
+  var arrowLen = Math.max(L_d, e_top) * 0.42;
 
-  if (r > 0) {
+  // bearing on the loaded half of the bore, pushing up on the material
+  // above it
+  (function () {
+    var r = Dhole / 2.0;
     for (var i = 0; i <= 6; i++) {
       var a = Math.PI * (0.12 + 0.76 * i / 6.0);
-      addArrow(gFlow, [r * Math.cos(a), H2 + r * Math.sin(a), 0],
-               [Math.cos(a), Math.sin(a), 0], r * 0.55, 0xf0883e, 0.30);
+      var px = r * Math.cos(a), py = r * Math.sin(a);
+      addArrow(gFlow, [px, py, 0], [Math.cos(a), Math.sin(a), 0],
+               r * 0.55, 0xf0883e, 0.30);
     }
-    addLabel(gFlow, "bearing on the bore",
-             [0, H2 + r * 1.9, tp2 * 0.5], "#f0883e", 0.85);
+    addLabel(gFlow, "bearing on the bore", [0, Dhole * 0.90, tEff * 0.5],
+             "#f0883e", 0.85);
+  })();
+
+  // the share each ply carries, drawn on the ply that carries it
+  if (Pw !== undefined && Pw !== null) {
+    addArrow(gFlow, [0, yD0 - arrowLen * 1.15, 0], [0, -1, 0],
+             arrowLen, 0x58a6ff, 0.20);
+    addLabel(gFlow, "web " + fmtkN(Pw),
+             [webW * 0.16, yD0 - arrowLen * 1.55, 0], "#58a6ff", 0.85);
+  }
+  if (hasDoubler && Pd !== undefined && Pd !== null) {
+    [-1, 1].forEach(function (sgn) {
+      addArrow(gFlow, [0, yD0 + L_d * 0.32, sgn * zDoub], [0, -1, 0],
+               arrowLen, 0x7d9ec0, 0.20);
+    });
+    addLabel(gFlow, "doublers " + fmtkN(Pd),
+             [0, yD0 + L_d * 0.10, zDoub * 2.2], "#7d9ec0", 0.85);
   }
 
-  addArrow(gFlow, [0, H2 * 0.72, 0], [0, -1, 0], H2 * 0.42, 0x58a6ff, 0.22);
-  addLabel(gFlow, "down the plate", [L2 * 0.16, H2 * 0.50, 0],
-           "#58a6ff", 0.85);
-
-  [-1, 1].forEach(function (sgn) {
-    addArrow(gFlow, [0, w1 * 1.2, sgn * (tp2 / 2)], [0, 0, sgn],
-             Math.max(w1 * 2.4, tp2 * 0.9), 0xd97706, 0.28);
-  });
-  addLabel(gFlow, "into the two fillet welds, Cl. 13.13",
-           [0, w1 * 2.6, tp2 * 1.6], "#d97706", 0.82);
-
-  (DATA.cap.bolt_xy || []).forEach(function (xy) {
-    addArrow(gFlow, [xy[0], -tp1 * 1.15, xy[1]], [0, -1, 0],
-             tp1 * 1.5, 0xc9a227, 0.24);
-  });
-  var bt = "bolts in tension";
-  if (L.Tfb_kN !== undefined && L.Tfb_kN !== null) {
-    bt += ", " + fmtkN(L.Tfb_kN) + " each with prying";
+  // the weld is the only way into the doublers, so the transfer is
+  // drawn across the joint at the side runs
+  if (hasDoubler && wWeld > 0) {
+    [-1, 1].forEach(function (sgnX) {
+      [-1, 1].forEach(function (sgnZ) {
+        addArrow(gFlow, [sgnX * W_d / 2, yD0 + L_d * 0.55, sgnZ * (tw / 2)],
+                 [0, 0, sgnZ], Math.max(td * 2.2, wWeld * 3.0),
+                 0xd97706, 0.28);
+      });
+    });
+    addLabel(gFlow, "weld delivers the doublers' share",
+             [0, yD0 + L_d * 0.72, zDoub * 2.6], "#d97706", 0.82);
   }
-  addLabel(gFlow, bt, [0, -tp1 * 3.0, W1 * 0.30], "#c9a227", 0.82);
-})();
 
-var gDim = new THREE.Group(); overlays.add(gDim);
-(function () {
-  var o = SPAN * 0.62, zf = tp2 / 2;
-  addLine(gDim, [-L2 / 2, -o * 0.25, zf], [L2 / 2, -o * 0.25, zf], 0x58a6ff);
-  addLabel(gDim, "L2 = " + L2.toFixed(0), [0, -o * 0.40, zf], "#58a6ff");
-  addLine(gDim, [L2 / 2 + o * 0.12, 0, zf], [L2 / 2 + o * 0.12, H2, zf],
-          0x7ee787);
-  addLabel(gDim, "H2 = " + H2.toFixed(0), [L2 / 2 + o * 0.34, H2 / 2, zf],
-           "#7ee787");
-  addLine(gDim, [L2 / 2 + o * 0.12, H2, zf], [L2 / 2 + o * 0.12, H2 + H1, zf],
-          0x7ee787);
-  addLabel(gDim, "H1 = " + H1.toFixed(0),
-           [L2 / 2 + o * 0.34, H2 + H1 * 0.5, zf], "#7ee787");
-  addLabel(gDim, "hole " + (G.Dhole || 0).toFixed(0), [0, H2, zf + o * 0.10],
-           "#c9d1d9", 0.9);
-  addLabel(gDim, "pin " + Dpin.toFixed(0), [0, H2 - UNIT * 1.5, zf + o * 0.10],
-           "#c9a227", 0.9);
-  addLabel(gDim, "cheek " + Dcheek.toFixed(0),
-           [0, H2 + Dcheek * 0.5, zf + o * 0.10], "#c9d1d9", 0.9);
-  addLabel(gDim, "tp2 = " + tp2.toFixed(0), [-L2 * 0.32, H2 * 0.35, 0],
-           "#8b949e", 0.9);
-  addLine(gDim, [-L1 / 2, -tp1 * 2.2, 0], [L1 / 2, -tp1 * 2.2, 0], 0x8b949e);
-  addLabel(gDim, "L1 = " + L1.toFixed(0), [0, -tp1 * 3.4, 0], "#c9d1d9", 0.9);
-  addLine(gDim, [0, -tp1 * 2.2, -W1 / 2], [0, -tp1 * 2.2, W1 / 2], 0x8b949e);
-  addLabel(gDim, "W1 = " + W1.toFixed(0), [0, -tp1 * 3.4, W1 * 0.62],
-           "#c9d1d9", 0.9);
-  addLabel(gDim, "tp1 = " + tp1.toFixed(0), [-L1 * 0.56, -tp1 / 2, 0],
-           "#8b949e", 0.9);
+  // and below it all, the bare member, Cl. 13.2 (a)
+  addLabel(gFlow, "below here the bare member carries all of Tf, Cl. 13.2 (a)",
+           [0, yD0 - arrowLen * 2.15, 0], "#8b949e", 0.80);
 })();
 
 // =====================================================================
-// Failure paths
-//
-// The planes and sections the clause checks are actually taken on, drawn
-// where they occur so the numbers on the page can be tied to a place on
-// the part:
-//   tear-out   two planes from the free edge tangent to the hole, the
-//              shortest path out of the plate, Cl. 13.11
-//   net        the section through the hole centre carrying Anet,
-//              Cl. 13.2 (b)(ii)
-//   bearing    the loaded half of the hole bore, Cl. 13.10 / 13.12.1.2
+// dimensions
+// =====================================================================
+var gDim = new THREE.Group(); overlays.add(gDim);
+(function () {
+  var zf = tEff / 2 + 0.6;
+  var o = SPAN * 0.10;
+
+  addLine(gDim, [W_d / 2 + o, 0, zf], [W_d / 2 + o, e_top, zf], 0x7ee787);
+  addLabel(gDim, "e_top = " + e_top.toFixed(0),
+           [W_d / 2 + o * 2.2, e_top * 0.5, zf], "#7ee787", 0.9);
+
+  addLine(gDim, [-W_d / 2 - o, 0, zf], [-W_d / 2 - o, e_dtop, zf], 0x58a6ff);
+  addLabel(gDim, "e_dtop = " + e_dtop.toFixed(0),
+           [-W_d / 2 - o * 2.4, e_dtop * 0.5, zf], "#58a6ff", 0.9);
+
+  addLine(gDim, [-W_d / 2, e_dtop - L_d - o, zf], [W_d / 2, e_dtop - L_d - o, zf],
+          0x58a6ff);
+  addLabel(gDim, "W_d = " + W_d.toFixed(0),
+           [0, e_dtop - L_d - o * 2.0, zf], "#58a6ff", 0.9);
+
+  addLine(gDim, [-W_d / 2 - o * 2.6, e_dtop - L_d, zf],
+          [-W_d / 2 - o * 2.6, e_dtop, zf], 0x58a6ff);
+  addLabel(gDim, "L_d = " + L_d.toFixed(0),
+           [-W_d / 2 - o * 4.2, e_dtop - L_d / 2, zf], "#58a6ff", 0.9);
+
+  addLine(gDim, [-webW / 2, e_top + o, zf], [webW / 2, e_top + o, zf], 0x8b949e);
+  addLabel(gDim, "clear web = " + W_web.toFixed(0),
+           [0, e_top + o * 2.0, zf], "#c9d1d9", 0.9);
+
+  addLabel(gDim, "bore " + Dhole.toFixed(0), [0, -Dhole * 0.85, zf],
+           "#c9d1d9", 0.9);
+  addLabel(gDim, "pin " + Dpin.toFixed(0), [0, -Dhole * 1.35, zf],
+           "#c9a227", 0.9);
+  addLabel(gDim, "tw = " + tw.toFixed(1) + "  td = " + td.toFixed(1)
+           + "  t_eff = " + tEff.toFixed(1),
+           [0, -Dhole * 1.9, zf], "#8b949e", 0.85);
+  if (hasSec && DATA.section) {
+    addLabel(gDim, DATA.section, [0, yTop + o * 3.4, 0], "#c9d1d9", 1.0);
+  }
+})();
+
+// =====================================================================
+// failure paths
 // =====================================================================
 var gPath = new THREE.Group(); overlays.add(gPath);
 (function () {
   var P = DATA.paths;
   if (!P) { return; }
-  var zf = (P.t_eff || tp2) / 2 + 0.6;
+  var zf = tEff / 2 + 0.8;
 
   function poly(pts, color, z) {
     if (!pts || pts.length < 2) { return; }
@@ -543,27 +593,39 @@ var gPath = new THREE.Group(); overlays.add(gPath);
   }
 
   [-1, 1].forEach(function (sgn) {
-    // tear-out planes, drawn on both faces of the plate
     poly(P.tearout, 0xff7b72, sgn * zf);
     poly(P.tearout_mirror, 0xff7b72, sgn * zf);
-    // net tension section through the hole
     poly(P.net_left, 0xffa657, sgn * zf);
     poly(P.net_right, 0xffa657, sgn * zf);
-    // bearing arc on the loaded half of the bore
     poly(P.bearing, 0x7ee787, sgn * zf);
   });
 
+  // where the doubler stops and the path continues through the web
+  (P.split || []).forEach(function (pt) {
+    var g = new THREE.SphereGeometry(Math.max(1.2, Dhole * 0.045), 12, 10);
+    var m = new THREE.Mesh(g, new THREE.MeshBasicMaterial(
+      { color: 0xff7b72, depthTest: false }));
+    m.position.set(pt[0], pt[1], zf);
+    gPath.add(m);
+  });
+
   if (P.label_tearout) {
-    addLabel(gPath, "tear-out k = " + P.k.toFixed(0),
-             [P.label_tearout[0], P.label_tearout[1], zf], "#ff7b72", 0.85);
+    var t = "tear-out k = " + Number(P.k).toFixed(0);
+    if (P.k_doubler !== null && P.k_doubler !== undefined
+        && P.k_web !== null && P.k_web !== undefined) {
+      t += "  (" + Number(P.k_doubler).toFixed(0) + " through the pack, "
+         + Number(P.k_web).toFixed(0) + " web alone)";
+    }
+    addLabel(gPath, t, [P.label_tearout[0], P.label_tearout[1], zf],
+             "#ff7b72", 0.85);
   }
   if (P.label_net) {
     addLabel(gPath, "Anet section", [P.label_net[0], P.label_net[1], zf],
              "#ffa657", 0.85);
   }
   if (P.label_bearing) {
-    addLabel(gPath, "bearing",
-             [P.label_bearing[0], P.label_bearing[1], zf], "#7ee787", 0.85);
+    addLabel(gPath, "bearing", [P.label_bearing[0], P.label_bearing[1], zf],
+             "#7ee787", 0.85);
   }
 })();
 
@@ -591,9 +653,6 @@ function utilColor(u) {
   return c;
 }
 
-// Worst unity check attached to each component. A component with no
-// check of its own keeps its plain colour rather than pretending to a
-// utilisation it was never given.
 function worstFor(comp) {
   var w = null;
   for (var i = 0; i < CHECKS.length; i++) {
@@ -674,7 +733,8 @@ function applyExplode(on) {
 var FOV = 32;
 var radius = SPAN * 1.1;
 var camera = new THREE.PerspectiveCamera(FOV, 1, radius * 0.004, radius * 400);
-var target = new THREE.Vector3(0, (H1 + H2) * 0.35, 0);
+var focusY = (e_top + (e_dtop - L_d)) * 0.35;
+var target = new THREE.Vector3(0, focusY, 0);
 var sph = { theta: 0.85, phi: 1.15, dist: radius * 2.6 };
 var spin = false, panMode = false;
 
@@ -684,7 +744,8 @@ function fitDist(objH, objW, margin) {
   return Math.max((objH / 2) / vt, (objW / 2) / (asp * vt)) * (margin || 1.15);
 }
 function fitWhole(margin) {
-  return fitDist((H1 + H2) * 1.9, Math.max(L1, L2) * 1.5, margin || 1.15);
+  return fitDist((e_top - (e_dtop - L_d)) * 2.6,
+                 Math.max(webW, W_d) * 1.7, margin || 1.15);
 }
 function applyCamera() {
   sph.phi = Math.max(0.02, Math.min(Math.PI - 0.02, sph.phi));
@@ -751,7 +812,7 @@ canvas.addEventListener("wheel", function (e) {
 
 function setView(th, ph, dist) {
   spin = false;
-  target.set(0, (H1 + H2) * 0.35, 0);
+  target.set(0, focusY, 0);
   sph.theta = th; sph.phi = ph; sph.dist = dist;
   applyCamera();
   sizeLabels(scene, UNIT * (sph.dist / (radius * 2.6)));
@@ -763,7 +824,8 @@ document.getElementById("vFront").onclick = function () {
 document.getElementById("vSide").onclick = function () {
   setView(1.5708, 1.5708, fitWhole(1.10)); };
 document.getElementById("vTop").onclick = function () {
-  setView(0, 0.05, fitDist(W1 * 1.8, L1 * 1.5, 1.2)); };
+  setView(0, 0.05, fitDist(Math.max(bfSec, tEff * 6) * 2.2,
+                           Math.max(webW, dSec) * 1.5, 1.2)); };
 document.getElementById("vFit").onclick = function () {
   setView(sph.theta, sph.phi, fitWhole(1.16)); };
 document.getElementById("vSpin").onclick = function () { spin = !spin; };
@@ -778,6 +840,7 @@ document.getElementById("vSpin").onclick = function () { spin = !spin; };
 // =====================================================================
 function bindToggle(id, grp, initial, after) {
   var b = document.getElementById(id);
+  if (!b) { return function () {}; }
   var on = !!initial;
   function apply() {
     b.classList.toggle("on", on);
@@ -804,10 +867,9 @@ function bindToggle(id, grp, initial, after) {
   el.innerHTML = html;
 })();
 
-bindToggle("pLug", group("lug"), true);
-bindToggle("pCheek", group("cheek"), true);
-bindToggle("pCap", group("cap"), true);
-bindToggle("pBolt", group("bolt"), true);
+bindToggle("pWeb", group("member"), true);
+bindToggle("pFlange", group("flange"), true);
+bindToggle("pDoub", group("doubler"), true);
 bindToggle("pPin", group("pin"), true);
 bindToggle("pWeld", group("weld"), true);
 bindToggle("pSling", gSling, true);
@@ -825,9 +887,8 @@ bindToggle("tLab", null, true, function (on) { setLabels(on); });
 // =====================================================================
 var MODES = [
   ["plain", "As fabricated",
-   "The assembly as built, each part in its own colour. Turn on Exploded "
-   + "to pull the cheek plates, pin, cap plate and bolts apart, and Load "
-   + "path to follow the force from the bore down into the bolts."],
+   "The eye as built. Turn on Exploded to pull the doublers and the pin "
+   + "off the web, and Load path to see where the force actually goes."],
   ["util", "Utilisation by part",
    "Every part is coloured by the worst unity check that applies to it. "
    + "Green is lightly worked, red is at or beyond capacity. A part with "
@@ -863,11 +924,12 @@ setMode("plain");
 // hud
 // =====================================================================
 (function () {
-  var h = "<b>" + (DATA.label || "Lifting lug") + "</b><br>";
-  h += "lug " + L2.toFixed(0) + " x " + (H1 + H2).toFixed(0)
-     + " x " + tp2.toFixed(0) + "<br>";
-  h += "cap " + L1.toFixed(0) + " x " + W1.toFixed(0)
-     + " x " + tp1.toFixed(0);
+  var h = "<b>" + (DATA.label || "Lifting eye") + "</b><br>";
+  if (DATA.section) { h += DATA.section + "<br>"; }
+  h += "bore " + Dhole.toFixed(0) + " through tw " + tw.toFixed(1)
+     + " + 2 x PL" + td.toFixed(0) + "<br>";
+  h += "doubler " + W_d.toFixed(0) + " x " + L_d.toFixed(0)
+     + " x " + td.toFixed(0);
   if (RES.Tf_kN !== undefined && RES.Tf_kN !== null) {
     h += "<br>Tf = " + Number(RES.Tf_kN).toFixed(1) + " kN";
   }

@@ -7,10 +7,17 @@ Ported from the "Wind, Snow & Seismic (Building)" tab of
 Structural_Calculations_Simulation__2025-09-14_.xlsm
 
 References (NBCC 2020, Division B, Part 4, Volume 1):
-    Snow    - Article 4.1.6.2
-    Wind    - Articles 4.1.7.3, 4.1.7.5, 4.1.7.6, 4.1.7.7
-    Seismic - Articles 4.1.8.4, 4.1.8.5, 4.1.8.9, 4.1.8.11
-    Climatic data - Table C-2, Appendix C
+    Load combinations - Article 4.1.3.2 and 4.1.3.4
+    Snow              - Article 4.1.6.2
+    Wind              - Articles 4.1.7.3, 4.1.7.5, 4.1.7.6, 4.1.7.7
+    Seismic           - Articles 4.1.8.4, 4.1.8.5, 4.1.8.9, 4.1.8.11
+    Climatic data     - Table C-2, Appendix C
+
+Geocoding replaces the modGeo.GetCoordinatesOfficial VBA routine of
+the source workbook. Same service (Nominatim / OpenStreetMap), same
+treeline rule (latitude 60 N), with reverse geocoding added so that
+the location name and the coordinates stay synchronised in both
+directions.
 
 ASCII only. Straight quotes only. No markdown inside code.
 """
@@ -18,6 +25,7 @@ ASCII only. Straight quotes only. No markdown inside code.
 import os
 import json
 import math
+import difflib
 
 import pandas as pd
 import streamlit as st
@@ -132,6 +140,178 @@ SURFACES_B = ["1", "1E", "2", "2E", "3", "3E", "4", "4E",
 
 
 # ======================================================================
+# SECTION 0B - ENGINE: GEOCODING AND TREELINE
+# ======================================================================
+#
+# The source workbook resolved a place name to coordinates with
+# modGeo.GetCoordinatesOfficial, a Nominatim (OpenStreetMap) query, and
+# then applied a plain latitude test for the treeline. The same service
+# is used here. Reverse geocoding is added so that a pair of
+# coordinates resolves back to a place name, which is then matched
+# against the Table C-2 catalogue. Nothing is hard-coded per location.
+
+GEO_UA = "InfraspectiveSolutions-NBCC2020/1.0 (structural calculator)"
+TREELINE_LAT = 60.0
+
+
+@st.cache_data(show_spinner=False, ttl=604800)
+def geocode_forward(place, province=""):
+    """Place name to coordinates. Returns (lat, lon, label, error).
+
+    Primary service is Nominatim, matching the workbook. Open-Meteo is
+    used as a fallback if Nominatim is unreachable or returns nothing.
+    """
+    if requests is None:
+        return None, None, "", "requests is not installed"
+    query = ", ".join([p for p in (str(place).strip(),
+                                   str(province).strip(),
+                                   "Canada") if p])
+
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": query, "format": "json", "limit": 1,
+                    "countrycodes": "ca"},
+            headers={"User-Agent": GEO_UA}, timeout=20)
+        resp.raise_for_status()
+        hits = resp.json()
+        if hits:
+            h = hits[0]
+            return (float(h["lat"]), float(h["lon"]),
+                    h.get("display_name", query), "")
+    except Exception as exc:
+        nom_err = str(exc)
+    else:
+        nom_err = "no match returned by Nominatim"
+
+    try:
+        resp = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": str(place).strip(), "count": 10,
+                    "language": "en", "format": "json"}, timeout=20)
+        resp.raise_for_status()
+        results = resp.json().get("results") or []
+        results = [r for r in results if r.get("country_code") == "CA"]
+        if province:
+            pref = [r for r in results
+                    if str(r.get("admin1", "")).lower()
+                    == str(province).lower()]
+            results = pref or results
+        if results:
+            r = results[0]
+            label = ", ".join([str(r.get("name", "")),
+                               str(r.get("admin1", "")), "Canada"])
+            return float(r["latitude"]), float(r["longitude"]), label, ""
+    except Exception as exc:
+        return None, None, "", "%s; fallback failed: %s" % (nom_err, exc)
+
+    return None, None, "", nom_err
+
+
+@st.cache_data(show_spinner=False, ttl=604800)
+def geocode_reverse(lat, lon):
+    """Coordinates to place name. Returns (place, province, label, err)."""
+    if requests is None:
+        return "", "", "", "requests is not installed"
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": float(lat), "lon": float(lon),
+                    "format": "json", "zoom": 10},
+            headers={"User-Agent": GEO_UA}, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        return "", "", "", "reverse geocoding failed: %s" % exc
+
+    addr = data.get("address", {}) or {}
+    place = ""
+    for key in ("city", "town", "village", "hamlet", "municipality",
+                "county", "city_district", "suburb", "region"):
+        if addr.get(key):
+            place = str(addr[key])
+            break
+    province = str(addr.get("state", "") or addr.get("territory", ""))
+    return place, province, data.get("display_name", ""), ""
+
+
+PROVINCE_ALIASES = {
+    "quebec": "Quebec", "que": "Quebec", "qc": "Quebec",
+    "newfoundland": "Newfoundland and Labrador",
+    "newfoundland and labrador": "Newfoundland and Labrador",
+    "nl": "Newfoundland and Labrador",
+    "british columbia": "British Columbia", "bc": "British Columbia",
+    "alberta": "Alberta", "ab": "Alberta",
+    "saskatchewan": "Saskatchewan", "sk": "Saskatchewan",
+    "manitoba": "Manitoba", "mb": "Manitoba",
+    "ontario": "Ontario", "on": "Ontario",
+    "new brunswick": "New Brunswick", "nb": "New Brunswick",
+    "nova scotia": "Nova Scotia", "ns": "Nova Scotia",
+    "prince edward island": "Prince Edward Island",
+    "pe": "Prince Edward Island", "pei": "Prince Edward Island",
+    "yukon": "Yukon", "yukon territory": "Yukon", "yt": "Yukon",
+    "northwest territories": "Northwest Territories",
+    "nt": "Northwest Territories", "nwt": "Northwest Territories",
+    "nunavut": "Nunavut", "nu": "Nunavut",
+}
+
+
+def normalise_province(name, available):
+    """Map whatever the geocoder returned onto a Table C-2 province."""
+    raw = str(name or "").strip()
+    hit = PROVINCE_ALIASES.get(raw.lower())
+    if hit and hit in available:
+        return hit
+    for p in available:
+        if p.lower() == raw.lower():
+            return p
+    close = difflib.get_close_matches(raw, list(available), n=1,
+                                      cutoff=0.6)
+    return close[0] if close else None
+
+
+def match_c2_location(df, place, province=None):
+    """Fuzzy-match a geocoded place onto the Table C-2 catalogue.
+
+    Returns (province, location, score) or (None, None, 0.0). The match
+    is textual, so it is offered to the user rather than forced."""
+    place = str(place or "").strip()
+    if not place or df.empty:
+        return None, None, 0.0
+
+    sub = df
+    if province:
+        maybe = df[df["province"] == province]
+        if not maybe.empty:
+            sub = maybe
+
+    best, best_score = None, 0.0
+    for _, r in sub.iterrows():
+        loc = str(r["location"])
+        score = difflib.SequenceMatcher(
+            None, place.lower(), loc.lower()).ratio()
+        # A catalogue entry truncated by the Table C-2 export, such as
+        # "Saint-Jean-sur-", should still match its full name.
+        if loc.lower() and place.lower().startswith(loc.lower()):
+            score = max(score, 0.92)
+        if score > best_score:
+            best, best_score = r, score
+    if best is None:
+        return None, None, 0.0
+    return str(best["province"]), str(best["location"]), best_score
+
+
+def north_of_treeline(lat):
+    """Cl. 4.1.6.2.(4) refers to exposed areas north of the treeline.
+    The workbook applied a latitude test at 60 N; the same rule is
+    applied here, as an aid rather than a substitute for judgement."""
+    try:
+        return float(lat) >= TREELINE_LAT
+    except (TypeError, ValueError):
+        return False
+
+
+# ======================================================================
 # SECTION 1 - ENGINE: IMPORTANCE FACTORS
 # ======================================================================
 
@@ -160,14 +340,44 @@ def characteristic_length(w, l):
     return 2.0 * w - (w * w) / l
 
 
-def wind_exposure_factor_snow(north_of_treeline, exposure):
-    """Cw per Cl. 4.1.6.2.(4). Default 1.0 unless the exposure
-    conditions of the Code are satisfied."""
-    if north_of_treeline:
-        return 0.50
-    if exposure == "Rural, fully exposed (Cw = 0.75)":
-        return 0.75
-    return 1.00
+def wind_exposure_factor_snow(category, requested, north, cond_a,
+                              cond_b, cond_c):
+    """Cw per Cl. 4.1.6.2.(3) and (4).
+
+    Sentence (3) sets Cw = 1.0. Sentence (4) permits 0.75 for rural
+    areas, or 0.50 for exposed areas north of the treeline, but only
+    for Low and Normal Importance Category buildings and only where
+    Clauses (a), (b) and (c) are all satisfied.
+
+    Returns (Cw, reason).
+    """
+    if abs(requested - 1.00) < 1e-9:
+        return 1.00, "Cl. 4.1.6.2.(3): Cw = 1.0"
+
+    if category not in ("Low", "Normal"):
+        return 1.00, ("Cl. 4.1.6.2.(4) applies only to the Low and "
+                      "Normal Importance Categories, so Cw reverts "
+                      "to 1.0")
+
+    missing = []
+    if not cond_a:
+        missing.append("(a) exposed on all sides to wind over open "
+                       "terrain")
+    if not cond_b:
+        missing.append("(b) roof area free of significant obstructions")
+    if not cond_c:
+        missing.append("(c) no accumulation by drifting")
+    if missing:
+        return 1.00, ("Cl. 4.1.6.2.(4) not satisfied - " +
+                      "; ".join(missing) + " - so Cw = 1.0")
+
+    if abs(requested - 0.50) < 1e-9:
+        if not north:
+            return 0.75, ("Cw = 0.50 is limited to exposed areas north "
+                          "of the treeline; 0.75 used instead")
+        return 0.50, ("Cl. 4.1.6.2.(4): exposed area north of the "
+                      "treeline")
+    return 0.75, "Cl. 4.1.6.2.(4): rural area"
 
 
 def basic_roof_snow_factor(lc, cw):
@@ -283,6 +493,108 @@ def wind_pressure(iw, q, ce, ct, cgcp):
 
 
 # ======================================================================
+# SECTION 3B - ENGINE: LOAD COMBINATIONS (Article 4.1.3)
+# ======================================================================
+
+def _fmt_term(factor, symbol):
+    if abs(factor) < 1e-12:
+        return ""
+    return "%.2f%s" % (factor, symbol)
+
+
+def _assemble(terms):
+    """terms is a list of (factor, symbol). Build a readable string."""
+    out = []
+    for f, s in terms:
+        if abs(f) < 1e-12:
+            continue
+        sign = "-" if f < 0 else "+"
+        piece = "%s%.2f%s" % ("" if not out and f > 0 else sign + " ",
+                              abs(f), s)
+        out.append(piece)
+    return " ".join(out) if out else "0"
+
+
+def uls_combinations(D, L, S, W, E, storage=False, liquids=False):
+    """Table 4.1.3.2-A, load combinations without crane loads.
+
+    Sentence (3) requires the principal loads to be checked with the
+    companion loads taken as zero, so a zero companion is enumerated
+    for every case. Sentence (5) requires the counteracting dead load
+    (0.9D, or 1.0D in case 5) to be considered. Sentence (6) permits
+    the 1.5 principal factor on L to drop to 1.25 for liquids in tanks.
+    Sentence (7) increases the companion factor on L by 0.5 for storage
+    areas, equipment areas and service rooms.
+    """
+    aL = 1.25 if liquids else 1.50          # principal factor on L
+    bump = 0.5 if storage else 0.0          # companion increase on L
+
+    rows = []
+
+    def add(case, dead_f, principal, companions):
+        for comp in companions:
+            terms = [(dead_f, "D")] + list(principal) + list(comp)
+            effect = (dead_f * D
+                      + sum(f * {"D": D, "L": L, "S": S, "W": W,
+                                 "E": E}[s]
+                            for f, s in list(principal) + list(comp)))
+            rows.append({"Case": case,
+                         "Combination": _assemble(terms),
+                         "Effect": effect})
+
+    # Case 1 - 1.4D
+    add(1, 1.40, [], [[]])
+
+    # Case 2 - (1.25D or 0.9D) + 1.5L, companion 1.0S or 0.4W
+    for dead_f in (1.25, 0.90):
+        add(2, dead_f, [(aL, "L")],
+            [[], [(1.00, "S")], [(0.40, "W")], [(-0.40, "W")]])
+
+    # Case 3 - (1.25D or 0.9D) + 1.5S, companion 1.0L or 0.4W
+    for dead_f in (1.25, 0.90):
+        add(3, dead_f, [(1.50, "S")],
+            [[], [(1.00 + bump, "L")], [(0.40, "W")], [(-0.40, "W")]])
+
+    # Case 4 - (1.25D or 0.9D) + 1.4W, companion 0.5L or 0.5S
+    for dead_f in (1.25, 0.90):
+        for wf in (1.40, -1.40):
+            add(4, dead_f, [(wf, "W")],
+                [[], [(0.50 + bump, "L")], [(0.50, "S")]])
+
+    # Case 5 - 1.0D + 1.0E, companion 0.5L + 0.25S
+    for ef in (1.00, -1.00):
+        add(5, 1.00, [(ef, "E")],
+            [[], [(0.50 + bump, "L"), (0.25, "S")]])
+
+    return rows
+
+
+def sls_combinations(D, L, S, W, storage=False):
+    """Table 4.1.3.4, deflection for materials not subject to creep.
+    The companion factor of 0.35 on L rises to 0.5 for storage areas,
+    equipment areas and service rooms (Note (2) to the Table)."""
+    cL = 0.50 if storage else 0.35
+    rows = []
+
+    def add(case, principal, companions):
+        for comp in companions:
+            terms = [(1.00, "D")] + list(principal) + list(comp)
+            effect = (D + sum(f * {"D": D, "L": L, "S": S, "W": W}[s]
+                              for f, s in list(principal) + list(comp)))
+            rows.append({"Case": case,
+                         "Combination": _assemble(terms),
+                         "Effect": effect})
+
+    add(1, [(1.00, "L")],
+        [[], [(0.30, "W")], [(-0.30, "W")], [(0.35, "S")]])
+    for wf in (1.00, -1.00):
+        add(2, [(wf, "W")], [[], [(cL, "L")], [(0.35, "S")]])
+    add(3, [(1.00, "S")],
+        [[], [(0.30, "W")], [(-0.30, "W")], [(cL, "L")]])
+    return rows
+
+
+# ======================================================================
 # SECTION 4 - ENGINE: SEISMIC (Article 4.1.8)
 # ======================================================================
 
@@ -378,8 +690,9 @@ VIEWER_HTML = r"""
     <button class="tb" data-mode="snow">Snow</button>
     <button class="tb" data-mode="seismic">Seismic</button>
     <span class="sp"></span>
-    <button class="tb tog" id="xray">X-ray</button>
+    <button class="tb tog" id="spin">Spin</button>
     <button class="tb tog" id="dims">Dims</button>
+    <button class="tb" id="fit">Fit</button>
   </div>
   <div id="cv"></div>
   <div id="leg"></div>
@@ -416,6 +729,42 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const P = __PAYLOAD__;
 const G = P.geom;
+
+// ---- view-state persistence ---------------------------------------
+// Streamlit rebuilds this iframe on every rerun, so the camera, the
+// active layer and the toggles are saved to sessionStorage on every
+// interaction and restored on the next mount. Camera coordinates are
+// stored as ratios of the model size so a geometry change still
+// frames sensibly.
+const SKEY = "ifs_wsz_viewer_v1";
+let SAVED = null;
+try { SAVED = JSON.parse(sessionStorage.getItem(SKEY) || "null"); }
+catch (e0) { SAVED = null; }
+let curMode = (SAVED && SAVED.mode) || "wind";
+if (["wind", "snow", "seismic"].indexOf(curMode) < 0) curMode = "wind";
+let saveTimer = null;
+function persist(){
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      sessionStorage.setItem(SKEY, JSON.stringify({
+        mode: curMode,
+        spin: document.getElementById("spin")
+              .classList.contains("on"),
+        dims: document.getElementById("dims")
+              .classList.contains("on"),
+        cam: {
+          px: camera.position.x / span,
+          py: camera.position.y / span,
+          pz: camera.position.z / span,
+          tx: controls.target.x / span,
+          ty: controls.target.y / span,
+          tz: controls.target.z / span
+        }
+      }));
+    } catch (e1) {}
+  }, 150);
+}
 
 const host = document.getElementById("cv");
 const scene = new THREE.Scene();
@@ -593,6 +942,7 @@ const snowGrp = new THREE.Group();
 const sThick = Math.max(span * 0.012, P.snow.S * 0.42);
 const snowMat = new THREE.MeshStandardMaterial({
   color: 0xdfe9f5, roughness: 0.95, metalness: 0.0,
+  side: THREE.DoubleSide,
   transparent: true, opacity: 0.94});
 function slab(x0, x1, y0, y1){
   const g = new THREE.BufferGeometry();
@@ -614,6 +964,43 @@ function slab(x0, x1, y0, y1){
 }
 snowGrp.add(slab(-hw, 0, He, ridge));
 snowGrp.add(slab(0, hw, ridge, He));
+
+// Distributed load: a run of downward arrows over each slope, drawn
+// on a grid so the intensity reads from every viewing angle.
+const nAcross = 7, nAlong = 5;
+const arrowLen = span * 0.10 + span * 0.16 *
+                 Math.min(1, P.snow.S / 4.0);
+function snowArrows(x0, y0, x1, y1){
+  for (let i = 0; i < nAcross; i++){
+    const t = (i + 0.5) / nAcross;
+    const x = x0 + (x1 - x0) * t;
+    const y = y0 + (y1 - y0) * t;
+    for (let j = 0; j < nAlong; j++){
+      const zz = -hl + L * (j + 0.5) / nAlong;
+      const ar = new THREE.ArrowHelper(
+        new THREE.Vector3(0, -1, 0),
+        new THREE.Vector3(x, y + sThick + arrowLen, zz),
+        arrowLen, 0x7dd3fc, arrowLen * 0.30, arrowLen * 0.18);
+      snowGrp.add(ar);
+    }
+  }
+  // load line joining the arrow tails, the usual drafting convention
+  const top = [];
+  for (let j = 0; j <= 1; j++){
+    top.push(new THREE.Vector3(j ? x1 : x0,
+                               (j ? y1 : y0) + sThick + arrowLen, -hl));
+  }
+  snowGrp.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(top),
+    new THREE.LineBasicMaterial({color: 0x38bdf8})));
+  const top2 = top.map(p => new THREE.Vector3(p.x, p.y, hl));
+  snowGrp.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(top2),
+    new THREE.LineBasicMaterial({color: 0x38bdf8})));
+}
+snowArrows(-hw, He, 0, ridge);
+snowArrows(0, ridge, hw, He);
+
 const sl = label("S = " + P.snow.S.toFixed(2) + " kPa", "#dfe9f5");
 sl.position.set(0, ridge + span * 0.12, 0);
 snowGrp.add(sl);
@@ -696,17 +1083,32 @@ function dim(a, b, text, off){
   dimGrp.add(lb);
 }
 const o = span * 0.14;
-dim([-hw,0,hl], [hw,0,hl], "W = " + W.toFixed(2) + " m", [0,-o*0.35,o]);
-dim([hw,0,-hl], [hw,0,hl], "L = " + L.toFixed(2) + " m", [o,-o*0.35,0]);
-dim([hw,0,hl], [hw,He,hl], "He = " + He.toFixed(2) + " m", [o*0.6,0,o*0.6]);
-dim([hw,He,hl], [0,ridge,hl], "Hr = " + Hr.toFixed(2) + " m", [o*0.4,0,o*0.6]);
+dim([-hw,0,hl], [hw,0,hl],
+    "W (transverse) = " + W.toFixed(2) + " m", [0,-o*0.35,o]);
+dim([hw,0,-hl], [hw,0,hl],
+    "L (longitudinal) = " + L.toFixed(2) + " m", [o,-o*0.35,0]);
+dim([hw,0,hl], [hw,He,hl],
+    "He (eaves) = " + He.toFixed(2) + " m", [o*0.6,0,o*0.6]);
+dim([hw,He,hl], [0,ridge,hl],
+    "Hr (roof) = " + Hr.toFixed(2) + " m", [o*0.4,0,o*0.6]);
+if (G.ws){
+  dim([-hw,He,-hl], [0,ridge,-hl],
+      "sloped w/2 = " + (G.ws / 2).toFixed(2) + " m", [0,o*0.25,-o*0.5]);
+}
 dimGrp.visible = false;
 scene.add(dimGrp);
 
 // ---- camera --------------------------------------------------------
 camera.position.set(span * 1.7, span * 1.15, span * 1.9);
 controls.target.set(0, HT * 0.42, 0);
+if (SAVED && SAVED.cam && isFinite(SAVED.cam.px)){
+  camera.position.set(SAVED.cam.px * span, SAVED.cam.py * span,
+                      SAVED.cam.pz * span);
+  controls.target.set(SAVED.cam.tx * span, SAVED.cam.ty * span,
+                      SAVED.cam.tz * span);
+}
 controls.update();
+controls.addEventListener("change", persist);
 
 // ---- UI ------------------------------------------------------------
 const legend = document.getElementById("leg");
@@ -725,7 +1127,11 @@ function setLegend(mode){
       "<b>Snow - Cl. 4.1.6.2</b><br>S = Is [ Ss (Cb Cw Cs Ca) + Sr ]<br>" +
       "Ss = " + P.snow.Ss.toFixed(2) + " kPa &nbsp; Sr = " + P.snow.Sr.toFixed(2) +
       " kPa &nbsp; Is = " + P.snow.Is.toFixed(2) + "<br><b>S = " +
-      P.snow.S.toFixed(2) + " kPa</b> &nbsp; (slab thickness is to scale)";
+      P.snow.S.toFixed(2) + " kPa</b> uniformly distributed over both " +
+      "slopes<br>Slab depth and arrow length scale with S. " +
+      "Cb = " + P.snow.Cb.toFixed(2) + " &nbsp; Cw = " +
+      P.snow.Cw.toFixed(2) + " &nbsp; Cs = " + P.snow.Cs.toFixed(2) +
+      " &nbsp; Ca = " + P.snow.Ca.toFixed(2);
   } else {
     legend.innerHTML =
       "<b>Seismic - Cl. 4.1.8</b><br>V = S(Ta) Mv IE W / (Rd Ro)<br>" +
@@ -735,33 +1141,50 @@ function setLegend(mode){
       " &nbsp; arrows show relative storey force";
   }
 }
-setLegend("wind");
+function applyMode(m){
+  curMode = m;
+  document.querySelectorAll(".tb[data-mode]").forEach(
+    x => x.classList.toggle("active", x.dataset.mode === m));
+  windGrp.visible = (m === "wind");
+  snowGrp.visible = (m === "snow");
+  seisGrp.visible = (m === "seismic");
+  setLegend(m);
+  persist();
+}
+applyMode(curMode);
 
 document.querySelectorAll(".tb[data-mode]").forEach(b => {
-  b.onclick = () => {
-    document.querySelectorAll(".tb[data-mode]").forEach(
-      x => x.classList.remove("active"));
-    b.classList.add("active");
-    const m = b.dataset.mode;
-    windGrp.visible = (m === "wind");
-    snowGrp.visible = (m === "snow");
-    seisGrp.visible = (m === "seismic");
-    setLegend(m);
-  };
+  b.onclick = () => applyMode(b.dataset.mode);
 });
-document.getElementById("xray").onclick = function(){
+document.getElementById("spin").onclick = function(){
   this.classList.toggle("on");
-  const on = this.classList.contains("on");
-  skin.opacity = on ? 0.04 : 0.16;
-  windGrp.children.forEach(c => {
-    if (c.material && c.material.opacity !== undefined && c.isMesh)
-      c.material.opacity = on ? 0.45 : 0.80;
-  });
+  controls.autoRotate = this.classList.contains("on");
+  controls.autoRotateSpeed = 1.2;
+  persist();
 };
 document.getElementById("dims").onclick = function(){
   this.classList.toggle("on");
   dimGrp.visible = this.classList.contains("on");
+  persist();
 };
+if (SAVED){
+  if (SAVED.spin){
+    const sb = document.getElementById("spin");
+    sb.classList.add("on");
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 1.2;
+  }
+  if (SAVED.dims){
+    document.getElementById("dims").classList.add("on");
+    dimGrp.visible = true;
+  }
+}
+function fitView(){
+  camera.position.set(span * 1.7, span * 1.15, span * 1.9);
+  controls.target.set(0, HT * 0.42, 0);
+  controls.update();
+}
+document.getElementById("fit").onclick = fitView;
 
 addEventListener("resize", () => {
   camera.aspect = host.clientWidth / host.clientHeight;
@@ -782,6 +1205,152 @@ def render_viewer(payload, height=620):
     html = VIEWER_HTML.replace("__PAYLOAD__", json.dumps(payload))
     html = html.replace("__H__", str(height))
     components.html(html, height=height + 10, scrolling=False)
+
+
+# ======================================================================
+# SECTION 5B - SYMBOL GLOSSARY
+#
+# Plain-language definitions surfaced two ways: as help= tooltips on the
+# input widgets (the little grey question mark), and as hover "?" marks
+# beside computed symbols via explain(). Keyed by the display label.
+# ======================================================================
+
+GLOSS = {
+    "Vs30": ("Time-averaged shear-wave velocity of the top 30 m of "
+             "ground, in m/s, from the geotechnical or geophysical "
+             "investigation. Stiffer ground has a higher Vs30 and "
+             "amplifies shaking less. Roughly: rock is above 760, "
+             "very dense soil 360 to 760, stiff soil 180 to 360, "
+             "soft soil below 180. The hazard model reference ground "
+             "is Vs30 = 450 m/s."),
+    "N60": ("Standard Penetration Test blow count corrected to 60 "
+            "percent hammer energy: the number of hammer blows to "
+            "drive the split-spoon sampler 0.3 m, averaged over the "
+            "top 30 m. It comes from the boreholes in the geotech "
+            "report. Higher = denser soil: N60 above 50 reads as "
+            "Site Class C, 15 to 50 as D, 10 to 15 as E."),
+    "su": ("Undrained shear strength of cohesive soil (clay), in "
+           "kPa, from lab or vane tests in the geotech report. "
+           "Higher = stiffer clay: above 100 kPa reads as Site "
+           "Class C, 50 to 100 as D, 40 to 50 as E."),
+    "Sa(T,X)": ("5 percent damped spectral acceleration at period T "
+                "for site designation X, in units of g, at a 2 "
+                "percent in 50 year probability of exceedance. This "
+                "is what a single-degree-of-freedom oscillator with "
+                "period T would feel at this site."),
+    "S(T)": ("The design spectral acceleration at period T, Table "
+             "4.1.8.4-C. Equal to Sa(T,X) at the tabulated periods, "
+             "except that S(0.2) takes the greater of Sa(0.2) and "
+             "Sa(0.5)."),
+    "X450": ("The reference ground condition of the 2020 hazard "
+             "model: Vs30 = 450 m/s. Sa(T,X450) is the hazard on "
+             "reference ground, used for Fa, Fv and the simplified "
+             "method."),
+    "Fa": ("Short-period site coefficient, Cl. 4.1.8.4.(7): "
+           "S(0.2) on this site divided by Sa(0.2) on reference "
+           "ground. Used by the material standards of Section 4.3, "
+           "not by the base shear here."),
+    "Fv": ("Long-period site coefficient, Cl. 4.1.8.4.(7): S(1.0) "
+           "over Sa(1.0,X450). Companion to Fa."),
+    "IE": ("Earthquake importance factor, Table 4.1.8.5-A: 0.8 Low, "
+           "1.0 Normal, 1.3 High (schools, community centres), 1.5 "
+           "Post-disaster (hospitals, fire stations). Scales the "
+           "design force by the consequence of failure."),
+    "SC": ("Seismic Category, Table 4.1.8.5-B: SC1 (lowest) to SC4 "
+           "(highest), from IE times S(0.2) and IE times S(1.0), "
+           "taking the more severe. Gates which analysis methods "
+           "and SFRS restrictions apply."),
+    "Ta": ("Fundamental lateral period of the building, in seconds: "
+           "the time for one full sway cycle in its first mode. "
+           "Estimated from the empirical formulas of Cl. "
+           "4.1.8.11.(3), or from a mechanics model capped against "
+           "them. Longer period generally means lower spectral "
+           "acceleration."),
+    "hn": ("Height in metres from the base (grade) to the roof "
+           "level n, the uppermost level of the main structure."),
+    "Rd": ("Ductility-related force modification factor, Table "
+           "4.1.8.9. How much the SFRS can yield and dissipate "
+           "energy without losing strength: 1.0 for brittle systems "
+           "up to 5.0 for ductile moment frames. The elastic demand "
+           "is divided by Rd because a yielding system rides out "
+           "the shaking at lower force."),
+    "Ro": ("Overstrength-related force modification factor, Table "
+           "4.1.8.9. The dependable reserve beyond the design "
+           "point: material overstrength, oversizing, strain "
+           "hardening. Typically 1.3 to 1.7."),
+    "Mv": ("Higher-mode factor, Table 4.1.8.11. Long-period "
+           "buildings respond in more than the first sway mode, "
+           "which raises the base shear above the S(Ta) estimate; "
+           "Mv scales it back up. 1.0 for short buildings."),
+    "J": ("Base overturning reduction factor, Table 4.1.8.11. The "
+          "peak storey forces do not all act in the same instant, "
+          "so summing full Fx values overstates the base moment; "
+          "J trims it (Jx varies over height per Cl. 4.1.8.11.(8))."),
+    "W": ("Seismic weight, Art. 4.1.8.2: dead load, plus 25 percent "
+          "of the snow load, plus 60 percent of storage loads, plus "
+          "the full contents of tanks. The mass that actually "
+          "shakes."),
+    "V": ("Design base shear from the Equivalent Static Force "
+          "Procedure: the total lateral earthquake force at the "
+          "base, shared out over the height as the Fx forces."),
+    "Ft": ("Concentrated top force, Cl. 4.1.8.11.(7)(a): a slice "
+           "of V applied at the roof to stand in for whip-like "
+           "higher-mode response. Zero for Ta up to 0.7 s, "
+           "otherwise 0.07 Ta V, capped at 0.25 V."),
+    "Fx": ("Lateral force applied at level x: the level's share of "
+           "V in proportion to its weight times height, plus Ft at "
+           "the top."),
+    "Dnx": ("Plan dimension of the building at level x "
+            "perpendicular to the direction of the earthquake "
+            "loading, in metres, Cl. 4.1.8.2. Sets the accidental "
+            "eccentricity 0.10 Dnx."),
+    "ex": ("Computed eccentricity between the centre of mass (where "
+           "the inertia force acts) and the centre of rigidity "
+           "(where the SFRS pushes back) at level x. A torsionally "
+           "balanced plan has ex near zero."),
+    "Bx": ("Torsional sensitivity ratio, Cl. 4.1.8.11.(10): the "
+           "worst corner displacement over the average of the two "
+           "extreme corners, with the forces applied at plus and "
+           "minus 0.10 Dnx. B above 1.7 is a Type 7 irregularity."),
+    "Fs": ("Site coefficient for the simplified method, Cl. "
+           "4.1.8.1.(2)(b): 1.0 rock, 1.6 medium, 2.8 soft, from "
+           "N60 or su in the top 30 m below the foundations."),
+    "Rs": ("Combined force reduction for the simplified method: "
+           "1.5 normally, 1.0 where a storey is weaker than the "
+           "one above or the SFRS is unreinforced masonry."),
+    "Ts": ("Fundamental period estimate for the simplified method, "
+           "Cl. 4.1.8.1.(7). Same empirical forms as Ta."),
+    "Vs": ("Simplified-method base shear, Cl. 4.1.8.1.(7)."),
+    "Wp": ("Weight of the appendage or cantilevered element being "
+           "checked: a parapet, a canopy, a rooftop unit."),
+    "hs": ("Interstorey height: floor-to-floor height of the "
+           "storey being checked, in mm here."),
+    "delta": ("Interstorey deflection from the elastic analysis "
+              "under the reduced seismic forces, in mm: the "
+              "difference in lateral displacement between the top "
+              "and bottom of the storey, including torsion."),
+}
+
+
+def qmark(text):
+    safe = str(text).replace('"', "'")
+    return ("<sup><span title=\"%s\" style='cursor:help;"
+            "color:#1f6feb;font-weight:700'>&nbsp;?</span></sup>"
+            % safe)
+
+
+def explain(*symbols):
+    """A line of symbols, each with a hover question mark."""
+    parts = []
+    for s in symbols:
+        if s in GLOSS:
+            parts.append("<b>%s</b>%s" % (s, qmark(GLOSS[s])))
+    if not parts:
+        return
+    st.markdown("<p style='margin:0.1rem 0 0.5rem 0;font-size:0.86rem;"
+                "opacity:0.85'>Hover a ? for what each symbol means: "
+                + " &nbsp;&nbsp; ".join(parts) + "</p>",
+                unsafe_allow_html=True)
 
 
 # ======================================================================
@@ -809,53 +1378,261 @@ with LEFT:
 
     # ------------------------------------------------------------------
     st.header("1. Building Geometry")
-    g1, g2, g3 = st.columns(3)
+
+    st.markdown("**Building envelope**")
+    g1, g2 = st.columns(2)
     with g1:
-        W_bldg = st.number_input("W, building width across ridge (m)",
-                                 1.0, 300.0, 18.41, 0.01)
-        H_eaves = st.number_input("He, eaves height (m)",
-                                  1.0, 200.0, 11.40, 0.01)
+        W_bldg = st.number_input(
+            "W, transverse length of the building, across the ridge (m)",
+            1.0, 300.0, 18.41, 0.01,
+            help="Plan dimension perpendicular to the ridge line.")
+        H_eaves = st.number_input(
+            "He, height of the eaves above ground level (m)",
+            1.0, 200.0, 11.40, 0.01,
+            help="Measured from grade to the eaves line.")
     with g2:
-        L_bldg = st.number_input("L, building length along ridge (m)",
-                                 1.0, 600.0, 36.41, 0.01)
-        H_roof = st.number_input("Hr, ridge rise above eaves (m)",
-                                 0.0, 60.0, 2.907, 0.001)
-    with g3:
-        W_roof = st.number_input("w, roof tributary width (m)",
-                                 1.0, 300.0, 25.00, 0.01)
-        L_roof = st.number_input("l, roof length (m)",
-                                 1.0, 600.0, 35.62, 0.01)
+        L_bldg = st.number_input(
+            "L, longitudinal length of the building, along the ridge (m)",
+            1.0, 600.0, 36.41, 0.01,
+            help="Plan dimension parallel to the ridge line.")
+        H_roof = st.number_input(
+            "Hr, roof height, eaves to ridge (m)",
+            0.0, 60.0, 2.907, 0.001,
+            help="Vertical rise from the eaves line up to the ridge. "
+                 "Not the total building height.")
+
+    st.markdown("**Roof dimensions**")
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        W_roof_h = st.number_input(
+            "w_h, roof horizontal (plan) width across the ridge (m)",
+            1.0, 300.0, 17.59, 0.01,
+            help="Horizontal projection of the roof, eaves to eaves. "
+                 "This is the plan dimension used for the snow "
+                 "characteristic length.")
+    with r2:
+        L_roof = st.number_input(
+            "l, roof plan length along the ridge (m)",
+            1.0, 600.0, 35.62, 0.01)
+    with r3:
+        use_sloped = st.checkbox("Enter the sloped width instead",
+                                 value=False,
+                                 help="Tick this if the roof is "
+                                      "dimensioned up the slope rather "
+                                      "than in plan.")
 
     H_total = H_eaves + H_roof
-    H_ref = (H_total + H_eaves) / 2.0
-    alpha = math.degrees(math.atan(H_roof / (0.5 * W_bldg)))
     least_dim = min(W_bldg, L_bldg)
+
+    if use_sloped:
+        W_roof_s = st.number_input(
+            "w_s, roof sloped width, eaves to eaves over the ridge (m)",
+            1.0, 400.0, 25.00, 0.01)
+        # Slope is set by the rise and the sloped half-width.
+        half_s = max(W_roof_s / 2.0, 1e-6)
+        ratio = min(max(H_roof / half_s, -1.0), 1.0)
+        alpha = math.degrees(math.asin(ratio))
+        W_roof_h = 2.0 * math.sqrt(max(half_s ** 2 - H_roof ** 2, 0.0))
+        alpha_expr = (r"\alpha = \arcsin\!\left(\frac{H_r}"
+                      r"{0.5\,w_s}\right)")
+        alpha_sub = (r"\arcsin\!\left(\frac{%.3f}{0.5 \times %.2f}"
+                     r"\right)" % (H_roof, W_roof_s))
+    else:
+        alpha = math.degrees(math.atan(H_roof / (0.5 * W_roof_h)))
+        W_roof_s = W_roof_h / math.cos(math.radians(alpha))
+        alpha_expr = (r"\alpha = \arctan\!\left(\frac{H_r}"
+                      r"{0.5\,w_h}\right)")
+        alpha_sub = (r"\arctan\!\left(\frac{%.3f}{0.5 \times %.2f}"
+                     r"\right)" % (H_roof, W_roof_h))
+
+    slope_pct = 100.0 * math.tan(math.radians(alpha))
+    A_plan = W_roof_h * L_roof
+    A_slope = W_roof_s * L_roof
+
+    st.latex(alpha_expr + r" = " + alpha_sub +
+             r" = %.2f^\circ \quad (%.1f\%%\ \text{slope})"
+             % (alpha, slope_pct))
+    st.latex(r"w_h = %.2f\ \text{m (horizontal)} \qquad "
+             r"w_s = \frac{w_h}{\cos\alpha} = %.2f\ \text{m (sloped)}"
+             % (W_roof_h, W_roof_s))
+    st.latex(r"\text{Half slope length} = \frac{w_s}{2} = %.2f\ "
+             r"\text{m} \qquad A_{plan} = %.1f\ \text{m}^2 \qquad "
+             r"A_{slope} = %.1f\ \text{m}^2"
+             % (W_roof_s / 2.0, A_plan, A_slope))
+    st.caption("Snow loads act on the horizontal projection, so the "
+               "plan dimensions w_h and l govern Cl. 4.1.6.2. The "
+               "sloped width w_s is what you sheet and purlin for.")
+
+    # Reference height, Cl. 4.1.7.3.(6) and Note (3) to Fig. 4.1.7.6-A
+    H_mid = (H_total + H_eaves) / 2.0
+    href_basis = st.radio(
+        "Reference height basis (Cl. 4.1.7.3.(6), Note (3) to "
+        "Fig. 4.1.7.6-A)",
+        ["Mid-height of the roof", "Eaves height (roof slope < 7 deg)"],
+        horizontal=True, index=0)
+    if href_basis.startswith("Eaves") and alpha >= 7.0:
+        st.warning("The eaves height may only be substituted where the "
+                   "roof slope is less than 7 deg. Slope is %.2f deg, "
+                   "so the mid-height of the roof is used."
+                   % alpha)
+        href_basis = "Mid-height of the roof"
+
+    H_ref_raw = H_mid if href_basis.startswith("Mid") else H_eaves
+    H_ref = max(H_ref_raw, 6.0)
     z_end = end_zone_width(least_dim, H_eaves)
 
-    st.latex(r"\alpha = \arctan\!\left(\frac{H_r}{0.5\,W}\right)"
-             r" = \arctan\!\left(\frac{%.3f}{0.5 \times %.2f}\right)"
-             r" = %.2f^\circ" % (H_roof, W_bldg, alpha))
-    st.latex(r"H_{ref} = \frac{H_{total} + H_{eaves}}{2}"
-             r" = \frac{%.3f + %.2f}{2} = %.3f \ \text{m}"
-             % (H_total, H_eaves, H_ref))
+    if href_basis.startswith("Mid"):
+        st.latex(r"h = \frac{H_e + (H_e + H_r)}{2}"
+                 r" = \frac{%.2f + %.3f}{2} = %.3f \ \text{m}"
+                 % (H_eaves, H_total, H_mid))
+    else:
+        st.latex(r"h = H_e = %.3f \ \text{m}"
+                 r"\quad (\alpha = %.2f^\circ < 7^\circ)"
+                 % (H_eaves, alpha))
+    if H_ref > H_ref_raw + 1e-9:
+        st.info("The reference height is taken as 6 m, the minimum of "
+                "Cl. 4.1.7.3.(6)(a).")
+    st.latex(r"h_{ref} = \max(%.3f,\ 6.0) = %.3f \ \text{m}"
+             % (H_ref_raw, H_ref))
     st.latex(r"z = \min(0.1 D_{min},\, 0.4 H) \ \ge \ "
              r"\max(0.04 D_{min},\, 1.0) = %.2f \ \text{m}" % z_end)
+    st.caption("Total building height H = He + Hr = %.3f m. "
+               "Least horizontal dimension D_min = %.2f m."
+               % (H_total, least_dim))
+
+    # Kept for the snow characteristic length, which uses plan values.
+    W_roof = W_roof_h
 
     # ------------------------------------------------------------------
-    st.header("2. Site Climatic Data")
-    st.caption("NBCC 2020, Table C-2, Appendix C")
+    st.header("2. Site Location and Climatic Data")
+    st.caption("NBCC 2020, Table C-2, Appendix C. The place name and "
+               "the coordinates stay synchronised automatically: "
+               "change the location and the coordinates are looked "
+               "up, change the coordinates and the location is "
+               "identified.")
 
     provinces = sorted(c2["province"].unique().tolist())
+
+    # ---- synchronisation callbacks -----------------------------------
+    # These run before the widgets are rebuilt on the next script pass,
+    # which is the only point at which a widget key may be written.
+
+    def _sync_from_place():
+        df, _, _ = load_table_c2()
+        provs = sorted(df["province"].unique().tolist())
+        p = st.session_state.get("prov_sel", provs[0])
+        here = sorted(df[df["province"] == p]["location"].tolist())
+        if st.session_state.get("loc_sel") not in here:
+            st.session_state["loc_sel"] = here[0]
+        place = st.session_state["loc_sel"]
+        glat, glon, glabel, gerr = geocode_forward(place, p)
+        if glat is None:
+            st.session_state["geo_label"] = ""
+            st.session_state["geo_msg"] = (
+                "warn", "Could not resolve %s, %s. %s Enter the "
+                        "coordinates directly." % (place, p, gerr))
+        else:
+            st.session_state["site_lat"] = round(float(glat), 4)
+            st.session_state["site_lon"] = round(float(glon), 4)
+            st.session_state["geo_label"] = glabel
+            st.session_state["geo_msg"] = (
+                "ok", "Coordinates set from %s, %s." % (place, p))
+
+    def _sync_from_coords():
+        df, _, _ = load_table_c2()
+        provs = sorted(df["province"].unique().tolist())
+        glat = st.session_state.get("site_lat")
+        glon = st.session_state.get("site_lon")
+        place, gprov, glabel, gerr = geocode_reverse(glat, glon)
+        st.session_state["geo_label"] = glabel
+        if gerr or not place:
+            st.session_state["geo_msg"] = (
+                "warn", "Could not identify %.4f, %.4f. %s Select the "
+                        "governing Table C-2 location manually."
+                        % (glat, glon, gerr or "no place returned"))
+            return
+        norm_prov = normalise_province(gprov, provs)
+        m_prov, m_loc, score = match_c2_location(df, place, norm_prov)
+        if m_loc and score >= 0.60:
+            st.session_state["prov_sel"] = m_prov
+            st.session_state["loc_sel"] = m_loc
+            st.session_state["geo_msg"] = (
+                "ok", "%.4f, %.4f is %s. Nearest Table C-2 entry: "
+                      "%s, %s." % (glat, glon, place, m_loc, m_prov))
+        else:
+            st.session_state["geo_msg"] = (
+                "warn", "%.4f, %.4f is %s%s, which does not match a "
+                        "Table C-2 entry closely enough to select "
+                        "automatically. Closest entry is %s, %s. "
+                        "Choose the governing location manually."
+                        % (glat, glon, place,
+                           ", " + norm_prov if norm_prov else "",
+                           m_loc or "none", m_prov or "-"))
+
+    # ---- defaults, set before any widget is instantiated --------------
+    if "prov_sel" not in st.session_state:
+        st.session_state["prov_sel"] = ("Alberta" if "Alberta"
+                                        in provinces else provinces[0])
+    if "loc_sel" not in st.session_state:
+        st.session_state["loc_sel"] = "Calgary"
+    if "site_lat" not in st.session_state:
+        st.session_state["site_lat"] = 51.0500
+    if "site_lon" not in st.session_state:
+        st.session_state["site_lon"] = -114.0700
+    if "geo_label" not in st.session_state:
+        st.session_state["geo_label"] = ""
+    if "geo_msg" not in st.session_state:
+        st.session_state["geo_msg"] = None
+
+    # First pass only: pull the coordinates for the default location so
+    # that the two halves agree before anything is displayed.
+    if not st.session_state.get("geo_first_done"):
+        st.session_state["geo_first_done"] = True
+        _sync_from_place()
+
     d1, d2 = st.columns(2)
     with d1:
         prov = st.selectbox("Province / Territory", provinces,
-                            index=provinces.index("Alberta")
-                            if "Alberta" in provinces else 0)
+                            key="prov_sel", on_change=_sync_from_place)
     sub = c2[c2["province"] == prov].sort_values("location")
+    locs = sub["location"].tolist()
+    if st.session_state.get("loc_sel") not in locs:
+        st.session_state["loc_sel"] = locs[0]
     with d2:
-        locs = sub["location"].tolist()
-        default_i = locs.index("Calgary") if "Calgary" in locs else 0
-        loc = st.selectbox("Location", locs, index=default_i)
+        loc = st.selectbox("Location", locs, key="loc_sel",
+                           on_change=_sync_from_place)
+
+    gc1, gc2 = st.columns(2)
+    with gc1:
+        lat = st.number_input("Latitude (deg N)", min_value=41.0,
+                              max_value=84.0, step=0.0001,
+                              format="%.4f", key="site_lat",
+                              on_change=_sync_from_coords)
+    with gc2:
+        lon = st.number_input("Longitude (deg E, negative W)",
+                              min_value=-142.0, max_value=-52.0,
+                              step=0.0001, format="%.4f",
+                              key="site_lon",
+                              on_change=_sync_from_coords)
+
+    msg = st.session_state.get("geo_msg")
+    if msg:
+        kind, text = msg
+        (st.caption if kind == "ok" else st.warning)(text)
+    if st.session_state.get("geo_label"):
+        st.caption("Geocoder: %s" % st.session_state["geo_label"])
+
+    st.map(pd.DataFrame({"lat": [lat], "lon": [lon]}), zoom=6)
+
+    north_tl = north_of_treeline(lat)
+    if north_tl:
+        st.info("Latitude %.4f N is at or above %.0f N, so the site is "
+                "taken as north of the treeline for Cl. 4.1.6.2.(4)."
+                % (lat, TREELINE_LAT))
+    else:
+        st.caption("Latitude %.4f N is below %.0f N: south of the "
+                   "treeline for Cl. 4.1.6.2.(4)."
+                   % (lat, TREELINE_LAT))
 
     row = sub[sub["location"] == loc].iloc[0]
     Ss = float(row["Ss_kPa"])
@@ -888,12 +1665,12 @@ with LEFT:
                                 ["Low", "Normal", "High", "Post-Disaster"],
                                 index=1, key="cat_snow")
     with s2:
-        north_tl = st.checkbox("North of the treeline (lat >= 60 deg)",
-                               value=False)
-        exposure_snow = st.selectbox(
-            "Exposure",
-            ["Normal / sheltered (Cw = 1.0)",
-             "Rural, fully exposed (Cw = 0.75)"], index=0)
+        cw_choices = ["1.00 - Cl. 4.1.6.2.(3), default",
+                      "0.75 - rural, Cl. 4.1.6.2.(4)",
+                      "0.50 - exposed, north of the treeline"]
+        cw_pick = st.selectbox("Cw, wind exposure factor", cw_choices,
+                               index=2 if north_tl else 0)
+        cw_req = float(cw_pick.split(" ")[0])
     with s3:
         slippery = st.checkbox("Unobstructed slippery roof", value=False)
         Ca = st.number_input("Ca, accumulation factor",
@@ -902,8 +1679,34 @@ with LEFT:
                                   "to 4.1.6.11 for drift, sliding and "
                                   "projection cases.")
 
+    if cw_req < 1.0:
+        st.caption("Cl. 4.1.6.2.(4) permits the reduction only for Low "
+                   "and Normal Importance Category buildings and only "
+                   "where all three of the following hold:")
+        cwa, cwb, cwc = st.columns(3)
+        with cwa:
+            cond_a = st.checkbox("(a) Exposed on all sides to wind "
+                                 "over open terrain, and expected to "
+                                 "remain so", value=False)
+        with cwb:
+            cond_b = st.checkbox("(b) Roof area exposed on all sides, "
+                                 "no significant obstructions within "
+                                 "10x the obstruction height", value=False)
+        with cwc:
+            cond_c = st.checkbox("(c) Loading does not involve snow "
+                                 "accumulation by drifting from "
+                                 "adjacent surfaces", value=False)
+    else:
+        cond_a = cond_b = cond_c = False
+
     Is = importance_factor_snow(ls_snow, cat_snow)
-    Cw = wind_exposure_factor_snow(north_tl, exposure_snow)
+    Cw, cw_why = wind_exposure_factor_snow(cat_snow, cw_req, north_tl,
+                                           cond_a, cond_b, cond_c)
+    if abs(Cw - cw_req) > 1e-9:
+        st.warning("Cw = %.2f. %s" % (Cw, cw_why))
+    else:
+        st.caption("Cw = %.2f. %s" % (Cw, cw_why))
+
     lc = characteristic_length(W_roof, L_roof)
     Cb, cb_limit, cb_branch = basic_roof_snow_factor(lc, Cw)
     Cs, cs_branch = roof_slope_factor(alpha, slippery)
@@ -912,6 +1715,11 @@ with LEFT:
     st.latex(r"I_s = %.2f \qquad (%s,\ %s)" % (Is, ls_snow, cat_snow))
     st.latex(r"l_c = 2w - \frac{w^2}{l} = 2(%.2f) - \frac{%.2f^2}{%.2f}"
              r" = %.2f \ \text{m}" % (W_roof, W_roof, L_roof, lc))
+    st.caption("w and l are the smaller and larger plan dimensions of "
+               "the roof, Cl. 4.1.6.2.(2)(a): w = w_h = %.2f m "
+               "(horizontal), l = %.2f m. The sloped width w_s = "
+               "%.2f m is not used here."
+               % (W_roof, L_roof, W_roof_s))
     st.latex(r"\frac{70}{C_w^2} = \frac{70}{%.2f^2} = %.2f \ \text{m}"
              r" \quad \Rightarrow \quad %s"
              % (Cw, cb_limit, cb_branch.replace("^2", "^{2}")))
@@ -1097,52 +1905,73 @@ with LEFT:
     st.subheader("8.1  Site Properties")
     st.caption("Article 4.1.8.4")
 
+    st.success("Site coordinates %.4f N, %.4f E, taken from Section 2. "
+               "Change them there and every seismic value below "
+               "follows." % (lat, lon))
+
     sp1, sp2, sp3 = st.columns(3)
     with sp1:
-        lat = st.number_input("Latitude (deg N)", 41.0, 84.0,
-                              51.0500, 0.0001, format="%.4f")
-        lon = st.number_input("Longitude (deg E, negative W)",
-                              -142.0, -52.0, -114.0700, 0.0001,
-                              format="%.4f")
+        st.metric("Latitude", "%.4f" % lat)
+        st.metric("Longitude", "%.4f" % lon)
     with sp2:
-        site_basis = st.radio("Site designation basis",
-                              ["Site Class (Xs)", "Vs30 (Xv)"],
-                              key="site_basis")
+        site_basis = st.radio(
+            "Site designation basis",
+            ["Site Class (Xs)", "Vs30 (Xv)"],
+            key="site_basis",
+            help="Two ways to tell the hazard model what the ground "
+                 "is like. Xs uses a Site Class letter (A hard rock "
+                 "to F soft/problem soils) from Table 4.1.8.4-B. Xv "
+                 "uses the measured Vs30 directly, with no rounding "
+                 "to a class - preferred when a measured Vs30 "
+                 "exists.")
         if site_basis == "Site Class (Xs)":
             sc_mode = st.selectbox(
                 "Determine Site Class from",
-                ["Enter directly", "Vs30", "N60", "su"], index=0)
+                ["Enter directly", "Vs30", "N60", "su"], index=0,
+                help="Table 4.1.8.4-B assigns the class from any of "
+                     "three soil measurements: shear-wave velocity "
+                     "Vs30, SPT blow count N60, or undrained shear "
+                     "strength su. Use whichever the geotech report "
+                     "provides; Vs30 governs when more than one is "
+                     "available.")
         else:
             sc_mode = "Vs30 designation"
     with sp3:
         if site_basis == "Vs30 (Xv)":
             vs30_in = st.number_input("Vs30 (m/s)", 50.0, 3000.0,
-                                      450.0, 1.0)
+                                      450.0, 1.0, help=GLOSS["Vs30"])
             site_class = nbcc.site_class_from_vs30(vs30_in)
             site_designation = "X%.0f" % vs30_in
             st.caption("Equivalent Site Class %s" % site_class)
         elif sc_mode == "Vs30":
             vs30_in = st.number_input("Vs30 (m/s)", 50.0, 3000.0,
-                                      450.0, 1.0)
+                                      450.0, 1.0, help=GLOSS["Vs30"])
             site_class = nbcc.site_class_from_vs30(vs30_in)
             site_designation = "X" + site_class
         elif sc_mode == "N60":
             n60_in = st.number_input("N60 (blows / 0.3 m)", 0.0,
-                                     200.0, 60.0, 1.0)
+                                     200.0, 60.0, 1.0,
+                                     help=GLOSS["N60"])
             site_class = nbcc.site_class_from_n60(n60_in)
             site_designation = "X" + site_class
         elif sc_mode == "su":
-            su_in = st.number_input("su (kPa)", 0.0, 500.0, 120.0, 1.0)
+            su_in = st.number_input("su (kPa)", 0.0, 500.0, 120.0, 1.0,
+                                    help=GLOSS["su"])
             site_class = nbcc.site_class_from_su(su_in)
             site_designation = "X" + site_class
         else:
-            site_class = st.selectbox("Site Class",
-                                      ["A", "B", "C", "D", "E", "F"],
-                                      index=2)
+            site_class = st.selectbox(
+                "Site Class", ["A", "B", "C", "D", "E", "F"], index=2,
+                help="Table 4.1.8.4-B: A hard rock, B rock, C very "
+                     "dense soil / soft rock, D stiff soil, E soft "
+                     "soil, F problem soils needing site-specific "
+                     "evaluation. Softer ground amplifies shaking, "
+                     "so the letter matters a lot to the loads.")
             site_designation = "X" + site_class
 
     st.caption("Site Class %s - %s"
                % (site_class, nbcc.SITE_CLASS_DESC[site_class]))
+    explain("Vs30", "N60", "su")
 
     with st.expander("Table 4.1.8.4-A exceptions (Cl. 4.1.8.4.(2))"):
         ex1, ex2, ex3 = st.columns(3)
@@ -1171,8 +2000,13 @@ with LEFT:
                  "PGA, PGV and Sa(T). The values below are not valid "
                  "for this site.")
 
-    fetch_ok = st.checkbox("Fetch Sa(T) from the NRCan hazard service",
-                           value=True)
+    fetch_ok = st.checkbox(
+        "Fetch Sa(T) from the NRCan hazard service", value=True,
+        help="Downloads the 5 percent damped spectral accelerations "
+             "for these exact coordinates from Natural Resources "
+             "Canada's 2020 seismic hazard model - the same numbers "
+             "the online NBCC Seismic Hazard Tool reports. Untick to "
+             "type the values in manually.")
     st.caption("Cl. 4.1.8.4.(1): Sa(T,X) at 0.2, 0.5, 1.0, 2.0, 5.0 "
                "and 10.0 s, 2% probability of exceedance in 50 years, "
                "per Subsection 1.1.3. Source: "
@@ -1200,11 +2034,21 @@ with LEFT:
             with col:
                 sa_site["S(%s)" % ("%.1f" % p)] = st.number_input(
                     "Sa(%.1f)" % p, 0.0, 5.0, 0.0, 0.0001,
-                    format="%.4f", key="sa_manual_%.1f" % p)
+                    format="%.4f", key="sa_manual_%.1f" % p,
+                    help=GLOSS["Sa(T,X)"])
 
     S = nbcc.design_spectrum(sa_site)
-    interp_mode = st.radio("S(T) interpolation (Cl. 4.1.8.4.(6))",
-                           ["log-log", "linear"], horizontal=True)
+    interp_mode = st.radio(
+        "S(T) interpolation (Cl. 4.1.8.4.(6))",
+        ["log-log", "linear"], horizontal=True,
+        help="The spectrum is only tabulated at 0.2, 0.5, 1, 2, 5 "
+             "and 10 s, but the building's period Ta lands between "
+             "those points, so S(Ta) has to be interpolated. "
+             "Log-log interpolates on the logarithms of period and "
+             "acceleration, which follows the smooth decay of a "
+             "real spectrum; linear joins the tabulated points with "
+             "straight lines. The full interpolation work is shown "
+             "in Section 8.7.")
 
     spec_rows = [{"Period T (s)": "%.1f" % p,
                   "Sa(T,X) (g)": "%.4f" % float(
@@ -1215,6 +2059,7 @@ with LEFT:
                  use_container_width=True)
     st.caption("Table 4.1.8.4-C: S(T) for T <= 0.2 s is the greater "
                "of Sa(0.2,X) and Sa(0.5,X).")
+    explain("Sa(T,X)", "S(T)", "X450")
 
     if sa_450 is not None:
         Fa, Fv = nbcc.site_coefficients(S, sa_450)
@@ -1223,6 +2068,7 @@ with LEFT:
                  r" = %.3f" % (Fa, Fv))
         st.caption("Cl. 4.1.8.4.(7). Fa and Fv are for use in the "
                    "material standards referenced in Section 4.3.")
+        explain("Fa", "Fv")
 
     # ---- 8.2 Importance factor and Seismic Category -------------------
     st.subheader("8.2  Importance Factor and Seismic Category")
@@ -1231,7 +2077,14 @@ with LEFT:
     cat_seis = st.selectbox(
         "Importance category",
         ["Low", "Normal", "High", "Post-disaster"], index=1,
-        key="cat_seis")
+        key="cat_seis",
+        help="Table 4.1.8.5-A, by consequence of failure. Low: "
+             "farm and low-occupancy buildings (IE = 0.8). Normal: "
+             "most buildings (1.0). High: schools, community "
+             "centres and buildings sheltering many people (1.3). "
+             "Post-disaster: hospitals, fire and police stations, "
+             "control centres that must work after the earthquake "
+             "(1.5).")
     IE = nbcc.importance_factor(cat_seis)
     SC, ies02, ies10, sc_a, sc_b = nbcc.seismic_category(
         IE, S["S(0.2)"], S["S(1.0)"])
@@ -1239,6 +2092,35 @@ with LEFT:
     st.latex(r"I_E = %.1f \qquad I_E S(0.2) = %.4f \ (SC%d)"
              r" \qquad I_E S(1.0) = %.4f \ (SC%d)"
              % (IE, ies02, sc_a, ies10, sc_b))
+    explain("IE", "SC")
+
+    with st.expander("Where SC comes from - Table 4.1.8.5-B, "
+                     "step by step"):
+        st.latex(r"I_E\,S(0.2) = %.1f \times %.4f = %.4f"
+                 % (IE, S["S(0.2)"], ies02))
+
+        def _band(val, cuts):
+            # cuts = [c1, c2, c3] splitting SC1..SC4
+            if val < cuts[0]:
+                return (r"%.4f < %.2f \Rightarrow SC1"
+                        % (val, cuts[0]))
+            if val < cuts[1]:
+                return (r"%.2f \leq %.4f < %.2f \Rightarrow SC2"
+                        % (cuts[0], val, cuts[1]))
+            if val <= cuts[2]:
+                return (r"%.2f \leq %.4f \leq %.2f \Rightarrow SC3"
+                        % (cuts[1], val, cuts[2]))
+            return r"%.4f > %.2f \Rightarrow SC4" % (val, cuts[2])
+
+        st.caption("Short-period test, bands at 0.20 / 0.35 / 0.75:")
+        st.latex(_band(ies02, [0.20, 0.35, 0.75]))
+        st.latex(r"I_E\,S(1.0) = %.1f \times %.4f = %.4f"
+                 % (IE, S["S(1.0)"], ies10))
+        st.caption("Long-period test, bands at 0.10 / 0.20 / 0.30:")
+        st.latex(_band(ies10, [0.10, 0.20, 0.30]))
+        st.latex(r"SC = \max(SC%d,\ SC%d) = \mathbf{SC%d}"
+                 % (sc_a, sc_b, SC))
+
     st.info("Seismic Category SC%d. Table 4.1.8.5-B takes the more "
             "severe of the two categories, irrespective of Ta." % SC)
 
@@ -1293,8 +2175,11 @@ with LEFT:
 
     sf1, sf2 = st.columns([1, 2])
     with sf1:
-        grp = st.selectbox("Material / standard", nbcc.sfrs_groups(),
-                           index=0)
+        grp = st.selectbox(
+            "Material / standard", nbcc.sfrs_groups(), index=0,
+            help="The material standard the Seismic Force Resisting "
+                 "System is designed to. Each material's detailing "
+                 "rules earn the Rd and Ro values in Table 4.1.8.9.")
     with sf2:
         opts = nbcc.sfrs_options(grp)
         default_i = 0
@@ -1302,18 +2187,36 @@ with LEFT:
             if "Conventional construction" in o and "Other" in o:
                 default_i = i
                 break
-        sfrs_name = st.selectbox("Type of SFRS", opts, index=default_i)
+        sfrs_name = st.selectbox(
+            "Type of SFRS", opts, index=default_i,
+            help="The SFRS is the part of the structure that "
+                 "resists earthquake forces: the braced bays, "
+                 "moment frames or shear walls. Pick the row of "
+                 "Table 4.1.8.9 that matches what is actually "
+                 "detailed on the drawings - the ductility class "
+                 "(ductile / moderately ductile / limited / "
+                 "conventional) must match the detailing, not just "
+                 "the geometry.")
 
     entry = nbcc.sfrs_lookup(grp, sfrs_name)
     Rd, Ro = entry["Rd"], entry["Ro"]
 
     hn = st.number_input("hn, height above the base to level n (m)",
-                         1.0, 300.0, 10.0, 0.1)
-    n_storeys = st.number_input("N, number of storeys above grade",
-                                1, 100, 1, 1)
+                         1.0, 300.0, 10.0, 0.1, help=GLOSS["hn"])
+    n_storeys = st.number_input(
+        "N, number of storeys above grade", 1, 100, 1, 1,
+        help="Storey count above grade, used by the Ta = 0.1 N "
+             "period formula for moment frames other than steel "
+             "or concrete.")
 
     st.latex(r"R_d = %.1f \qquad R_o = %.1f \qquad R_d R_o = %.2f"
              % (Rd, Ro, Rd * Ro))
+    explain("Rd", "Ro")
+    st.caption("The base shear divides by Rd Ro = %.2f, so this "
+               "choice of SFRS cuts the elastic demand by a factor "
+               "of %.2f. A fully elastic (Rd = Ro = 1.0) design of "
+               "the same building would see %.0f%% more force."
+               % (Rd * Ro, Rd * Ro, 100.0 * (Rd * Ro - 1.0)))
 
     lim_ok, lim_msg = nbcc.check_height_limit(entry, SC, hn)
     (st.success if lim_ok else st.error)(lim_msg)
@@ -1342,18 +2245,35 @@ with LEFT:
 
     p1, p2 = st.columns(2)
     with p1:
-        period_sys = st.selectbox("Period equation",
-                                  nbcc.PERIOD_SYSTEMS, index=3)
-        single_storey = st.checkbox("Single-storey with steel deck or "
-                                    "wood roof diaphragm "
-                                    "(Cl. 4.1.8.11.(4))", value=False)
+        period_sys = st.selectbox(
+            "Period equation", nbcc.PERIOD_SYSTEMS, index=3,
+            help="Which empirical formula of Cl. 4.1.8.11.(3) "
+                 "estimates the fundamental period. Pick the one "
+                 "matching the SFRS: moment frames sway more (longer "
+                 "period) than braced frames, which sway more than "
+                 "shear walls.")
+        single_storey = st.checkbox(
+            "Single-storey with steel deck or wood roof diaphragm "
+            "(Cl. 4.1.8.11.(4))", value=False,
+            help="A flexible roof diaphragm adds sway of its own, so "
+                 "single-storey buildings with steel deck or wood "
+                 "roofs get a longer period that grows with the "
+                 "diaphragm span L.")
     with p2:
-        L_diaph = st.number_input("L, shortest diaphragm length (m)",
-                                  0.0, 300.0, 30.0, 0.1,
-                                  disabled=not single_storey)
-        Ta_mech = st.number_input("Ta from a mechanics model (s) - "
-                                  "0 to skip", 0.0, 20.0, 0.0, 0.001,
-                                  format="%.3f")
+        L_diaph = st.number_input(
+            "L, shortest diaphragm length (m)", 0.0, 300.0, 30.0, 0.1,
+            disabled=not single_storey,
+            help="Shortest span of the roof diaphragm between "
+                 "vertical elements of the SFRS, in metres.")
+        Ta_mech = st.number_input(
+            "Ta from a mechanics model (s) - 0 to skip",
+            0.0, 20.0, 0.0, 0.001, format="%.3f",
+            help="Period from a modal analysis or other structural "
+                 "model, if one exists. Cl. 4.1.8.11.(3)(d) lets it "
+                 "be used, but caps it at 1.5x (moment frames) or "
+                 "2.0x (braced frames, walls) the empirical value, "
+                 "because a long analytical period can "
+                 "unconservatively shrink the force.")
 
     if single_storey:
         Ta_emp, ta_expr = nbcc.single_storey_period(
@@ -1368,9 +2288,28 @@ with LEFT:
         Ta, ta_note = nbcc.cap_mechanics_period(period_sys, Ta_mech,
                                                 Ta_emp)
 
-    st.latex(r"%s = %.4f \ \text{s}"
+    # substituted form of whichever empirical expression applies
+    if single_storey:
+        if period_sys in ("Steel moment frame", "Braced frame"):
+            ta_sub = (r"0.035(%.2f) + 0.004(%.2f)" % (hn, L_diaph))
+        else:
+            ta_sub = (r"0.05\,(%.2f)^{3/4} + 0.004(%.2f)"
+                      % (hn, L_diaph))
+    elif period_sys == "Steel moment frame":
+        ta_sub = r"0.085\,(%.2f)^{3/4}" % hn
+    elif period_sys == "Concrete moment frame":
+        ta_sub = r"0.075\,(%.2f)^{3/4}" % hn
+    elif period_sys == "Other moment frame":
+        ta_sub = r"0.1 \times %d" % int(n_storeys)
+    elif period_sys == "Braced frame":
+        ta_sub = r"0.025 \times %.2f" % hn
+    else:
+        ta_sub = r"0.05\,(%.2f)^{3/4}" % hn
+
+    st.latex(r"%s = %s = %.4f \ \text{s}"
              % (ta_expr.replace("Ta", "T_a").replace("hn", "h_n"),
-                Ta_emp))
+                ta_sub, Ta_emp))
+    explain("Ta", "hn")
     if ta_note:
         st.info(ta_note + "  Ta = %.4f s used." % Ta)
 
@@ -1392,48 +2331,196 @@ with LEFT:
     st.markdown("**Seismic weight, W** (Art. 4.1.8.2)")
     w1, w2, w3, w4 = st.columns(4)
     with w1:
-        W_dead = st.number_input("Dead load (kN)", 0.0, 1e7,
-                                 4000.0, 10.0)
+        W_dead = st.number_input(
+            "Dead load (kN)", 0.0, 1e7, 4000.0, 10.0,
+            help="Total specified (unfactored) dead load of the "
+                 "building: structure, finishes, partitions, fixed "
+                 "equipment. All of it shakes, so all of it counts.")
     with w2:
-        W_snow = st.number_input("Specified snow load (kN)", 0.0, 1e7,
-                                 800.0, 10.0)
+        W_snow = st.number_input(
+            "Specified snow load (kN)", 0.0, 1e7, 800.0, 10.0,
+            help="Total specified snow load on the roof (S from "
+                 "Section 3 times the roof area). Only 25 percent "
+                 "counts toward W - a design blizzard and a design "
+                 "earthquake are unlikely to coincide in full.")
     with w3:
-        W_stor = st.number_input("Storage load (kN)", 0.0, 1e7,
-                                 0.0, 10.0)
+        W_stor = st.number_input(
+            "Storage load (kN)", 0.0, 1e7, 0.0, 10.0,
+            help="Live load in storage areas. 60 percent counts "
+                 "toward W, since racks and stock are usually "
+                 "there.")
     with w4:
-        W_tank = st.number_input("Tank contents (kN)", 0.0, 1e7,
-                                 0.0, 10.0)
+        W_tank = st.number_input(
+            "Tank contents (kN)", 0.0, 1e7, 0.0, 10.0,
+            help="Full weight of the contents of any tanks. Counts "
+                 "at 100 percent.")
 
     W_seis = nbcc.seismic_weight(W_dead, W_snow, W_stor, W_tank)
     st.latex(r"W = D + 0.25 S + 0.60 (\text{storage}) + \text{tanks}"
              r" = %.0f + 0.25(%.0f) + 0.60(%.0f) + %.0f"
              r" = \mathbf{%.1f}\ \text{kN}"
              % (W_dead, W_snow, W_stor, W_tank, W_seis))
+    explain("W")
 
     mv_group = st.selectbox(
         "System group for Table 4.1.8.11",
-        list(nbcc.MV_J_TABLE.keys()), index=2)
+        list(nbcc.MV_J_TABLE.keys()), index=2,
+        help="The row family of Table 4.1.8.11 matching the SFRS: "
+             "braced frames for CBFs and EBFs, walls for shear "
+             "walls, moment frames for MRFs. It sets the "
+             "higher-mode factor Mv and the overturning reduction "
+             "J, because each system type carries higher modes "
+             "differently.")
     Mv, Jf, sratio, mv_note = nbcc.mv_and_j(
         mv_group, S["S(0.2)"], S["S(5.0)"], Ta)
 
     st.latex(r"\frac{S(0.2)}{S(5.0)} = \frac{%.4f}{%.4f} = %.2f"
              r" \qquad M_v = %.3f \qquad J = %.3f"
              % (S["S(0.2)"], S["S(5.0)"], sratio, Mv, Jf))
+    explain("Mv", "J")
     if mv_note:
         st.caption(mv_note)
 
+    with st.expander("Where Mv and J come from - Table 4.1.8.11, "
+                     "step by step"):
+        st.caption("The table is entered twice over: once on the "
+                   "spectral ratio S(0.2)/S(5.0) (which measures "
+                   "how fast the spectrum decays at this site, and "
+                   "therefore how much the higher modes matter), "
+                   "and once on the period Ta. Both entries "
+                   "interpolate linearly, Notes (1) and (2).")
+        _row = nbcc._row_at_ratio(mv_group, sratio)
+        _mv_anch = _row[0:4]
+        _j_anch = _row[4:8]
+        _anch_rows = []
+        for _p, _m, _j in zip(nbcc.MV_TA_ANCHORS, _mv_anch, _j_anch):
+            _anch_rows.append({
+                "Ta anchor (s)": "%.1f" % _p,
+                "Mv": "-" if _m is None else "%.3f" % _m,
+                "J": "-" if _j is None else "%.3f" % _j})
+        st.caption("Row values at the ratio %.2f (after the ratio "
+                   "interpolation; '-' marks the Note (5) cells, "
+                   "where the 2.0 s values are used for Ta > 2 s):"
+                   % sratio)
+        st.dataframe(pd.DataFrame(_anch_rows), hide_index=True,
+                     use_container_width=True)
+        _T_eff = min(Ta, 2.0) if _mv_anch[3] is None else Ta
+        _usable = [(p, m, j) for p, m, j in
+                   zip(nbcc.MV_TA_ANCHORS, _mv_anch, _j_anch)
+                   if m is not None]
+        if _T_eff <= _usable[0][0]:
+            st.latex(r"T_a = %.3f \leq %.1f\ \text{s, so the first "
+                     r"column applies:}\ M_v = %.3f,\ J = %.3f"
+                     % (Ta, _usable[0][0], _usable[0][1],
+                        _usable[0][2]))
+        elif _T_eff >= _usable[-1][0]:
+            st.latex(r"T_a\ \text{at or beyond the last anchor: }"
+                     r"M_v = %.3f,\ J = %.3f"
+                     % (_usable[-1][1], _usable[-1][2]))
+        else:
+            for _i in range(len(_usable) - 1):
+                _p0, _m0, _j0 = _usable[_i]
+                _p1, _m1, _j1 = _usable[_i + 1]
+                if _p0 <= _T_eff <= _p1:
+                    st.latex(
+                        r"M_v = %.3f + (%.3f - %.3f)"
+                        r"\frac{%.3f - %.1f}{%.1f - %.1f} = %.3f"
+                        % (_m0, _m1, _m0, _T_eff, _p0, _p1, _p0, Mv))
+                    st.latex(
+                        r"J = %.3f + (%.3f - %.3f)"
+                        r"\frac{%.3f - %.1f}{%.1f - %.1f} = %.3f"
+                        % (_j0, _j1, _j0, _T_eff, _p0, _p1, _p0, Jf))
+                    break
+
     bs = nbcc.base_shear(S, Ta, Mv, IE, W_seis, Rd, Ro, mv_group,
                          site_designation, interp_mode)
+
+    with st.expander("Where S(Ta) comes from - Cl. 4.1.8.4.(6) "
+                     "interpolation, step by step"):
+        _pts = [(p, S["S(%.1f)" % p]) for p in nbcc.SA_PERIODS
+                if not math.isnan(S["S(%.1f)" % p])]
+        if not _pts:
+            st.caption("No spectral values available.")
+        elif Ta <= _pts[0][0]:
+            st.latex(r"T_a = %.3f \leq %.1f\ \text{s, so } S(T_a) "
+                     r"= S(%.1f) = %.4f"
+                     % (Ta, _pts[0][0], _pts[0][0], _pts[0][1]))
+        elif Ta >= _pts[-1][0]:
+            st.latex(r"T_a = %.3f \geq %.1f\ \text{s, so } S(T_a) "
+                     r"= S(%.1f) = %.4f"
+                     % (Ta, _pts[-1][0], _pts[-1][0], _pts[-1][1]))
+        else:
+            for _i in range(len(_pts) - 1):
+                _p0, _v0 = _pts[_i]
+                _p1, _v1 = _pts[_i + 1]
+                if _p0 <= Ta <= _p1:
+                    st.caption("Ta = %.3f s falls between the "
+                               "tabulated periods %.1f s and %.1f s:"
+                               % (Ta, _p0, _p1))
+                    st.latex(r"S(%.1f) = %.4f \qquad S(%.1f) = %.4f"
+                             % (_p0, _v0, _p1, _v1))
+                    if (interp_mode == "log-log" and _v0 > 0
+                            and _v1 > 0):
+                        _lp = ((math.log(Ta) - math.log(_p0))
+                               / (math.log(_p1) - math.log(_p0)))
+                        st.latex(
+                            r"\lambda = \frac{\ln T_a - \ln %.1f}"
+                            r"{\ln %.1f - \ln %.1f} = \frac{%.4f - "
+                            r"%.4f}{%.4f - %.4f} = %.4f"
+                            % (_p0, _p1, _p0, math.log(Ta),
+                               math.log(_p0), math.log(_p1),
+                               math.log(_p0), _lp))
+                        st.latex(
+                            r"S(T_a) = e^{\,\ln %.4f + \lambda"
+                            r"(\ln %.4f - \ln %.4f)} = %.4f"
+                            % (_v0, _v1, _v0, bs["S_Ta"]))
+                        st.caption("Log-log interpolation: straight "
+                                   "line between the two points on "
+                                   "log(period) - log(acceleration) "
+                                   "axes, which matches the smooth "
+                                   "decay of a real spectrum.")
+                    else:
+                        st.latex(
+                            r"S(T_a) = %.4f + (%.4f - %.4f)"
+                            r"\frac{%.3f - %.1f}{%.1f - %.1f} = %.4f"
+                            % (_v0, _v1, _v0, Ta, _p0, _p1, _p0,
+                               bs["S_Ta"]))
+                    break
 
     st.latex(r"V = \frac{S(T_a)\, M_v\, I_E\, W}{R_d R_o}"
              r" = \frac{%.4f \times %.3f \times %.1f \times %.1f}"
              r"{%.1f \times %.1f} = %.2f\ \text{kN}"
              % (bs["S_Ta"], Mv, IE, W_seis, Rd, Ro, bs["V_calc"]))
-    st.latex(r"V_{min} = %.2f\ \text{kN}" % bs["V_min"])
-    st.caption(bs["min_ref"])
+    explain("V", "Ta", "Mv", "IE", "W", "Rd", "Ro")
+
+    _wall_like = mv_group in ("Walls, Wall-Frame Systems",
+                              "Coupled Walls")
+    _pmin = 4.0 if _wall_like else 2.0
+    st.latex(r"V_{min} = \frac{S(%.1f)\, M_v\, I_E\, W}{R_d R_o}"
+             r" = \frac{%.4f \times %.3f \times %.1f \times %.1f}"
+             r"{%.1f \times %.1f} = %.2f\ \text{kN}"
+             % (_pmin, bs["S_min"], Mv, IE, W_seis, Rd, Ro,
+                bs["V_min"]))
+    st.caption(bs["min_ref"] + ". A floor on the force for "
+               "long-period buildings, since the hazard model's "
+               "long-period tail is less certain.")
     if bs["V_max"] is not None:
-        st.latex(r"V_{max} = %.2f\ \text{kN}" % bs["V_max"])
-        st.caption(bs["max_ref"])
+        _cap_a = (2.0 / 3.0) * S["S(0.2)"] * IE * W_seis / (Rd * Ro)
+        _cap_b = S["S(0.5)"] * IE * W_seis / (Rd * Ro)
+        st.latex(r"\tfrac{2}{3}\,\frac{S(0.2)\, I_E\, W}{R_d R_o}"
+                 r" = \tfrac{2}{3}\,\frac{%.4f \times %.1f \times "
+                 r"%.1f}{%.2f} = %.2f\ \text{kN}"
+                 % (S["S(0.2)"], IE, W_seis, Rd * Ro, _cap_a))
+        st.latex(r"\frac{S(0.5)\, I_E\, W}{R_d R_o}"
+                 r" = \frac{%.4f \times %.1f \times %.1f}{%.2f}"
+                 r" = %.2f\ \text{kN}"
+                 % (S["S(0.5)"], IE, W_seis, Rd * Ro, _cap_b))
+        st.latex(r"V_{max} = \max(%.2f,\ %.2f) = %.2f\ \text{kN}"
+                 % (_cap_a, _cap_b, bs["V_max"]))
+        st.caption("Cl. 4.1.8.11.(2)(c): short, stiff buildings "
+                   "need not be designed for the full short-period "
+                   "spike. Applies because the site is not XF and "
+                   "Rd >= 1.5.")
     else:
         st.caption("Cl. 4.1.8.11.(2)(c) upper bound does not apply "
                    "(site is XF or Rd < 1.5).")
@@ -1445,6 +2532,38 @@ with LEFT:
     # ---- 8.8 Vertical distribution -----------------------------------
     st.subheader("8.8  Vertical Distribution and Overturning")
     st.caption("Cl. 4.1.8.11.(7) and (8)")
+
+    st.markdown(
+        "The base shear V found above is the total horizontal force "
+        "on the structure. It now has to be handed out to the floors, "
+        "because that is where the mass sits and where the diaphragms "
+        "can deliver it into the SFRS. Two things happen:")
+    st.markdown(
+        "1. **A top force, Ft.** A tall, flexible building whips at "
+        "the top under higher modes, so Cl. 4.1.8.11.(7)(a) pulls a "
+        "slice of V off the top of the distribution and applies it at "
+        "level n. Ft = 0.07 Ta V, capped at 0.25V, and taken as zero "
+        "when Ta does not exceed 0.7 s.\n"
+        "2. **The remainder, V - Ft, is shared out by Wx hx.** Each "
+        "level gets a share in proportion to its weight times its "
+        "height above the base, which is the inverted-triangle shape "
+        "of a first-mode response. A heavy low floor and a light high "
+        "floor can end up with similar forces.")
+    st.latex(r"F_t = 0.07\,T_a V \le 0.25V, \qquad F_t = 0 "
+             r"\ \text{if}\ T_a \le 0.7\ \text{s}")
+    st.latex(r"F_x = (V - F_t)\,\frac{W_x h_x}{\sum_{i=1}^{n} W_i h_i}")
+    st.markdown(
+        "The **storey shear** at any level is the sum of all the "
+        "forces above it, so it grows from Fx at the roof to V at the "
+        "base. The **overturning moment** Mx is the same forces times "
+        "their lever arm above level x. Cl. 4.1.8.11.(8) then applies "
+        "Jx, a reduction that recognises the peak storey forces do "
+        "not all occur in the same instant, so summing them as if they "
+        "did overstates the base moment. Jx is 1.0 in the upper part "
+        "of the building and tapers to J at the base:")
+    st.latex(r"M_x = J_x \sum_{i=x}^{n} F_i (h_i - h_x), \qquad "
+             r"J_x = 1.0 \ \text{for}\ h_x \ge 0.6h_n, \quad "
+             r"J_x = J + (1-J)\frac{h_x}{0.6h_n} \ \text{otherwise}")
 
     n_lv = st.number_input("Number of levels to distribute over",
                            1, 60, max(1, int(n_storeys)), 1)
@@ -1469,8 +2588,19 @@ with LEFT:
         shears = nbcc.storey_shears(forces)
         ot = nbcc.overturning(forces, Jf, hn)
 
+        if Ta <= 0.7:
+            st.latex(r"T_a = %.3f \leq 0.7\ \text{s} \Rightarrow "
+                     r"F_t = 0" % Ta)
+        else:
+            st.latex(r"F_t = 0.07\,T_a V = 0.07 \times %.3f \times "
+                     r"%.2f = %.2f\ \text{kN}"
+                     % (Ta, V, 0.07 * Ta * V))
+            if Ft < 0.07 * Ta * V - 1e-9:
+                st.latex(r"F_t \leq 0.25V = %.2f\ \text{kN (cap "
+                         r"governs)}" % (0.25 * V))
         st.latex(r"F_t = %.2f\ \text{kN}" % Ft)
         st.caption(ft_note)
+        explain("Ft", "Fx")
         st.latex(r"F_x = (V - F_t)\,\frac{W_x h_x}"
                  r"{\sum W_i h_i} \qquad \sum W_i h_i = %.1f" % sum_wh)
 
@@ -1486,15 +2616,40 @@ with LEFT:
         st.dataframe(pd.DataFrame(dist_rows), hide_index=True,
                      use_container_width=True)
 
-        st.latex(r"M_x = J_x \sum_{i=x}^{n} F_i (h_i - h_x)"
-                 r" \qquad J_x = 1.0 \ \text{for}\ h_x \ge 0.6 h_n,"
-                 r"\quad J_x = J + (1-J)\frac{h_x}{0.6 h_n}"
-                 r"\ \text{otherwise}")
+        top = forces[-1]
+        st.markdown("**Worked check at the top level, %s**"
+                    % top["level"])
+        st.latex(r"F_{%s} = (%.2f - %.2f)\times\frac{%.1f \times %.2f}"
+                 r"{%.1f} = %.2f\ \text{kN}"
+                 % (top["level"].replace(" ", r"\,"), V, Ft,
+                    top["W"], top["h"], sum_wh, top["Fx"] - (
+                        Ft if abs(Ft) > 1e-9 else 0.0)))
+        if abs(Ft) > 1e-9:
+            st.caption("Ft = %.2f kN is added at this level, giving "
+                       "Fx = %.2f kN in the table above."
+                       % (Ft, top["Fx"]))
+        st.caption("Check: the storey forces sum to %.2f kN against "
+                   "V = %.2f kN."
+                   % (sum(f["Fx"] for f in forces), V))
+
         ot_rows = [{"Level": r["level"], "hx (m)": round(r["h"], 2),
                     "Jx": round(r["Jx"], 4),
                     "Mx (kN.m)": round(r["Mx"], 1)} for r in ot]
         st.dataframe(pd.DataFrame(ot_rows), hide_index=True,
                      use_container_width=True)
+
+        M_base_raw = sum(f["Fx"] * f["h"] for f in forces)
+        Jx_base = Jf
+        st.markdown("**Overturning at the base**")
+        st.latex(r"\sum F_i h_i = %.1f\ \text{kN}\cdot\text{m}"
+                 r" \qquad J = %.3f \qquad "
+                 r"M_0 = J \sum F_i h_i = %.1f\ \text{kN}\cdot\text{m}"
+                 % (M_base_raw, Jx_base, Jx_base * M_base_raw))
+        st.caption("This is the demand the foundation and the SFRS "
+                   "hold-downs have to resist, before the "
+                   "counteracting dead load of Cl. 4.1.3.2.(5) is "
+                   "taken against it. hn = %.2f m, so Jx reaches 1.0 "
+                   "above %.2f m." % (hn, 0.6 * hn))
     else:
         forces, Ft, shears = [], 0.0, []
         st.warning("Enter at least one level with hi > 0.")
@@ -1503,24 +2658,81 @@ with LEFT:
     st.subheader("8.9  Torsion and Drift")
     st.caption("Cl. 4.1.8.11.(9) to (11), Art. 4.1.8.13")
 
+    st.markdown(
+        "The storey force Fx acts through the centre of mass, but the "
+        "SFRS resists it through the centre of rigidity. If those two "
+        "points do not coincide, the offset ex produces a twist on "
+        "the floor plate. On top of that, Cl. 4.1.8.11.(9) requires "
+        "an **accidental** eccentricity of 0.10 Dnx, applied both "
+        "ways, to cover mass and stiffness that do not sit where the "
+        "drawings say. Each element is designed for whichever sign is "
+        "worse:")
+    st.latex(r"T_x = F_x\,(e_x \pm 0.10\,D_{nx})")
+    st.markdown(
+        "**Torsional sensitivity, B.** Push the building with the "
+        "forces applied at plus and minus 0.10 Dnx from the centres "
+        "of mass and compare the displacement at the worst corner "
+        "with the average of the two extreme corners. A ratio above "
+        "1.7 means the plan twists enough that a static treatment is "
+        "no longer trustworthy, and in SC3 or SC4 a dynamic analysis "
+        "is required:")
+    st.latex(r"B_x = \frac{\delta_{max}}{\delta_{ave}}, \qquad "
+             r"B = \max(B_x)\ \text{over both orthogonal directions}")
+    st.markdown(
+        "**Drift.** An elastic analysis under the reduced force "
+        "V = S(Ta) Mv IE W / (Rd Ro) gives displacements that are far "
+        "too small, because the real structure is expected to yield. "
+        "Art. 4.1.8.13 multiplies them back up by Rd Ro / IE to get "
+        "the anticipated deflections, and the interstorey value is "
+        "then checked against the limits below.")
+
     t1, t2, t3 = st.columns(3)
     with t1:
         Dnx = st.number_input("Dnx, plan dimension perpendicular to "
                               "the loading (m)", 0.0, 300.0,
-                              float(L_bldg), 0.01)
+                              float(L_bldg), 0.01, help=GLOSS["Dnx"])
     with t2:
         ex_ecc = st.number_input("ex, eccentricity between the centres "
                                  "of mass and rigidity (m)",
-                                 -50.0, 50.0, 0.0, 0.01)
+                                 -50.0, 50.0, 0.0, 0.01,
+                                 help=GLOSS["ex"])
     with t3:
-        d_max = st.number_input("d_max, maximum storey displacement "
-                                "(mm)", 0.0, 1000.0, 0.0, 0.1)
-        d_ave = st.number_input("d_ave, average storey displacement "
-                                "(mm)", 0.0, 1000.0, 0.0, 0.1)
+        d_max = st.number_input(
+            "d_max, maximum storey displacement (mm)",
+            0.0, 1000.0, 0.0, 0.1,
+            help="Largest lateral displacement at any corner of the "
+                 "storey, from the elastic analysis with the forces "
+                 "applied at plus and minus 0.10 Dnx from the "
+                 "centres of mass. Enter 0 to skip the B check.")
+        d_ave = st.number_input(
+            "d_ave, average storey displacement (mm)",
+            0.0, 1000.0, 0.0, 0.1,
+            help="Average of the displacements at the two extreme "
+                 "corners of the same storey, from the same "
+                 "analysis.")
 
     st.latex(r"T_x = F_x (e_x \pm 0.10 D_{nx})"
-             r" \qquad 0.10 D_{nx} = %.3f \ \text{m}" % (0.10 * Dnx))
+             r" \qquad 0.10 D_{nx} = 0.10 \times %.2f = %.3f \ "
+             r"\text{m}" % (Dnx, 0.10 * Dnx))
+    explain("Dnx", "ex", "Fx")
     if forces:
+        _ftop = forces[-1]
+        _tp, _tm = nbcc.torsional_moments(_ftop["Fx"], ex_ecc, Dnx)
+        st.markdown("**Worked example at the top level, %s**"
+                    % _ftop["level"])
+        st.latex(r"T_{%s} = %.2f\,(%.3f + %.3f) = %.2f\ "
+                 r"\text{kN}\cdot\text{m} \qquad "
+                 r"T_{%s} = %.2f\,(%.3f - %.3f) = %.2f\ "
+                 r"\text{kN}\cdot\text{m}"
+                 % (str(_ftop["level"]).replace(" ", r"\,"),
+                    _ftop["Fx"], ex_ecc, 0.10 * Dnx, _tp,
+                    str(_ftop["level"]).replace(" ", r"\,"),
+                    _ftop["Fx"], ex_ecc, 0.10 * Dnx, _tm))
+        st.caption("Each element of the SFRS is designed for "
+                   "whichever sign of the accidental term is worse "
+                   "for it - a stiff wall on the far side of the "
+                   "plan can pick up more force from the twist than "
+                   "from the direct shear.")
         tor_rows = []
         for f in forces:
             tp, tm = nbcc.torsional_moments(f["Fx"], ex_ecc, Dnx)
@@ -1535,6 +2747,7 @@ with LEFT:
         Bx = nbcc.torsional_sensitivity(d_max, d_ave)
         st.latex(r"B_x = \frac{\delta_{max}}{\delta_{ave}}"
                  r" = \frac{%.2f}{%.2f} = %.3f" % (d_max, d_ave, Bx))
+        explain("Bx")
         if Bx > 1.7:
             st.error("B = %.3f exceeds 1.7. This is a Type 7 "
                      "torsional sensitivity irregularity. Where SC is "
@@ -1546,12 +2759,56 @@ with LEFT:
                        "Cl. 4.1.8.11.(11)(a)." % Bx)
 
     dl = nbcc.drift_limit(cat_seis)
+    st.markdown("**Drift check** (Art. 4.1.8.13)")
+    dr1, dr2 = st.columns(2)
+    with dr1:
+        hs_mm = st.number_input(
+            "hs, interstorey height (mm)", 0.0, 20000.0, 0.0, 50.0,
+            help=GLOSS["hs"] + " Enter 0 to skip the worked drift "
+                 "check.")
+    with dr2:
+        d_elastic = st.number_input(
+            "Elastic interstorey deflection (mm)",
+            0.0, 1000.0, 0.0, 0.1,
+            help=GLOSS["delta"] + " This is the number straight out "
+                 "of the analysis run with the reduced forces - "
+                 "before the Rd Ro / IE amplification.")
+
     st.latex(r"\text{Interstorey drift limit} = %.3f\, h_s"
              r" \qquad (%s\ \text{Importance Category})"
              % (dl, cat_seis))
-    st.caption("Deflections from a linear analysis include torsion "
-               "and are multiplied by Rd*Ro/IE = %.3f to obtain "
-               "realistic values." % (Rd * Ro / IE))
+    explain("hs", "delta", "Rd", "Ro", "IE")
+    if hs_mm > 0 and d_elastic > 0:
+        _amp = Rd * Ro / IE
+        _d_real = d_elastic * _amp
+        _d_allow = dl * hs_mm
+        st.caption("The elastic analysis was run with forces already "
+                   "divided by Rd Ro, so its deflections are far too "
+                   "small - the real structure yields and sways "
+                   "further. Multiply back up:")
+        st.latex(r"\delta_{anticipated} = \delta_{elastic}\,"
+                 r"\frac{R_d R_o}{I_E} = %.2f \times \frac{%.1f "
+                 r"\times %.1f}{%.1f} = %.2f\ \text{mm}"
+                 % (d_elastic, Rd, Ro, IE, _d_real))
+        st.latex(r"\delta_{allow} = %.3f\,h_s = %.3f \times %.0f"
+                 r" = %.2f\ \text{mm}" % (dl, dl, hs_mm, _d_allow))
+        if _d_real <= _d_allow:
+            st.success("Drift PASS: %.2f mm <= %.2f mm (%.0f%% of "
+                       "the limit)."
+                       % (_d_real, _d_allow,
+                          100.0 * _d_real / _d_allow))
+        else:
+            st.error("Drift FAIL: %.2f mm exceeds the %.2f mm limit "
+                     "by %.0f%%. Stiffen the SFRS or accept a "
+                     "dynamic analysis."
+                     % (_d_real, _d_allow,
+                        100.0 * (_d_real / _d_allow - 1.0)))
+    else:
+        st.caption("Enter hs and the elastic interstorey deflection "
+                   "above to run the worked drift check. Deflections "
+                   "from the linear analysis include torsion and are "
+                   "multiplied by Rd Ro / IE = %.3f to obtain "
+                   "anticipated values." % (Rd * Ro / IE))
 
     # ---- 8.10 Simplified method --------------------------------------
     st.subheader("8.10  Simplified Method for Low Seismicity")
@@ -1564,26 +2821,34 @@ with LEFT:
     else:
         f1, f2 = st.columns(2)
         with f1:
-            fs_basis = st.selectbox("Fs basis (Cl. 4.1.8.1.(2)(b))",
-                                    ["Rock site", "N60", "su"],
-                                    index=0)
+            fs_basis = st.selectbox(
+                "Fs basis (Cl. 4.1.8.1.(2)(b))",
+                ["Rock site", "N60", "su"], index=0,
+                help="Fs is the simplified method's whole-site "
+                     "coefficient: 1.0 rock, 1.6 medium ground, 2.8 "
+                     "soft ground, judged from the top 30 m below "
+                     "the foundations using N60 (granular soils) or "
+                     "su (clays) from the geotech report.")
         with f2:
             if fs_basis == "N60":
                 Fs, fs_why = nbcc.site_coefficient_Fs(
                     n60=st.number_input("N60 below the footings",
                                         0.0, 200.0, 60.0, 1.0,
-                                        key="fs_n60"))
+                                        key="fs_n60",
+                                        help=GLOSS["N60"]))
             elif fs_basis == "su":
                 Fs, fs_why = nbcc.site_coefficient_Fs(
                     su=st.number_input("su below the footings (kPa)",
                                        0.0, 500.0, 120.0, 1.0,
-                                       key="fs_su"))
+                                       key="fs_su",
+                                       help=GLOSS["su"]))
             else:
                 Fs, fs_why = nbcc.site_coefficient_Fs(rock=True)
 
         applies, chk02, chk20 = nbcc.simplified_method_applies(
             IE, Fs, sa_450)
         st.latex(r"F_s = %.1f \quad (%s)" % (Fs, fs_why))
+        explain("Fs", "Rs", "Ts", "Vs")
         st.latex(r"I_E F_s S_a(0.2, X_{450}) = %.4f \ (< 0.16?)"
                  r" \qquad I_E F_s S_a(2.0, X_{450}) = %.4f \ (< 0.03?)"
                  % (chk02, chk20))
@@ -1596,7 +2861,8 @@ with LEFT:
             weak_storey = st.checkbox("Storey strength less than the "
                                       "storey above, or unreinforced "
                                       "masonry SFRS (Rs = 1.0)",
-                                      value=False)
+                                      value=False,
+                                      help=GLOSS["Rs"])
             Rs = 1.0 if weak_storey else 1.5
             sa_ts = nbcc.sa_Ts(sa_450, Ts)
             sa05 = float(sa_450.get("S(0.5)",
@@ -1641,10 +2907,16 @@ with LEFT:
             a1, a2 = st.columns(2)
             with a1:
                 Wp = st.number_input("Wp, weight of the element (kN)",
-                                     0.0, 1e6, 0.0, 1.0)
+                                     0.0, 1e6, 0.0, 1.0,
+                                     help=GLOSS["Wp"])
             with a2:
-                urm_elem = st.checkbox("Unreinforced masonry element "
-                                       "(Vsp doubled)", value=False)
+                urm_elem = st.checkbox(
+                    "Unreinforced masonry element (Vsp doubled)",
+                    value=False,
+                    help="Unreinforced masonry is brittle - no "
+                         "rebar means no ductility - so Cl. "
+                         "4.1.8.1.(14) doubles the design force on "
+                         "such elements.")
             if Wp > 0:
                 sa02_450 = float(sa_450.get("S(0.2)",
                                             sa_450.get("Sa(0.2)", 0.0)))
@@ -1666,21 +2938,144 @@ with LEFT:
                     "apply, as computed above.")
 
     # ------------------------------------------------------------------
-    st.header("9. Summary")
+    st.header("9. Load Combinations")
+    st.caption("NBCC 2020, Article 4.1.3.2 (ULS, Table 4.1.3.2-A) and "
+               "Article 4.1.3.4 (SLS, Table 4.1.3.4). Combinations "
+               "without crane loads.")
+
+    st.markdown(
+        "Enter the effect of each specified load on the member or "
+        "connection you are checking, in one consistent unit. The "
+        "snow and wind effects are pre-filled from the loads computed "
+        "above, so if you are checking a load on a roof surface in "
+        "kPa they can be used directly; for a member force, replace "
+        "them with the corresponding reaction.")
+
+    lcu = st.text_input("Units of the effects below", value="kPa",
+                        max_chars=12)
+
+    e1, e2, e3 = st.columns(3)
+    with e1:
+        eD = st.number_input("D, dead load effect", -1e7, 1e7,
+                             0.0, 0.01, format="%.4f")
+        eL = st.number_input("L, live load effect", -1e7, 1e7,
+                             0.0, 0.01, format="%.4f")
+    with e2:
+        eS = st.number_input("S, snow load effect", -1e7, 1e7,
+                             float(round(S_load, 4)), 0.01,
+                             format="%.4f")
+        eW = st.number_input("W, wind load effect", -1e7, 1e7,
+                             float(round(net_df["Governing (kPa)"]
+                                         .iloc[0], 4))
+                             if len(net_df) else 0.0,
+                             0.01, format="%.4f")
+    with e3:
+        eE = st.number_input("E, earthquake load effect", -1e7, 1e7,
+                             0.0, 0.01, format="%.4f")
+        st.caption("E is the effect of the seismic force V computed in "
+                   "Section 8, resolved into the member you are "
+                   "checking. V = %.1f kN." % V)
+
+    m1, m2 = st.columns(2)
+    with m1:
+        storage_area = st.checkbox(
+            "Storage area, equipment area or service room "
+            "(Cl. 4.1.3.2.(7): companion factor on L increased by 0.5)",
+            value=False)
+    with m2:
+        liquid_tank = st.checkbox(
+            "Liquids in tanks (Cl. 4.1.3.2.(6): principal factor on L "
+            "reduced from 1.5 to 1.25)", value=False)
+
+    st.markdown("**Ultimate limit states - Table 4.1.3.2-A**")
+    st.caption("Each case is listed with the alternative dead load "
+               "factors of Cl. 4.1.3.2.(5) - 1.25D or the "
+               "counteracting 0.9D, and 1.0D in Case 5 - and with the "
+               "companion load taken as zero as required by "
+               "Cl. 4.1.3.2.(3). Wind and earthquake are enumerated in "
+               "both directions.")
+
+    uls_rows = uls_combinations(eD, eL, eS, eW, eE,
+                                storage=storage_area,
+                                liquids=liquid_tank)
+
+    uls_df = pd.DataFrame([{
+        "Case": r["Case"],
+        "Load combination": r["Combination"],
+        "Effect (%s)" % lcu: round(r["Effect"], 4)} for r in uls_rows])
+    uls_df = uls_df.sort_values("Effect (%s)" % lcu,
+                                key=lambda s: s.abs(), ascending=False)
+    st.dataframe(uls_df, hide_index=True, use_container_width=True,
+                 height=380)
+
+    if len(uls_df):
+        gov = uls_df.iloc[0]
+        st.success("Governing ULS combination: Case %d, %s, "
+                   "effect = %.4f %s"
+                   % (gov["Case"], gov["Load combination"],
+                      gov["Effect (%s)" % lcu], lcu))
+        gmax = uls_df["Effect (%s)" % lcu].max()
+        gmin = uls_df["Effect (%s)" % lcu].min()
+        st.caption("Envelope: %.4f %s to %.4f %s. Where the two have "
+                   "opposite signs the member sees a full reversal, "
+                   "and the counteracting 0.9D cases are the ones to "
+                   "watch for uplift, sliding and anchorage."
+                   % (gmin, lcu, gmax, lcu))
+
+    st.markdown("**Serviceability limit states - Table 4.1.3.4**")
+    st.caption("Deflection for materials not subject to creep. Load "
+               "factors of 1.0 on the principal load throughout.")
+
+    sls_rows = sls_combinations(eD, eL, eS, eW, storage=storage_area)
+    sls_df = pd.DataFrame([{
+        "Case": r["Case"],
+        "Load combination": r["Combination"],
+        "Effect (%s)" % lcu: round(r["Effect"], 4)} for r in sls_rows])
+    sls_df = sls_df.sort_values("Effect (%s)" % lcu,
+                                key=lambda s: s.abs(), ascending=False)
+    st.dataframe(sls_df, hide_index=True, use_container_width=True,
+                 height=300)
+
+    with st.expander("Notes carried from Article 4.1.3.2"):
+        st.markdown(
+            "- Sentence (4): where lateral earth pressure H, "
+            "pre-stress P or imposed deformation T affect structural "
+            "safety, apply them with factors of 1.5, 1.0 and 1.25 "
+            "respectively. They are not enumerated above.\n"
+            "- Sentence (8): the 1.25 factor on dead load from soil, "
+            "superimposed earth, plants and trees rises to 1.5, except "
+            "that for soil deeper than 1.2 m it may be reduced to "
+            "1 + 0.6/hs but not below 1.25.\n"
+            "- Sentence (10): the earthquake load E in Case 5 includes "
+            "horizontal earth pressure due to earthquake per "
+            "Cl. 4.1.8.16.(7).\n"
+            "- Sentence (12): sway effects from vertical loads acting "
+            "on the displaced structure must be included, using the "
+            "deflections of Cl. 4.1.8.13.(2).\n"
+            "- Crane loads are covered by Table 4.1.3.2-B, which is "
+            "not implemented on this page.")
+
+    # ------------------------------------------------------------------
+    st.header("10. Summary")
     st.dataframe(pd.DataFrame({
-        "Load": ["Snow, S", "Wind, governing external p",
+        "Load": ["Site", "Snow, S", "Wind, governing external p",
                  "Wind, internal pi (suction)",
                  "Wind, internal pi (pressure)",
                  "Seismic, Seismic Category", "Seismic, Ta",
-                 "Seismic, V", "Seismic, V/W"],
-        "Value": ["%.3f kPa" % S_load, "%.3f kPa" % worst[1][1],
+                 "Seismic, V", "Seismic, V/W",
+                 "Governing ULS combination"],
+        "Value": ["%s, %s (%.4f, %.4f)" % (loc, prov, lat, lon),
+                  "%.3f kPa" % S_load, "%.3f kPa" % worst[1][1],
                   "%.3f kPa" % pi_neg, "%.3f kPa" % pi_pos,
                   "SC%d" % SC, "%.3f s" % Ta, "%.1f kN" % V,
-                  "%.4f" % VW],
-        "Reference": ["Cl. 4.1.6.2", "Cl. 4.1.7.6", "Cl. 4.1.7.7",
-                      "Cl. 4.1.7.7", "Table 4.1.8.5-B",
+                  "%.4f" % VW,
+                  ("%s = %.4f %s" % (uls_df.iloc[0]["Load combination"],
+                                     uls_df.iloc[0]["Effect (%s)" % lcu],
+                                     lcu)) if len(uls_df) else "-"],
+        "Reference": ["Table C-2", "Cl. 4.1.6.2", "Cl. 4.1.7.6",
+                      "Cl. 4.1.7.7", "Cl. 4.1.7.7", "Table 4.1.8.5-B",
                       "Cl. 4.1.8.11.(3)", "Cl. 4.1.8.11.(2)",
-                      "Cl. 4.1.8.11.(2)"],
+                      "Cl. 4.1.8.11.(2)", "Table 4.1.3.2-A"],
     }), hide_index=True, use_container_width=True)
 
 
@@ -1702,6 +3097,8 @@ with RIGHT:
 
     payload = build_payload(
         geom={"W": W_bldg, "L": L_bldg, "He": H_eaves, "Hr": H_roof,
+              "wh": round(W_roof_h, 3), "ws": round(W_roof_s, 3),
+              "lr": round(L_roof, 3),
               "alpha": round(alpha, 2), "z": round(z_end, 3)},
         wind={"surfaces": surf_payload,
               "q": q_ref, "Ce": Ce, "Cg": Cg, "Ct": Ct, "Iw": Iw,

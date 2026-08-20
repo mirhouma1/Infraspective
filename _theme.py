@@ -1041,10 +1041,18 @@ _CSA_STANDARD = [
                      ":material/local_fire_department:", True,
                      "Fillet, CJP, PJP and flare bevel welds with joint "
                      "diagrams."),
-                    ("pages/7_Lifting_Lug.py", "Lifting Lug",
+                    ("pages/7_Lifting_Lug.py", "Lifting Lug and Eye",
                      ":material/link:", True,
-                     "Pin bearing, tear-out, gross and net section of a "
-                     "lifting lug plate."),
+                     "Padeye on a bolted cap plate, or an eye bored "
+                     "through the member with doubler plates. Cl. 13.2(b) "
+                     "pin connected section, tear-out, bearing, pin, "
+                     "welds and prying."),
+                    ("pages/9_End_Plate_Shear.py",
+                     "End Plate Shear Connection",
+                     ":material/school:", True,
+                     "Learning module. Bolt shear, bearing, plate shear "
+                     "and block shear, prying, beam web shear and weld, "
+                     "worked in load path order."),
                 ],
             },
             {
@@ -1134,6 +1142,64 @@ _NBCC_STANDARD = [
     },
 ]
 
+_ASCE_STANDARD = [
+    {
+        "key": "asce",
+        "name": "Blast Resistant Design",
+        "short": "ASCE",
+        "blurb": "Dynamic response of structures to blast loading, for "
+                 "petrochemical and process facilities.",
+        "icon": ":material/local_fire_department:",
+        "unlocked": True,
+        "disciplines": [
+            {
+                "key": "dynamics",
+                "name": "Dynamic Analysis",
+                "code": "ASCE Blast, Ch. 6",
+                # Own label, for the same reason the NBCC rows carry
+                # one: "Dynamic Analysis Design - ..." does not read.
+                "label": "Dynamic Analysis  -  ASCE Blast, Chapter 6",
+                "blurb": "Single degree of freedom response to a blast "
+                         "pulse, and the dynamic reactions it hands to "
+                         "the supporting members.",
+                "icon": ":material/earthquake:",
+                "unlocked": True,
+                "calcs": [
+                    ("pages/11_Blast_SDOF.py",
+                     "Dynamic Blast Response, SDOF",
+                     ":material/school:", True,
+                     "Learning module. Transformation factors, the "
+                     "resistance function, time integration, ductility "
+                     "and dynamic reactions, with the solved motion "
+                     "played back on the model."),
+                ],
+            },
+            {
+                "key": "loading",
+                "name": "Blast Loading",
+                "code": "ASCE Blast, Ch. 3",
+                "label": "Blast Loading  -  ASCE Blast, Chapter 3",
+                "blurb": "Side-on and reflected pressures, and the "
+                         "idealised triangular pulse the analysis runs on.",
+                "icon": ":material/storm:",
+                "unlocked": False,
+                "calcs": [],
+            },
+            {
+                "key": "acceptance",
+                "name": "Acceptance Criteria",
+                "code": "ASCE Blast, Ch. 5",
+                "label": "Acceptance Criteria  -  ASCE Blast, Chapter 5",
+                "blurb": "Ductility ratios and support rotation limits "
+                         "by response level and member type.",
+                "icon": ":material/gavel:",
+                "unlocked": False,
+                "calcs": [],
+            },
+        ],
+    },
+]
+
 # The top level is a service, not a standard. The site will carry more
 # services than calculators later, so the tree starts one level higher:
 #
@@ -1142,15 +1208,23 @@ SERVICES = [
     {
         "key": "calc",
         "name": "Structural Design Calculator",
-        "standards": _CSA_STANDARD + _NBCC_STANDARD,
+        "standards": _CSA_STANDARD + _NBCC_STANDARD +_ASCE_STANDARD, 
     },
+
 ]
+
 
 # Kept as the standards list so anything that walked the old tree still
 # works. CATALOGUE is now one level below SERVICES.
-CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD
+CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD          # yours now
+CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD + _ASCE_STANDARD   # should be
 
 HOME_PAGE = "app.py"
+
+# How long the agreement page holds at the top before it walks the reader
+# down to the accept checkbox, in milliseconds. This is the only number
+# to touch if the pause needs retuning.
+DISCLAIMER_HOLD_MS = 500
 
 
 def catalogue_standard(key):
@@ -1421,6 +1495,7 @@ def disclaimer_page() -> None:
     the gate. Auto-scrolls the browser to the accept button on load.
     """
     import re
+    import hashlib as _hashlib
     import streamlit.components.v1 as _comp
 
     apply_theme()
@@ -1474,6 +1549,11 @@ def disclaimer_page() -> None:
 
     # Agreement box (scrollable HTML)
     md = _DISCLAIMER_TEXT()
+    # The scroll runs once per browser session, keyed on the agreement
+    # text. Reword the agreement and the key changes, so the reader is
+    # taken down to the checkbox again rather than being trusted to have
+    # noticed that the wording moved.
+    _dis_key = _hashlib.md5(md.encode("utf-8")).hexdigest()[:10]
     html = re.sub(r"^# (.+)$", r"<h1>\1</h1>", md, flags=re.MULTILINE)
     html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
     html = re.sub(r"^---$", r"<hr>", html, flags=re.MULTILINE)
@@ -1506,48 +1586,135 @@ def disclaimer_page() -> None:
     if not accept:
         st.caption("You must read and accept the agreement to continue.")
 
-    # -- Auto-scroll to the accept area on every load --------------------
+    # -- Hold at the top, then walk the reader down to the checkbox ------
+    #
+    # The sequence is: land at the top so the wordmark and the heading
+    # are what the reader sees first, hold there for DISCLAIMER_HOLD_MS,
+    # then scroll to the agreement checkbox, which is the thing they
+    # have to act on. The button below it comes into view with it.
+    #
+    # Three things this has to get right that the previous version did
+    # not:
+    #
+    #   once per session   Streamlit reruns the whole script every time
+    #                      a widget changes, so ticking the box would
+    #                      have fired the scroll again and yanked the
+    #                      page under the reader's hand. A sessionStorage
+    #                      flag keyed on the agreement version means the
+    #                      trip happens on the first view and never again
+    #                      until the agreement itself changes.
+    #
+    #   yield to the user  If they start scrolling during the hold they
+    #                      have made their own decision about where to
+    #                      look, and the timer stands down.
+    #
+    #   the checkbox       Not the first button on the page, which is
+    #                      what a bare stButton query returns and is not
+    #                      necessarily Enter Application.
+    #
+    # Every DOM access stays inside a try/catch: reaching
+    # window.parent.document can throw in a sandboxed frame, and an
+    # uncaught throw here would abort the script before any timer was
+    # ever scheduled.
     _comp.html(
         """
         <script>
-        (function() {
-            function scrollToAccept() {
-                try {
-                    var doc = window.parent.document;
-                    var btn = doc.querySelector('[data-testid="stButton"] button');
-                    if (!btn) {
-                        var allBtns = doc.querySelectorAll('button');
-                        for (var i = 0; i < allBtns.length; i++) {
-                            if (allBtns[i].innerText.includes('Enter')) {
-                                btn = allBtns[i]; break;
-                            }
-                        }
-                    }
-                    if (btn) {
-                        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    } else {
-                        var main = doc.querySelector('[data-testid="stAppViewContainer"]')
-                                || doc.querySelector('.main')
-                                || doc.body;
-                        main.scrollTop = main.scrollHeight;
-                    }
-                } catch(e) {}
+        (function () {
+            var HOLD_MS = __HOLD_MS__;
+            var KEY = 'infra_dis_scrolled_' + '__DIS_VERSION__';
+            var cancelled = false;
+
+            function parentDoc() {
+                try { return window.parent.document; } catch (e) { return null; }
             }
-            // Two passes, exactly as before, just held back so the
-            // wordmark registers first. HOLD_MS is the only number to
-            // touch if the pause needs retuning; the second pass covers
-            // the case where the button had not rendered yet.
-            //
-            // Every DOM access stays inside the try/catch above on
-            // purpose: reaching window.parent.document at this level can
-            // throw in a sandboxed frame, and that would abort the script
-            // before either timer was ever scheduled.
-            var HOLD_MS = 1500;
-            setTimeout(scrollToAccept, HOLD_MS);
-            setTimeout(scrollToAccept, HOLD_MS + 600);
+            function scroller(doc) {
+                return doc.querySelector('section.main')
+                    || doc.querySelector('[data-testid="stAppViewContainer"]')
+                    || doc.scrollingElement
+                    || doc.body;
+            }
+            function pinTop() {
+                var doc = parentDoc();
+                if (!doc) { return; }
+                try {
+                    var el = scroller(doc);
+                    if (el) { el.scrollTop = 0; }
+                    window.parent.scrollTo(0, 0);
+                } catch (e) {}
+            }
+            // allowButton is only true on the final attempt. The button
+            // renders in the same pass as the checkbox, so taking it
+            // early would mean settling for the wrong target on the one
+            // run where the checkbox was a frame behind, and never
+            // retrying for the right one.
+            function target(doc, allowButton) {
+                // the agreement checkbox first, by its own test id
+                var box = doc.querySelector('[data-testid="stCheckbox"]');
+                if (box) { return box; }
+                // then any checkbox whose label is the agreement line
+                var labels = doc.querySelectorAll('label');
+                for (var i = 0; i < labels.length; i++) {
+                    var t = labels[i].innerText || '';
+                    if (t.indexOf('read and agree') !== -1) { return labels[i]; }
+                }
+                if (!allowButton) { return null; }
+                // and only then the Enter button, as a last resort
+                var btns = doc.querySelectorAll('button');
+                for (var j = 0; j < btns.length; j++) {
+                    if ((btns[j].innerText || '').indexOf('Enter') !== -1) {
+                        return btns[j];
+                    }
+                }
+                return null;
+            }
+            function goDown(allowButton) {
+                if (cancelled) { return true; }
+                var doc = parentDoc();
+                if (!doc) { return false; }
+                var el = target(doc, allowButton);
+                if (!el) { return false; }
+                try {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    window.sessionStorage.setItem(KEY, '1');
+                } catch (e) {}
+                return true;
+            }
+
+            var done = false;
+            try { done = window.sessionStorage.getItem(KEY) === '1'; }
+            catch (e) { done = false; }
+            if (done) { return; }
+
+            // Once the reader takes over, the page is theirs.
+            function standDown() { cancelled = true; }
+            var doc0 = parentDoc();
+            if (doc0) {
+                ['wheel', 'touchmove', 'keydown', 'mousedown'].forEach(
+                    function (ev) {
+                        try {
+                            doc0.addEventListener(ev, standDown,
+                                                  { passive: true, once: true });
+                        } catch (e) {}
+                    });
+            }
+
+            pinTop();
+            setTimeout(pinTop, 120);
+            // The retries cover the case where the checkbox has not
+            // rendered yet; each one stops as soon as it lands.
+            setTimeout(function () {
+                if (!goDown(false)) {
+                    setTimeout(function () {
+                        if (!goDown(false)) {
+                            setTimeout(function () { goDown(true); }, 700);
+                        }
+                    }, 500);
+                }
+            }, HOLD_MS);
         })();
         </script>
-        """,
+        """.replace("__HOLD_MS__", str(int(DISCLAIMER_HOLD_MS)))
+           .replace("__DIS_VERSION__", _dis_key),
         height=0,
     )
 

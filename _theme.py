@@ -1053,6 +1053,20 @@ _CSA_STANDARD = [
                      "Learning module. Bolt shear, bearing, plate shear "
                      "and block shear, prying, beam web shear and weld, "
                      "worked in load path order."),
+                    # Moment connection. Locked until pages/12 lands:
+                    # render_directory only emits a page_link for an
+                    # unlocked row, so a False here shows the "Soon"
+                    # row and cannot produce a link to a file that is
+                    # not there yet. Flip it to True when the page is
+                    # in place and nothing else has to change.
+                    ("pages/12_Moment_Connection.py",
+                     "Moment Connection",
+                     ":material/school:", True,
+                     "Learning module. Bolted extended end plate: the "
+                     "flange couple, bolt tension with prying, plate "
+                     "thickness by yield line, and the column side - "
+                     "flange bending, web yielding and crippling, "
+                     "panel zone shear, stiffeners and doubler."),
                 ],
             },
             {
@@ -1208,16 +1222,14 @@ SERVICES = [
     {
         "key": "calc",
         "name": "Structural Design Calculator",
-        "standards": _CSA_STANDARD + _NBCC_STANDARD +_ASCE_STANDARD, 
+        "standards": _CSA_STANDARD + _NBCC_STANDARD + _ASCE_STANDARD,
     },
-
 ]
 
 
 # Kept as the standards list so anything that walked the old tree still
 # works. CATALOGUE is now one level below SERVICES.
-CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD          # yours now
-CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD + _ASCE_STANDARD   # should be
+CATALOGUE = _CSA_STANDARD + _NBCC_STANDARD + _ASCE_STANDARD
 
 HOME_PAGE = "app.py"
 
